@@ -5,7 +5,7 @@
 // for convenience
 using MJPEGStreamer = nadjieb::MJPEGStreamer;
 
-int main() {
+auto main() -> int {
   cv::VideoCapture cap(0);
   if (!cap.isOpened()) {
     std::cerr << "VideoCapture not opened\n";

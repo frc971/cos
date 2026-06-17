@@ -13,8 +13,10 @@ target_sources(nvjpeg_decode_node
   PRIVATE
     nvjpeg_decode_node.cc
 )
+target_compile_options(nvjpeg_decode_node PRIVATE
+  $<$<CXX_COMPILER_ID:GNU>:-Wno-array-bounds>
+)
 target_link_libraries(nvjpeg_decode_node PUBLIC
   nvjpeg
   absl::log
 )
-

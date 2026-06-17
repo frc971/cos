@@ -64,7 +64,10 @@ void NvjpegDecodeNode::DecodeJpegBuffer(
       jpeg_buffer->size(), &pixfmt, &width, &height));
 
   auto buffer_shared_ptr = std::make_shared<DecodedJpegNvBuffer>(buffer);
-  for (const auto& callback : callbacks_) {
+
+  for (int i = 0; i < callbacks_.size(); i++) {  // NOLINT
+    std::function<void(std::shared_ptr<DecodedJpegNvBuffer>)> callback =
+        callbacks_[i];
     callback(buffer_shared_ptr);
   }
 }

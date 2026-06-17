@@ -27,6 +27,8 @@ option(ENABLE_CLANG_TIDY "Enable clang-tidy for static analysis" OFF)
 
 add_compile_options(-march=armv8-a+simd)
 
+list(PREPEND CMAKE_PREFIX_PATH "${CMAKE_SYSROOT}/opt/nvidia/vpi3")
+
 find_package(CUDAToolkit REQUIRED)
 find_package(JPEG REQUIRED)
 find_package(OpenCV REQUIRED)
