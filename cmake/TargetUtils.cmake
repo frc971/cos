@@ -1,0 +1,12 @@
+function(get_all_targets OUT_VAR DIR)
+    get_property(BUILDSYSTEM_TARGETS DIRECTORY ${DIR} PROPERTY BUILDSYSTEM_TARGETS)
+    get_property(SUBDIRECTORIES DIRECTORY ${DIR} PROPERTY SUBDIRECTORIES)
+    
+    set(ALL_TARGETS ${BUILDSYSTEM_TARGETS})
+    foreach(SUBDIR IN LISTS SUBDIRECTORIES)
+        get_all_targets(SUBDIR_TARGETS ${SUBDIR})
+        list(APPEND ALL_TARGETS ${SUBDIR_TARGETS})
+    endforeach()
+    
+    set(${OUT_VAR} ${ALL_TARGETS} PARENT_SCOPE)
+endfunction()
