@@ -8,6 +8,13 @@
 
 namespace localization {
 
+SquareSolverNode::SquareSolverNode(camera::camera_constant_t camera_constant,
+                                   wpi::apriltag::AprilTagFieldLayout layout,
+                                   std::vector<cv::Point3d> tag_corners)
+    : SquareSolverNode(camera_constant.intrinsics_path.value(),
+                       camera_constant.extrinsics_path.value(),
+                       std::move(layout), std::move(tag_corners)) {}
+
 SquareSolverNode::SquareSolverNode(const std::string& intrinsics_path,
                                    const std::string& extrinsics_path,
                                    wpi::apriltag::AprilTagFieldLayout layout,

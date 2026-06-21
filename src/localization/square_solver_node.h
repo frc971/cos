@@ -6,6 +6,7 @@
 #include <vector>
 #include <wpi/apriltag/AprilTagFieldLayout.hpp>
 #include <wpi/math/geometry/Pose3d.hpp>
+#include "camera/camera_constants.h"
 #include "localization/position_solver.h"
 
 namespace localization {
@@ -14,6 +15,9 @@ class SquareSolverNode : public IPositionSolverNode {
  public:
   SquareSolverNode(const std::string& intrinsics_path,
                    const std::string& extrinsics_path,
+                   wpi::apriltag::AprilTagFieldLayout layout = kapriltag_layout,
+                   std::vector<cv::Point3d> tag_corners = kapriltag_corners);
+  SquareSolverNode(camera::camera_constant_t camera_constant,
                    wpi::apriltag::AprilTagFieldLayout layout = kapriltag_layout,
                    std::vector<cv::Point3d> tag_corners = kapriltag_corners);
 

@@ -9,12 +9,12 @@
 namespace localization {
 
 UnambiguousSolverNode::UnambiguousSolverNode(
-    const std::vector<CameraConfig>& camera_configs,
+    const std::vector<camera::camera_constant_t>& camera_constants,
     const wpi::apriltag::AprilTagFieldLayout& layout) {
-  solvers_.reserve(camera_configs.size());
-  for (const CameraConfig& cfg : camera_configs) {
-    camera_names_.push_back(cfg.name);
-    solvers_.emplace_back(cfg.intrinsics_path, cfg.extrinsics_path, layout);
+  solvers_.reserve(camera_constants.size());
+  for (const camera::camera_constant_t& cc : camera_constants) {
+    camera_names_.push_back(cc.name);
+    solvers_.emplace_back(cc, layout);
   }
 }
 

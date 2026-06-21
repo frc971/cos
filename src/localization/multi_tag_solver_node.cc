@@ -14,6 +14,14 @@ static const cv::Mat zero_vec = (cv::Mat_<double>(3, 1) << 0, 0, 0);
 
 namespace localization {
 
+MultiTagSolverNode::MultiTagSolverNode(
+    camera::camera_constant_t camera_constant,
+    const wpi::apriltag::AprilTagFieldLayout& layout,
+    const std::vector<cv::Point3d>& tag_corners)
+    : MultiTagSolverNode(camera_constant.intrinsics_path.value(),
+                         camera_constant.extrinsics_path.value(), layout,
+                         tag_corners) {}
+
 static auto CvMatToPoint3d(cv::Mat mat) -> cv::Point3d {
   return {mat.at<double>(0), mat.at<double>(1), mat.at<double>(2)};
 }

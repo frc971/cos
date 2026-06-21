@@ -2,8 +2,8 @@
 #include <functional>
 #include <mutex>
 #include <optional>
-#include <string>
 #include <vector>
+#include "camera/camera_constants.h"
 #include "localization/multi_tag_solver_node.h"
 #include "localization/position.h"
 #include "localization/position_solver.h"
@@ -12,14 +12,8 @@ namespace localization {
 
 class UnambiguousSolverNode : public IJointPositionSolverNode {
  public:
-  struct CameraConfig {
-    std::string name;
-    std::string intrinsics_path;
-    std::string extrinsics_path;
-  };
-
   explicit UnambiguousSolverNode(
-      const std::vector<CameraConfig>& camera_configs,
+      const std::vector<camera::camera_constant_t>& camera_constants,
       const wpi::apriltag::AprilTagFieldLayout& layout = kapriltag_layout);
 
   void RegisterCallback(

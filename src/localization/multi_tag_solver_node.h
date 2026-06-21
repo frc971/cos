@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 #include <wpi/apriltag/AprilTagFieldLayout.hpp>
+#include "camera/camera_constants.h"
 #include "localization/position_solver.h"
 #include "localization/square_solver_node.h"
 
@@ -18,6 +19,10 @@ class MultiTagSolverNode : public IPositionSolverNode {
  public:
   MultiTagSolverNode(
       const std::string& intrinsics_path, const std::string& extrinsics_path,
+      const wpi::apriltag::AprilTagFieldLayout& layout = kapriltag_layout,
+      const std::vector<cv::Point3d>& tag_corners = kapriltag_corners);
+  MultiTagSolverNode(
+      camera::camera_constant_t camera_constant,
       const wpi::apriltag::AprilTagFieldLayout& layout = kapriltag_layout,
       const std::vector<cv::Point3d>& tag_corners = kapriltag_corners);
 

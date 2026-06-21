@@ -9,6 +9,7 @@ target_link_libraries(square_solver_node PUBLIC
   apriltag::apriltag
   absl::log
   constants_from_json
+  camera_constants
   camera_utils
   transform
 )
@@ -27,6 +28,7 @@ target_link_libraries(multi_tag_solver_node PUBLIC
   apriltag::apriltag
   absl::log
   constants_from_json
+  camera_constants
   camera_utils
   transform
   square_solver_node
@@ -43,6 +45,7 @@ target_sources(unambiguous_solver_node
 target_link_libraries(unambiguous_solver_node PUBLIC
   wpimath::wpimath
   apriltag::apriltag
+  camera_constants
   multi_tag_solver_node
   transform
 )
