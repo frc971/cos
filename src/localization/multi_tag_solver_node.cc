@@ -50,10 +50,6 @@ MultiTagSolverNode::MultiTagSolverNode(
       camera_to_robot_(Transform3dToCvMat(utils::ExtrinsicsJsonToCameraToRobot(
           utils::ReadExtrinsics(extrinsics_path)))),
       single_tag_solver_(intrinsics_path, extrinsics_path) {
-  for (const auto& cb : callbacks_) {
-    single_tag_solver_.RegisterCallback(cb);
-  }
-
   cv::Mat rvec = (cv::Mat_<double>(3, 1) << 0, std::numbers::pi, 0);
   cv::Mat tvec = (cv::Mat_<double>(3, 1) << 0, 0, 0);
   cv::Mat rotate_z = utils::MakeTransform(rvec, tvec);
@@ -76,6 +72,7 @@ MultiTagSolverNode::MultiTagSolverNode(
 void MultiTagSolverNode::RegisterCallback(
     const std::function<void(ambiguous_estimate_t)>& callback) {
   callbacks_.emplace_back(callback);
+  single_tag_solver_.RegisterCallback(callback);
 }
 
 void MultiTagSolverNode::AmbiguousSolve(

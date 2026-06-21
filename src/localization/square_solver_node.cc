@@ -53,12 +53,10 @@ void SquareSolverNode::AmbiguousSolve(
       }
     }
 
-    std::vector<cv::Point2d> corners(detection.corners.begin(),
-                                     detection.corners.end());
     std::vector<cv::Mat> rvecs;
     std::vector<cv::Mat> tvecs;
 
-    cv::solvePnPGeneric(tag_corners_, corners, camera_matrix_,
+    cv::solvePnPGeneric(tag_corners_, detection.corners, camera_matrix_,
                         distortion_coefficients_, rvecs, tvecs, false,
                         cv::SOLVEPNP_IPPE_SQUARE);
 
