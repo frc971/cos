@@ -1,4 +1,5 @@
 add_subdirectory(abseil-cpp)
+add_subdirectory(971apriltag)
 add_subdirectory(cpp-mjpeg-streamer)
 add_subdirectory(json)
 add_subdirectory(nvjpeg)
