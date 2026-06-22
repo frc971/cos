@@ -11,10 +11,10 @@ namespace localization {
 UnambiguousSolverNode::UnambiguousSolverNode(
     const std::vector<camera::camera_constant_t>& camera_constants,
     const wpi::apriltag::AprilTagFieldLayout& layout) {
-  solvers_.reserve(camera_constants.size());
+  multitag_solvers_.reserve(camera_constants.size());
   for (const camera::camera_constant_t& cc : camera_constants) {
     camera_names_.push_back(cc.name);
-    solvers_.emplace_back(cc, layout);
+    multitag_solvers_.emplace_back(cc, layout);
   }
 }
 
@@ -25,8 +25,7 @@ void UnambiguousSolverNode::RegisterCallback(
 
 auto UnambiguousSolverNode::Cost(const wpi::math::Pose3d& a,
                                  const wpi::math::Pose3d& b) -> double {
-  double translation =
-      a.Translation().Distance(b.Translation()).value();
+  double translation = a.Translation().Distance(b.Translation()).value();
   wpi::math::Rotation3d delta = a.Rotation().RelativeTo(b.Rotation());
   double rotation = delta.Angle().value();
   constexpr double krotation_weight = 0.1;
@@ -128,7 +127,8 @@ auto UnambiguousSolverNode::SearchSolutions(
 }
 
 auto UnambiguousSolverNode::GetAmbiguousEstimates(
-    std::vector<std::vector<apriltag::tag_detection_t>>& detection_batches,
+    const std::vector<std::vector<apriltag::tag_detection_t>>&
+        detection_batches,
     bool reject_far_tags) -> std::vector<ambiguous_estimate_t> {
   double latest_timestamp = -1;
   for (const auto& detections : detection_batches) {
@@ -138,19 +138,22 @@ auto UnambiguousSolverNode::GetAmbiguousEstimates(
   }
 
   std::vector<ambiguous_estimate_t> estimates;
-  const size_t num_cameras = std::min(solvers_.size(), detection_batches.size());
+  const size_t num_cameras =
+      std::min(multitag_solvers_.size(), detection_batches.size());
   for (size_t i = 0; i < num_cameras; i++) {
     const std::vector<apriltag::tag_detection_t>& detections =
         detection_batches[i];
     if (detections.empty()) {
       continue;
     }
-    if (latest_timestamp - detections[0].timestamp >= kacceptable_frame_recency) {
+    if (latest_timestamp - detections[0].timestamp >=
+        kacceptable_frame_recency) {
       continue;
     }
 
     std::optional<ambiguous_estimate_t> est =
-        solvers_[i].EstimatePositionAmbiguous(detections, !reject_far_tags);
+        multitag_solvers_[i].AmbiguousSolveWithoutNotify(detections,
+                                                         reject_far_tags);
     if (!est.has_value()) {
       continue;
     }
@@ -173,8 +176,21 @@ auto UnambiguousSolverNode::GetAmbiguousEstimates(
 }
 
 void UnambiguousSolverNode::Solve(
-    std::vector<std::vector<apriltag::tag_detection_t>>& detection_batches,
+    const std::vector<std::vector<apriltag::tag_detection_t>>&
+        detection_batches,
     bool reject_far_tags) {
+  const std::optional<position_estimate_t> pose_estimate =
+      SolveWithoutNotify(detection_batches, reject_far_tags);
+
+  for (const auto& cb : callbacks_) {
+    cb(pose_estimate);
+  }
+}
+
+auto UnambiguousSolverNode::SolveWithoutNotify(
+    const std::vector<std::vector<apriltag::tag_detection_t>>&
+        detection_batches,
+    bool reject_far_tags) -> std::optional<position_estimate_t> {
   const auto& ambiguous_estimates =
       GetAmbiguousEstimates(detection_batches, reject_far_tags);
   std::vector<position_estimate_t> best_solution;
@@ -184,37 +200,31 @@ void UnambiguousSolverNode::Solve(
                                 best_solution, best_cost);
 
   if (best_solution.empty()) {
-    for (const auto& cb : callbacks_) {
-      cb(std::nullopt);
-    }
-    return;
+    return std::nullopt;
   }
 
   double avg_variance = 0;
   double avg_timestamp = 0;
-  std::unordered_set<int> tag_ids;
+  std::vector<int> tag_ids;
   for (const position_estimate_t& est : best_solution) {
     avg_variance += est.variance;
     avg_timestamp += est.timestamp;
     for (const int tag_id : est.tag_ids) {
-      tag_ids.insert(tag_id);
+      tag_ids.push_back(tag_id);
     }
   }
   avg_variance /= best_solution.size();
   avg_timestamp /= best_solution.size();
 
-  position_estimate_t estimate{
-      .pose = WeightedAveragePose(best_solution),
-      .variance = avg_variance,
-      .timestamp = avg_timestamp,
-      .num_tags = static_cast<int>(tag_ids.size()),
-      .loss = cost};
+  position_estimate_t estimate{.tag_ids = tag_ids,
+                               .pose = WeightedAveragePose(best_solution),
+                               .variance = avg_variance,
+                               .timestamp = avg_timestamp,
+                               .num_tags = static_cast<int>(tag_ids.size()),
+                               .loss = cost};
 
   prev_pose_estimate_ = estimate;
-
-  for (const auto& cb : callbacks_) {
-    cb(estimate);
-  }
+  return estimate;
 }
 
 }  // namespace localization

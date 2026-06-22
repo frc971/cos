@@ -17,17 +17,20 @@ class UnambiguousSolverNode : public IJointPositionSolverNode {
       const wpi::apriltag::AprilTagFieldLayout& layout = kapriltag_layout);
 
   void RegisterCallback(
-      const std::function<void(std::optional<position_estimate_t>)>&
-          callback) override;
-  void Solve(std::vector<std::vector<apriltag::tag_detection_t>>&
+      const std::function<void(std::optional<position_estimate_t>)>& callback)
+      override;
+  void Solve(const std::vector<std::vector<apriltag::tag_detection_t>>&
                  detection_batches,
              bool reject_far_tags = true) override;
+  auto SolveWithoutNotify(
+      const std::vector<std::vector<apriltag::tag_detection_t>>&
+          detection_batches,
+      bool reject_far_tags = true) -> std::optional<position_estimate_t>;
 
  private:
   static auto Cost(const wpi::math::Pose3d& a,
                    const wpi::math::Pose3d& b) -> double;
-  auto ComputeCost(
-      const std::vector<position_estimate_t>& poses) -> double;
+  auto ComputeCost(const std::vector<position_estimate_t>& poses) -> double;
   static auto WeightedAveragePose(
       const std::vector<position_estimate_t>& solutions) -> wpi::math::Pose3d;
   auto SearchSolutions(
@@ -36,11 +39,12 @@ class UnambiguousSolverNode : public IJointPositionSolverNode {
       std::vector<position_estimate_t>& best_solution,
       double& best_cost) -> double;
   auto GetAmbiguousEstimates(
-      std::vector<std::vector<apriltag::tag_detection_t>>& detection_batches,
+      const std::vector<std::vector<apriltag::tag_detection_t>>&
+          detection_batches,
       bool reject_far_tags) -> std::vector<ambiguous_estimate_t>;
 
   std::vector<std::string> camera_names_;
-  std::vector<MultiTagSolverNode> solvers_;
+  std::vector<MultiTagSolverNode> multitag_solvers_;
   std::mutex mutex_;
   std::optional<position_estimate_t> prev_pose_estimate_;
   static constexpr double kacceptable_frame_recency = 0.25;

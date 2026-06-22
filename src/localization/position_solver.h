@@ -47,7 +47,7 @@ class IPositionSolverNode {
   virtual void RegisterCallback(
       const std::function<void(ambiguous_estimate_t)>& callback) = 0;
   virtual void AmbiguousSolve(
-      std::shared_ptr<std::vector<apriltag::tag_detection_t>>& detections,
+      const std::shared_ptr<std::vector<apriltag::tag_detection_t>>& detections,
       bool reject_far_tags = true) = 0;
   virtual ~IPositionSolverNode() = default;
 };
@@ -57,9 +57,9 @@ class IJointPositionSolverNode {
   virtual void RegisterCallback(
       const std::function<void(std::optional<position_estimate_t>)>&
           callback) = 0;
-  virtual void Solve(
-      std::vector<std::vector<apriltag::tag_detection_t>>& detection_batches,
-      bool reject_far_tags = true) = 0;
+  virtual void Solve(const std::vector<std::vector<apriltag::tag_detection_t>>&
+                         detection_batches,
+                     bool reject_far_tags = true) = 0;
   virtual ~IJointPositionSolverNode() = default;
 };
 

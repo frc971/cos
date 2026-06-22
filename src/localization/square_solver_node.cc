@@ -40,10 +40,22 @@ void SquareSolverNode::RegisterCallback(
 }
 
 void SquareSolverNode::AmbiguousSolve(
-    std::shared_ptr<std::vector<apriltag::tag_detection_t>>& detections,
+    const std::shared_ptr<std::vector<apriltag::tag_detection_t>>& detections,
     bool reject_far_tags) {
+  const std::vector<ambiguous_estimate_t> pose_estimates =
+      AmbiguousSolveWithoutNotify(*detections, reject_far_tags);
+  for (const auto& pose_estimate : pose_estimates) {
+    for (const auto& cb : callbacks_) {
+      cb(pose_estimate);
+    }
+  }
+}
+
+auto SquareSolverNode::AmbiguousSolveWithoutNotify(
+    const std::vector<apriltag::tag_detection_t>& detections,
+    bool reject_far_tags) -> std::vector<ambiguous_estimate_t> {
   std::vector<ambiguous_estimate_t> pose_estimates;
-  for (const auto& detection : *detections) {
+  for (const auto& detection : detections) {
     if (reject_far_tags) {
       const auto& c = detection.corners;
       const double area = 0.5 * std::abs((c[0].x - c[2].x) * (c[1].y - c[3].y) -
@@ -87,11 +99,7 @@ void SquareSolverNode::AmbiguousSolve(
 
     pose_estimates.emplace_back(est1, est2);
   }
-  for (const auto& pose_estimate : pose_estimates) {
-    for (const auto& cb : callbacks_) {
-      cb(pose_estimate);
-    }
-  }
+  return pose_estimates;
 }
 
 auto SquareSolverNode::ComputeRobotPose(const cv::Mat& tvec,

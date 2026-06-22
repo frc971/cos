@@ -76,15 +76,28 @@ void MultiTagSolverNode::RegisterCallback(
 }
 
 void MultiTagSolverNode::AmbiguousSolve(
-    std::shared_ptr<std::vector<apriltag::tag_detection_t>>& detections,
+    const std::shared_ptr<std::vector<apriltag::tag_detection_t>>& detections,
     bool reject_far_tags) {
+  const std::optional<ambiguous_estimate_t> pose_estimate =
+      AmbiguousSolveWithoutNotify(*detections, reject_far_tags);
+  if (!pose_estimate) {
+    return;
+  }
+  for (const auto& cb : callbacks_) {
+    cb(pose_estimate.value());
+  }
+}
+
+auto MultiTagSolverNode::AmbiguousSolveWithoutNotify(
+    const std::vector<apriltag::tag_detection_t>& detections,
+    bool reject_far_tags) -> std::optional<ambiguous_estimate_t> {
   std::vector<cv::Point3d> object_points;
   std::vector<cv::Point2d> image_points;
   std::vector<int> tag_ids;
   std::vector<int> rejected_tag_ids;
   double avg_distance = 0.0;
 
-  for (const apriltag::tag_detection_t& detection : *detections) {
+  for (const apriltag::tag_detection_t& detection : detections) {
     if (!tag_corners_[detection.tag_id].has_value()) {
       LOG(WARNING) << "Invalid tag id: " << detection.tag_id;
       continue;
@@ -121,12 +134,17 @@ void MultiTagSolverNode::AmbiguousSolve(
   }
 
   if (image_points.empty() || object_points.empty()) {
-    return;
+    return std::nullopt;
   }
 
   if (tag_ids.size() == 1) {
-    single_tag_solver_.AmbiguousSolve(detections, reject_far_tags);
-    return;
+    const std::vector<ambiguous_estimate_t> square_estimate =
+        single_tag_solver_.AmbiguousSolveWithoutNotify(detections,
+                                                       reject_far_tags);
+    if (square_estimate.empty()) {
+      return std::nullopt;
+    }
+    return square_estimate[0];
   }
 
   avg_distance /= tag_ids.size();
@@ -139,7 +157,7 @@ void MultiTagSolverNode::AmbiguousSolve(
                  cv::SOLVEPNP_SQPNP);
   } catch (const std::exception& e) {
     LOG(WARNING) << "Caught solvePnP exception:\n" << e.what();
-    return;
+    return std::nullopt;
   }
 
   cv::Mat field_to_camera = utils::MakeTransform(rvec, tvec).inv();
@@ -157,14 +175,11 @@ void MultiTagSolverNode::AmbiguousSolve(
                               ? 100.0
                               : Variance(num_tags, avg_distance, kvariance_min_,
                                          kvariance_scalar_),
-              .timestamp = (*detections)[0].timestamp,
+              .timestamp = (detections)[0].timestamp,
               .num_tags = num_tags,
               .avg_tag_dist = avg_distance},
       .pos2 = std::nullopt};
-
-  for (const auto& cb : callbacks_) {
-    cb(result);
-  }
+  return result;
 }
 
 }  // namespace localization

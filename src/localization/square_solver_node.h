@@ -24,8 +24,11 @@ class SquareSolverNode : public IPositionSolverNode {
   void RegisterCallback(
       const std::function<void(ambiguous_estimate_t)>& callback) override;
   void AmbiguousSolve(
-      std::shared_ptr<std::vector<apriltag::tag_detection_t>>& detections,
+      const std::shared_ptr<std::vector<apriltag::tag_detection_t>>& detections,
       bool reject_far_tags = true) override;
+  auto AmbiguousSolveWithoutNotify(
+      const std::vector<apriltag::tag_detection_t>& detections,
+      bool reject_far_tags = true) -> std::vector<ambiguous_estimate_t>;
 
  private:
   auto ComputeRobotPose(const cv::Mat& tvec, const cv::Mat& rvec,
