@@ -1,3 +1,18 @@
+add_library(camera_constants)
+target_sources(camera_constants
+  PRIVATE
+    camera_constants.cc
+)
+target_link_libraries(camera_constants PUBLIC
+  nlohmann_json::nlohmann_json
+  absl::log
+  absl::check
+  absl::flags
+)
+target_include_directories(camera_constants PUBLIC
+  ${CMAKE_SOURCE_DIR}
+)
+
 add_library(uvc_camera_node)
 target_sources(uvc_camera_node
   PRIVATE
@@ -6,7 +21,9 @@ target_sources(uvc_camera_node
 target_link_libraries(uvc_camera_node PRIVATE
   uvc
   absl::log
+  absl::check
   nlohmann_json::nlohmann_json
+  camera_constants
 )
 
 add_library(nvjpeg_decode_node)

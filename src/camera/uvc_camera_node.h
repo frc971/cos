@@ -6,11 +6,13 @@
 #include <memory>
 
 #include "libuvc/libuvc.h"
+#include "camera/camera_constants.h"
 
 namespace camera {
 
 struct UVCCameraConfig {
   UVCCameraConfig(const std::string& path);
+  explicit UVCCameraConfig(const camera_constant_t& camera_constant);
   std::string name;       // For debugging
   std::string serial_id;  // Used to find which camera to use
   int height;

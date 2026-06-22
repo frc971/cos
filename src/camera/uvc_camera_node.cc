@@ -8,6 +8,17 @@
 
 namespace camera {
 
+UVCCameraConfig::UVCCameraConfig(const camera_constant_t& camera_constant)
+    : name(camera_constant.name),
+      serial_id(camera_constant.serial_id.value()),
+      height(static_cast<int>(camera_constant.frame_height.value())),
+      width(static_cast<int>(camera_constant.frame_width.value())),
+      fps(static_cast<int>(camera_constant.fps.value())),
+      max_payload_size(static_cast<int>(
+          camera_constant.max_payload_size.value_or(3072))),
+      max_frame_size(static_cast<int>(
+          camera_constant.max_frame_size.value_or(2048589))) {}
+
 UVCCameraConfig::UVCCameraConfig(const std::string& path) {
   std::ifstream file(path);
   CHECK(file.is_open());
