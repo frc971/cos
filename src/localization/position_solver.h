@@ -1,6 +1,5 @@
 #pragma once
 #include <Eigen/Core>
-#include <functional>
 #include <memory>
 #include <opencv2/core/mat.hpp>
 #include <opencv2/core/types.hpp>
@@ -9,6 +8,7 @@
 #include <wpi/apriltag/AprilTagFieldLayout.hpp>
 #include "apriltag/tag_detection.h"
 #include "localization/position.h"
+#include "utils/node.h"
 
 namespace localization {
 
@@ -42,25 +42,19 @@ inline auto Variance(int num_tags, double distance, double min_variance,
   return distance * scalar / (num_tags * num_tags) + min_variance;
 }
 
-class IPositionSolverNode {
+class IPositionSolverNode : public INode<ambiguous_estimate_t> {
  public:
-  virtual void RegisterCallback(
-      const std::function<void(ambiguous_estimate_t)>& callback) = 0;
   virtual void AmbiguousSolve(
       const std::shared_ptr<std::vector<apriltag::tag_detection_t>>& detections,
       bool reject_far_tags = true) = 0;
-  virtual ~IPositionSolverNode() = default;
 };
 
-class IJointPositionSolverNode {
+class IJointPositionSolverNode
+    : public INode<std::optional<position_estimate_t>> {
  public:
-  virtual void RegisterCallback(
-      const std::function<void(std::optional<position_estimate_t>)>&
-          callback) = 0;
   virtual void Solve(const std::vector<std::vector<apriltag::tag_detection_t>>&
                          detection_batches,
                      bool reject_far_tags = true) = 0;
-  virtual ~IJointPositionSolverNode() = default;
 };
 
 }  // namespace localization
