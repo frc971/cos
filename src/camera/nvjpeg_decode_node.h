@@ -8,6 +8,7 @@
 #include "NvJpegDecoder.h"
 
 #include "camera/uvc_camera_node.h"
+#include "utils/node.h"
 namespace camera {
 
 class DecodedJpegNvBuffer {
@@ -16,13 +17,13 @@ class DecodedJpegNvBuffer {
   NvBuffer* buffer;
 };
 
-class NvjpegDecodeNode {
+class NvjpegDecodeNode : public INode<std::shared_ptr<DecodedJpegNvBuffer>> {
  public:
   NvjpegDecodeNode(const std::string& name);
-  ~NvjpegDecodeNode();
+  ~NvjpegDecodeNode() override;
   void RegisterCallback(
       const std::function<void(std::shared_ptr<DecodedJpegNvBuffer>)>&
-          callback);
+          callback) override;
   void Decode(const std::shared_ptr<JpegBuffer>& jpeg_buffer);
 
  private:

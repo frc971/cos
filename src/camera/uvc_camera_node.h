@@ -7,6 +7,7 @@
 
 #include "libuvc/libuvc.h"
 #include "camera/camera_constants.h"
+#include "utils/node.h"
 
 namespace camera {
 
@@ -49,12 +50,13 @@ class JpegBuffer {
   void* ptr_;
 };
 
-class UVCCameraNode {
+class UVCCameraNode : public INode<std::shared_ptr<JpegBuffer>> {
  public:
   UVCCameraNode(const UVCCameraConfig& config);
-  ~UVCCameraNode();
+  ~UVCCameraNode() override;
   void RegisterCallback(
-      const std::function<void(std::shared_ptr<JpegBuffer>)>& callback);
+      const std::function<void(std::shared_ptr<JpegBuffer>)>& callback)
+      override;
   void Start();
   void CallBack(uvc_frame_t* frame);  // This should not be used publicly
 
