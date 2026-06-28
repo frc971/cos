@@ -38,22 +38,45 @@ GPUApriltagDetectorNode::GPUApriltagDetectorNode(
 }
 
 void GPUApriltagDetectorNode::RegisterCallback(
-    const std::function<void(std::shared_ptr<std::vector<tag_detection_t>>)>&
+    const std::function<void(std::shared_ptr<std::vector<tag_detection_t>>,
+                             control_loops::MetaDataList metadata,
+                             std::shared_ptr<control_loops::Context>)>&
         callback) {
   callbacks_.push_back(callback);
 }
 
-void GPUApriltagDetectorNode::Detect(const camera::DecodedJpegNvBuffer& frame,
-                                     double timestamp) {
+void GPUApriltagDetectorNode::Detect(
+    const std::shared_ptr<camera::DecodedJpegNvBuffer>& frame,
+    control_loops::MetaDataList metadata,
+    std::shared_ptr<control_loops::Context> ctx) {
+  double timestamp = 0.0;
+  if (metadata.empty()) {
+    LOG(WARNING) << "GPUApriltagDetectorNode received empty metadata";
+  } else {
+    timestamp = metadata.front().timestamp;
+  }
   auto detections = std::make_shared<std::vector<tag_detection_t>>();
+  if (frame == nullptr || frame->buffer == nullptr) {
+    for (const auto& cb : callbacks_) {
+      cb(detections, metadata, ctx);
+    }
+    return;
+  }
+
   try {
     absl::Status detection_status =
-        gpu_detector_->Detect(frame.buffer->planes[0].data, nullptr);
+        gpu_detector_->Detect(frame->buffer->planes[0].data, nullptr);
     if (!detection_status.ok()) {
+      for (const auto& cb : callbacks_) {
+        cb(detections, metadata, ctx);
+      }
       return;
     }
   } catch (const std::exception& e) {
     LOG(WARNING) << "No detections because of exception: " << e.what();
+    for (const auto& cb : callbacks_) {
+      cb(detections, metadata, ctx);
+    }
     return;
   }
 
@@ -75,7 +98,7 @@ void GPUApriltagDetectorNode::Detect(const camera::DecodedJpegNvBuffer& frame,
   }
 
   for (const auto& cb : callbacks_) {
-    cb(detections);
+    cb(detections, metadata, ctx);
   }
 }
 

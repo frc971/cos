@@ -19,18 +19,22 @@ class GPUApriltagDetectorNode : public IApriltagDetectorNode {
   ~GPUApriltagDetectorNode() override;
 
   void RegisterCallback(
-      const std::function<void(std::shared_ptr<std::vector<tag_detection_t>>)>&
+      const std::function<void(std::shared_ptr<std::vector<tag_detection_t>>,
+                               control_loops::MetaDataList metadata,
+                               std::shared_ptr<control_loops::Context>)>&
           callback) override;
-  void Detect(const camera::DecodedJpegNvBuffer& frame,
-              double timestamp) override;
+  void Detect(const std::shared_ptr<camera::DecodedJpegNvBuffer>& frame,
+              control_loops::MetaDataList metadata,
+              std::shared_ptr<control_loops::Context> ctx) override;
 
  private:
   frc::apriltag::CameraMatrix camera_matrix_;
   frc::apriltag::DistCoeffs distortion_coefficients_;
   apriltag_detector_t* apriltag_detector_;
   std::unique_ptr<frc::apriltag::GpuDetector> gpu_detector_;
-  std::vector<
-      std::function<void(std::shared_ptr<std::vector<tag_detection_t>>)>>
+  std::vector<std::function<void(std::shared_ptr<std::vector<tag_detection_t>>,
+                                 control_loops::MetaDataList metadata,
+                                 std::shared_ptr<control_loops::Context>)>>
       callbacks_;
   const vision::ImageFormat image_format_;
 };

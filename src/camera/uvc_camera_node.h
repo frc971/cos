@@ -7,8 +7,8 @@
 #include <string>
 #include <vector>
 
-#include "libuvc/libuvc.h"
 #include "camera/camera_constants.h"
+#include "libuvc/libuvc.h"
 
 namespace camera {
 
@@ -58,8 +58,8 @@ class UVCCameraNode {
  public:
   UVCCameraNode(const UVCCameraConfig& config);
   ~UVCCameraNode();
-  void RegisterCallback(
-      const std::function<void(std::shared_ptr<JpegBuffer>)>& callback);
+  void RegisterCallback(const std::function<void(std::shared_ptr<JpegBuffer>,
+                                                 double timestamp)>& callback);
   void Start();
   void CallBack(uvc_frame_t* frame);  // This should not be used publicly
 
@@ -69,7 +69,9 @@ class UVCCameraNode {
   uvc_device_t* device_;
   uvc_device_handle_t* device_handle_;
   uvc_stream_ctrl_t ctrl_;
-  std::vector<std::function<void(std::shared_ptr<JpegBuffer>)>> callbacks_;
+  std::vector<
+      std::function<void(std::shared_ptr<JpegBuffer>, double timestamp)>>
+      callbacks_;
   std::atomic<bool> start_ = false;
 };
 

@@ -45,6 +45,7 @@ target_sources(unambiguous_solver_node
 target_link_libraries(unambiguous_solver_node PUBLIC
   wpimath::wpimath
   apriltag::apriltag
+  absl::check
   camera_constants
   multi_tag_solver_node
   transform
@@ -52,4 +53,3 @@ target_link_libraries(unambiguous_solver_node PUBLIC
 target_include_directories(unambiguous_solver_node PUBLIC
   ${CMAKE_SOURCE_DIR}
 )
-

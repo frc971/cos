@@ -16,12 +16,14 @@ class LoopController : public std::enable_shared_from_this<LoopController> {
  public:
   explicit LoopController(int num_cameras);
 
-  void ReceiveFrame(int camera_idx, std::shared_ptr<camera::JpegBuffer> frame);
+  void ReceiveFrame(int camera_idx, std::shared_ptr<camera::JpegBuffer> frame,
+                    double timestamp);
 
   void RegisterIterationCallback(
-      int camera_idx, std::function<void(std::shared_ptr<camera::JpegBuffer>,
-                                         std::shared_ptr<Context>)>
-                          callback);
+      int camera_idx,
+      std::function<void(std::shared_ptr<camera::JpegBuffer>,
+                         MetaDataList metadata, std::shared_ptr<Context>)>
+          callback);
 
   void Run();
   void WakeUp();
@@ -31,10 +33,12 @@ class LoopController : public std::enable_shared_from_this<LoopController> {
   int num_cameras_;
 
   std::vector<std::shared_ptr<camera::JpegBuffer>> latest_frames_;
+  std::vector<MetaDataList> latest_metadata_;
   std::vector<std::mutex> frame_mutexes_;
 
-  std::vector<std::vector<std::function<void(
-      std::shared_ptr<camera::JpegBuffer>, std::shared_ptr<Context>)>>>
+  std::vector<std::vector<
+      std::function<void(std::shared_ptr<camera::JpegBuffer>,
+                         MetaDataList metadata, std::shared_ptr<Context>)>>>
       callbacks_;
 
   std::mutex wakeup_mutex_;

@@ -70,21 +70,25 @@ MultiTagSolverNode::MultiTagSolverNode(
 }
 
 void MultiTagSolverNode::RegisterCallback(
-    const std::function<void(ambiguous_estimate_t)>& callback) {
+    const std::function<void(ambiguous_estimate_t,
+                             control_loops::MetaDataList metadata)>& callback) {
   callbacks_.emplace_back(callback);
   single_tag_solver_.RegisterCallback(callback);
 }
 
 void MultiTagSolverNode::AmbiguousSolve(
     const std::shared_ptr<std::vector<apriltag::tag_detection_t>>& detections,
-    bool reject_far_tags) {
+    control_loops::MetaDataList metadata, bool reject_far_tags) {
+  if (metadata.empty()) {
+    LOG(WARNING) << "MultiTagSolverNode received empty metadata";
+  }
   const std::optional<ambiguous_estimate_t> pose_estimate =
       AmbiguousSolveWithoutNotify(*detections, reject_far_tags);
   if (!pose_estimate) {
     return;
   }
   for (const auto& cb : callbacks_) {
-    cb(pose_estimate.value());
+    cb(pose_estimate.value(), metadata);
   }
 }
 

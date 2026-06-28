@@ -1,26 +1,31 @@
 #include "localization/unambiguous_solver_node.h"
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <unordered_set>
 #include <wpi/math/geometry/Quaternion.hpp>
 #include <wpi/math/geometry/Rotation3d.hpp>
+#include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "utils/transform.h"
 
 namespace localization {
 
 UnambiguousSolverNode::UnambiguousSolverNode(
     const std::vector<camera::camera_constant_t>& camera_constants,
+    std::unique_ptr<IPositionSender> sender,
     const wpi::apriltag::AprilTagFieldLayout& layout) {
+  CHECK(sender != nullptr);
+  num_cameras_ = static_cast<int>(camera_constants.size());
+  sender_ = std::move(sender);
+  accumulated_detections_.resize(camera_constants.size());
+  accumulated_metadata_.resize(camera_constants.size());
+  camera_reported_.resize(camera_constants.size());
   multitag_solvers_.reserve(camera_constants.size());
   for (const camera::camera_constant_t& cc : camera_constants) {
     camera_names_.push_back(cc.name);
     multitag_solvers_.emplace_back(cc, layout);
   }
-}
-
-void UnambiguousSolverNode::RegisterCallback(
-    const std::function<void(std::optional<position_estimate_t>)>& callback) {
-  callbacks_.push_back(callback);
 }
 
 auto UnambiguousSolverNode::Cost(const wpi::math::Pose3d& a,
@@ -175,15 +180,51 @@ auto UnambiguousSolverNode::GetAmbiguousEstimates(
   return estimates;
 }
 
-void UnambiguousSolverNode::Solve(
-    const std::vector<std::vector<apriltag::tag_detection_t>>&
-        detection_batches,
-    bool reject_far_tags) {
-  const std::optional<position_estimate_t> pose_estimate =
-      SolveWithoutNotify(detection_batches, reject_far_tags);
+void UnambiguousSolverNode::Accumulate(
+    std::shared_ptr<std::vector<apriltag::tag_detection_t>> detections,
+    control_loops::MetaDataList metadata,
+    std::shared_ptr<control_loops::Context> /*ctx*/) {
+  if (metadata.empty()) {
+    LOG(WARNING) << "UnambiguousSolverNode received empty metadata";
+    return;
+  }
+  const int camera_idx = metadata.front().camera_idx;
+  CHECK(camera_idx >= 0 && camera_idx < num_cameras_);
+  CHECK(detections != nullptr);
 
-  for (const auto& cb : callbacks_) {
-    cb(pose_estimate);
+  std::unique_lock<std::mutex> lock(mutex_);
+  if (!camera_reported_[camera_idx]) {
+    camera_reported_[camera_idx] = true;
+    cameras_reported_++;
+  }
+
+  const bool more_recent_metadata =
+      accumulated_metadata_[camera_idx].empty() ||
+      metadata.front().timestamp >
+          accumulated_metadata_[camera_idx].front().timestamp;
+  if (more_recent_metadata && !detections->empty()) {
+    accumulated_detections_[camera_idx] = *detections;
+  }
+  if (more_recent_metadata) {
+    accumulated_metadata_[camera_idx] = metadata;
+  }
+
+  if (cameras_reported_ == num_cameras_) {
+    SolveAndReset(lock);
+  }
+}
+
+void UnambiguousSolverNode::SolveAndReset(std::unique_lock<std::mutex>& lock) {
+  const std::optional<position_estimate_t> result =
+      SolveWithoutNotify(accumulated_detections_);
+
+  cameras_reported_ = 0;
+  std::fill(camera_reported_.begin(), camera_reported_.end(), false);
+
+  lock.unlock();
+
+  if (result.has_value()) {
+    sender_->Send(result.value());
   }
 }
 

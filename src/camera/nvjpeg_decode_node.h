@@ -22,19 +22,27 @@ class NvjpegDecodeNode : public INode<std::shared_ptr<DecodedJpegNvBuffer>> {
   NvjpegDecodeNode(const std::string& name);
   ~NvjpegDecodeNode() override;
   void RegisterCallback(
-      const std::function<void(std::shared_ptr<DecodedJpegNvBuffer>)>&
+      const std::function<void(std::shared_ptr<DecodedJpegNvBuffer>,
+                               control_loops::MetaDataList metadata,
+                               std::shared_ptr<control_loops::Context>)>&
           callback) override;
-  void Decode(const std::shared_ptr<JpegBuffer>& jpeg_buffer);
+  void Decode(const std::shared_ptr<JpegBuffer>& jpeg_buffer,
+              control_loops::MetaDataList metadata,
+              std::shared_ptr<control_loops::Context> ctx);
 
  private:
-  void DecodeJpegBuffer(const std::shared_ptr<JpegBuffer>& jpeg_buffer);
+  void DecodeJpegBuffer(const std::shared_ptr<JpegBuffer>& jpeg_buffer,
+                        control_loops::MetaDataList metadata,
+                        std::shared_ptr<control_loops::Context> ctx);
 
  private:
   NvJPEGDecoder* decoder_ = nullptr;
   std::condition_variable_any cv_;
   std::timed_mutex mutex_;
   std::queue<std::function<void()>> tasks_;
-  std::vector<std::function<void(std::shared_ptr<DecodedJpegNvBuffer>)>>
+  std::vector<std::function<void(std::shared_ptr<DecodedJpegNvBuffer>,
+                                 control_loops::MetaDataList metadata,
+                                 std::shared_ptr<control_loops::Context>)>>
       callbacks_;
   std::jthread decode_thread_;
 };

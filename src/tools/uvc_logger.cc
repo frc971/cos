@@ -11,6 +11,7 @@
 
 #include "camera/nvjpeg_decode_node.h"
 #include "camera/uvc_camera_node.h"
+#include "control_loops/context.h"
 #include "streamer/jpeg_buffer_streamer_node.h"
 #include "utils/stop.h"
 
@@ -57,15 +58,17 @@ auto main(int argc, char* argv[]) -> int {
             absl::GetFlag(FLAGS_stream_path).value(),
             absl::GetFlag(FLAGS_port).value());
     uvc_camera_node->RegisterCallback(
-        [streamer = jpeg_buffer_streamer_node.get()](const auto& buffer) {
-          streamer->Stream(buffer);
-        });
+        [streamer = jpeg_buffer_streamer_node.get()](
+            const auto& buffer, double) { streamer->Stream(buffer); });
   }
 
-  uvc_camera_node->RegisterCallback(
-      [decoder = nvjpeg_decode_node.get()](const auto& buffer) {
-        decoder->Decode(buffer);
-      });
+  uvc_camera_node->RegisterCallback([decoder = nvjpeg_decode_node.get()](
+                                        const auto& buffer, double timestamp) {
+    control_loops::MetaDataList metadata{
+        control_loops::MetaData{.timestamp = timestamp}};
+    decoder->Decode(buffer, metadata,
+                    std::make_shared<control_loops::Context>());
+  });
 
   std::atomic<int> frame_index_atomic = 0;
   if (absl::GetFlag(FLAGS_log_folder).has_value()) {
@@ -73,7 +76,12 @@ auto main(int argc, char* argv[]) -> int {
     nvjpeg_decode_node->RegisterCallback(
         [frame_index_atomic = std::ref(frame_index_atomic),
          log_folder = absl::GetFlag(FLAGS_log_folder).value()](
-            const std::shared_ptr<camera::DecodedJpegNvBuffer>& buffer) {
+            const std::shared_ptr<camera::DecodedJpegNvBuffer>& buffer,
+            control_loops::MetaDataList,
+            std::shared_ptr<control_loops::Context>) {
+          if (buffer == nullptr) {
+            return;
+          }
           const int height = buffer->buffer->planes[0].fmt.height;
           const int width = buffer->buffer->planes[0].fmt.width;
 

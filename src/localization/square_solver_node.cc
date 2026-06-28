@@ -2,6 +2,7 @@
 #include <numbers>
 #include <opencv2/calib3d.hpp>
 #include <utility>
+#include "absl/log/log.h"
 #include "utils/camera_utils.h"
 #include "utils/constants_from_json.h"
 #include "utils/transform.h"
@@ -35,18 +36,22 @@ SquareSolverNode::SquareSolverNode(const std::string& intrinsics_path,
 }
 
 void SquareSolverNode::RegisterCallback(
-    const std::function<void(ambiguous_estimate_t)>& callback) {
+    const std::function<void(ambiguous_estimate_t,
+                             control_loops::MetaDataList metadata)>& callback) {
   callbacks_.push_back(callback);
 }
 
 void SquareSolverNode::AmbiguousSolve(
     const std::shared_ptr<std::vector<apriltag::tag_detection_t>>& detections,
-    bool reject_far_tags) {
+    control_loops::MetaDataList metadata, bool reject_far_tags) {
+  if (metadata.empty()) {
+    LOG(WARNING) << "SquareSolverNode received empty metadata";
+  }
   const std::vector<ambiguous_estimate_t> pose_estimates =
       AmbiguousSolveWithoutNotify(*detections, reject_far_tags);
   for (const auto& pose_estimate : pose_estimates) {
     for (const auto& cb : callbacks_) {
-      cb(pose_estimate);
+      cb(pose_estimate, metadata);
     }
   }
 }
