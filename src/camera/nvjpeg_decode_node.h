@@ -13,6 +13,7 @@ namespace camera {
 
 class DecodedJpegNvBuffer {
  public:
+  explicit DecodedJpegNvBuffer(NvBuffer* nv_buffer) : buffer(nv_buffer) {}
   ~DecodedJpegNvBuffer() { delete buffer; }
   NvBuffer* buffer;
 };

@@ -40,14 +40,11 @@ struct UVCCameraConfig {
 
 class JpegBuffer {
  public:
-  explicit JpegBuffer(size_t size, double timestamp = 0.0)
-      : timestamp(timestamp), size_(size), ptr_(std::malloc(size)) {}
+  explicit JpegBuffer(size_t size) : size_(size), ptr_(std::malloc(size)) {}
   auto ptr() -> void* const { return ptr_; }
 
   auto size() -> size_t const { return size_; }
   ~JpegBuffer() { std::free(ptr_); }
-
-  double timestamp;
 
  private:
   size_t size_;
@@ -58,8 +55,9 @@ class UVCCameraNode {
  public:
   UVCCameraNode(const UVCCameraConfig& config);
   ~UVCCameraNode();
-  void RegisterCallback(const std::function<void(std::shared_ptr<JpegBuffer>,
-                                                 double timestamp)>& callback);
+  void RegisterCallback(
+      const std::function<void(std::shared_ptr<JpegBuffer>,
+                               unsigned long timestamp)>& callback);
   void Start();
   void CallBack(uvc_frame_t* frame);  // This should not be used publicly
 
@@ -70,7 +68,7 @@ class UVCCameraNode {
   uvc_device_handle_t* device_handle_;
   uvc_stream_ctrl_t ctrl_;
   std::vector<
-      std::function<void(std::shared_ptr<JpegBuffer>, double timestamp)>>
+      std::function<void(std::shared_ptr<JpegBuffer>, unsigned long timestamp)>>
       callbacks_;
   std::atomic<bool> start_ = false;
 };

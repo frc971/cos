@@ -10,14 +10,13 @@ using position_estimate_t = struct PositionEstimate {
   std::vector<int> rejected_tag_ids;
   wpi::math::Pose3d pose;
   double variance;
-  double timestamp;
   int num_tags;
   double avg_tag_dist;
   bool invalid = false;
   double loss = 0;
 
-  friend auto operator<<(std::ostream& os, const PositionEstimate& t)
-      -> std::ostream& {
+  friend auto operator<<(std::ostream& os,
+                         const PositionEstimate& t) -> std::ostream& {
     const auto& tr = t.pose.Translation();
     const auto& r = t.pose.Rotation();
     os << "pose(x=" << tr.X().value() << " y=" << tr.Y().value()

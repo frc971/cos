@@ -10,9 +10,9 @@
 namespace camera {
 namespace {
 
-auto CaptureTimeSeconds(const timeval& capture_time) -> double {
-  return static_cast<double>(capture_time.tv_sec) +
-         (static_cast<double>(capture_time.tv_usec) / 1'000'000.0);
+auto CaptureTimeMicros(const timeval& capture_time) -> unsigned long {
+  return (static_cast<unsigned long>(capture_time.tv_sec) * 1'000'000UL) +
+         static_cast<unsigned long>(capture_time.tv_usec);
 }
 
 }  // namespace
@@ -74,9 +74,9 @@ UVCCameraNode::UVCCameraNode(const UVCCameraConfig& config)
 
 void UVCCameraNode::CallBack(uvc_frame_t* frame) {
   CHECK(frame->frame_format == UVC_COLOR_FORMAT_MJPEG);
-  const double timestamp = CaptureTimeSeconds(frame->capture_time);
+  const unsigned long timestamp = CaptureTimeMicros(frame->capture_time);
   std::shared_ptr<JpegBuffer> buffer =
-      std::make_shared<JpegBuffer>(frame->data_bytes, timestamp);
+      std::make_shared<JpegBuffer>(frame->data_bytes);
   std::memcpy(buffer->ptr(), frame->data, frame->data_bytes);
 
   for (size_t i = 0; i < callbacks_.size(); i++) {  // NOLINT
@@ -105,8 +105,8 @@ UVCCameraNode::~UVCCameraNode() {
 }
 
 void UVCCameraNode::RegisterCallback(
-    const std::function<void(std::shared_ptr<JpegBuffer>, double timestamp)>&
-        callback) {
+    const std::function<void(std::shared_ptr<JpegBuffer>,
+                             unsigned long timestamp)>& callback) {
   callbacks_.push_back(callback);
 }
 }  // namespace camera

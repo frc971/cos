@@ -111,21 +111,21 @@ class LoopController : public std::enable_shared_from_this<LoopController> {
   explicit LoopController(int num_cameras);
 
   // Called by UVCCameraNode's registered callback to deliver a new frame.
-  // timestamp is the jpeg capture time from uvc_frame_t->capture_time.
+  // timestamp is the jpeg capture time from uvc_frame_t->capture_time in microseconds.
   // Thread-safe; may be called from camera thread.
   void ReceiveFrame(int camera_idx,
                     std::shared_ptr<camera::JpegBuffer> frame,
-                    double timestamp);
+                    unsigned long timestamp);
 
   // Register a callback to be called once per iteration for a given camera.
-  // Signature: void(shared_ptr<JpegBuffer>, double timestamp, shared_ptr<Context>)
+  // Signature: void(shared_ptr<JpegBuffer>, unsigned long timestamp, shared_ptr<Context>)
   // timestamp is the jpeg capture time snapshotted at ReceiveFrame time.
   // Multiple callbacks per camera are allowed (e.g. streamer + decoder).
   // Must be called before Run().
   void RegisterIterationCallback(
       int camera_idx,
       std::function<void(std::shared_ptr<camera::JpegBuffer>,
-                         double timestamp,
+                         unsigned long timestamp,
                          std::shared_ptr<Context>)>
           callback);
 
@@ -143,12 +143,12 @@ class LoopController : public std::enable_shared_from_this<LoopController> {
 
   // Latest frame and capture timestamp per camera, written by ReceiveFrame().
   std::vector<std::shared_ptr<camera::JpegBuffer>> latest_frames_;
-  std::vector<double> latest_timestamps_;  // parallel to latest_frames_
+  std::vector<unsigned long> latest_timestamps_;  // parallel to latest_frames_
   std::vector<std::mutex> frame_mutexes_;  // one per camera
 
   // Downstream callbacks per camera. Index: [camera_idx][callback_idx].
   std::vector<std::vector<std::function<void(std::shared_ptr<camera::JpegBuffer>,
-                                             double timestamp,
+                                             unsigned long timestamp,
                                              std::shared_ptr<Context>)>>>
       callbacks_;
 
@@ -182,7 +182,7 @@ Context::~Context() {
 - Resize `latest_frames_`, `frame_mutexes_`, and `callbacks_` to `num_cameras`.
 - `latest_frames_` is initialized to `nullptr`.
 
-### `LoopController::ReceiveFrame(int camera_idx, shared_ptr<JpegBuffer> frame, double timestamp)`
+### `LoopController::ReceiveFrame(int camera_idx, shared_ptr<JpegBuffer> frame, unsigned long timestamp)`
 
 ```cpp
 lock frame_mutexes_[camera_idx]
@@ -281,16 +281,16 @@ Every node in the pipeline (decode, detect, solve) implements `INode<T>` with th
 
 ```cpp
 void RegisterCallback(
-    const std::function<void(std::shared_ptr<JpegBuffer>, double timestamp)>& callback);
+    const std::function<void(std::shared_ptr<JpegBuffer>, unsigned long timestamp)>& callback);
 ```
 
-`CallBack()` extracts `frame->capture_time` (converted to seconds as a double) and passes it alongside the buffer.
+`CallBack()` extracts `frame->capture_time` (converted to microseconds as an unsigned long) and passes it alongside the buffer.
 
 Wired in `main.cc`:
 
 ```cpp
 camera.RegisterCallback([&controller, idx](std::shared_ptr<camera::JpegBuffer> frame,
-                                           double timestamp) {
+                                           unsigned long timestamp) {
   controller->ReceiveFrame(idx, std::move(frame), timestamp);
 });
 ```
@@ -306,7 +306,7 @@ Introduces `TimestampedDecodedFrame` to carry the jpeg capture timestamp alongsi
 ```cpp
 struct TimestampedDecodedFrame {
   std::shared_ptr<DecodedJpegNvBuffer> buffer;
-  double timestamp;  // jpeg capture time, sourced from uvc_frame_t->capture_time
+  unsigned long timestamp;  // jpeg capture time in microseconds, sourced from uvc_frame_t->capture_time
 };
 
 class NvjpegDecodeNode : public INode<TimestampedDecodedFrame> {
@@ -321,12 +321,12 @@ class NvjpegDecodeNode : public INode<TimestampedDecodedFrame> {
 
   // Input: called by LoopController's iteration callback.
   void Decode(const std::shared_ptr<camera::JpegBuffer>& jpeg_buffer,
-              double timestamp,
+              unsigned long timestamp,
               std::shared_ptr<utils::Context> ctx);
 
  private:
   void DecodeJpegBuffer(const std::shared_ptr<camera::JpegBuffer>& jpeg_buffer,
-                        double timestamp,
+                        unsigned long timestamp,
                         std::shared_ptr<utils::Context> ctx);
 
   NvJPEGDecoder* decoder_ = nullptr;
@@ -362,7 +362,7 @@ class IApriltagDetectorNode
   // Input: called by the decode node's registered callback.
   // timestamp comes from TimestampedDecodedFrame and is the jpeg capture time.
   virtual void Detect(const camera::DecodedJpegNvBuffer& frame,
-                      double timestamp,
+                      unsigned long timestamp,
                       std::shared_ptr<utils::Context> ctx) = 0;
 
   virtual ~IApriltagDetectorNode() = default;
@@ -662,7 +662,7 @@ decoder0->RegisterCallback(
 
 controller->RegisterIterationCallback(
     0,
-    [&decoder0](auto jpeg, double timestamp, auto ctx) {
+    [&decoder0](auto jpeg, unsigned long timestamp, auto ctx) {
       decoder0->Decode(jpeg, timestamp, ctx);
     });
 
@@ -684,7 +684,7 @@ controller->Run();
 
 ## Timestamp Handling
 
-The jpeg capture timestamp (`uvc_frame_t->capture_time`, converted to seconds as a `double`) is the single authoritative timestamp for a frame. It propagates as follows:
+The jpeg capture timestamp (`uvc_frame_t->capture_time`, converted to microseconds as an `unsigned long`) is the single authoritative timestamp for a frame. It propagates as follows:
 
 ```cpp
 UVCCameraNode::CallBack()

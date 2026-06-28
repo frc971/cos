@@ -17,7 +17,7 @@ class LoopController : public std::enable_shared_from_this<LoopController> {
   explicit LoopController(int num_cameras);
 
   void ReceiveFrame(int camera_idx, std::shared_ptr<camera::JpegBuffer> frame,
-                    double timestamp);
+                    unsigned long timestamp);
 
   void RegisterIterationCallback(
       int camera_idx,

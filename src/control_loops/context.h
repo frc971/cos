@@ -10,7 +10,7 @@ class LoopController;
 
 struct MetaData {
   int camera_idx = -1;
-  double timestamp = 0.0;
+  unsigned long timestamp = 0;
 };
 
 using MetaDataList = std::vector<MetaData>;

@@ -70,15 +70,17 @@ MultiTagSolverNode::MultiTagSolverNode(
 }
 
 void MultiTagSolverNode::RegisterCallback(
-    const std::function<void(ambiguous_estimate_t,
-                             control_loops::MetaDataList metadata)>& callback) {
+    const std::function<
+        void(ambiguous_estimate_t, control_loops::MetaDataList metadata,
+             std::shared_ptr<control_loops::Context>)>& callback) {
   callbacks_.emplace_back(callback);
   single_tag_solver_.RegisterCallback(callback);
 }
 
 void MultiTagSolverNode::AmbiguousSolve(
     const std::shared_ptr<std::vector<apriltag::tag_detection_t>>& detections,
-    control_loops::MetaDataList metadata, bool reject_far_tags) {
+    control_loops::MetaDataList metadata,
+    std::shared_ptr<control_loops::Context> ctx, bool reject_far_tags) {
   if (metadata.empty()) {
     LOG(WARNING) << "MultiTagSolverNode received empty metadata";
   }
@@ -88,7 +90,7 @@ void MultiTagSolverNode::AmbiguousSolve(
     return;
   }
   for (const auto& cb : callbacks_) {
-    cb(pose_estimate.value(), metadata);
+    cb(pose_estimate.value(), metadata, ctx);
   }
 }
 
@@ -179,7 +181,6 @@ auto MultiTagSolverNode::AmbiguousSolveWithoutNotify(
                               ? 100.0
                               : Variance(num_tags, avg_distance, kvariance_min_,
                                          kvariance_scalar_),
-              .timestamp = (detections)[0].timestamp,
               .num_tags = num_tags,
               .avg_tag_dist = avg_distance},
       .pos2 = std::nullopt};

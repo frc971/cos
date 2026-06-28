@@ -22,11 +22,13 @@ class SquareSolverNode : public IPositionSolverNode {
                    std::vector<cv::Point3d> tag_corners = kapriltag_corners);
 
   void RegisterCallback(
-      const std::function<void(ambiguous_estimate_t, control_loops::MetaDataList
-                                                         metadata)>& callback);
+      const std::function<
+          void(ambiguous_estimate_t, control_loops::MetaDataList metadata,
+               std::shared_ptr<control_loops::Context>)>& callback) override;
   void AmbiguousSolve(
       const std::shared_ptr<std::vector<apriltag::tag_detection_t>>& detections,
       control_loops::MetaDataList metadata,
+      std::shared_ptr<control_loops::Context> ctx,
       bool reject_far_tags = true) override;
   auto AmbiguousSolveWithoutNotify(
       const std::vector<apriltag::tag_detection_t>& detections,
@@ -45,7 +47,8 @@ class SquareSolverNode : public IPositionSolverNode {
   cv::Mat camera_to_robot_;
   cv::Mat rotate_yaw_wpilib_;
   std::vector<std::function<void(ambiguous_estimate_t,
-                                 control_loops::MetaDataList metadata)>>
+                                 control_loops::MetaDataList metadata,
+                                 std::shared_ptr<control_loops::Context>)>>
       callbacks_;
 };
 

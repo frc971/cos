@@ -6,7 +6,6 @@
 #include "camera/camera_constants.h"
 #include "localization/multi_tag_solver_node.h"
 #include "localization/position.h"
-#include "localization/position_sender.h"
 #include "localization/position_solver.h"
 
 namespace localization {
@@ -15,8 +14,12 @@ class UnambiguousSolverNode : public IAccumulatingSolverNode {
  public:
   UnambiguousSolverNode(
       const std::vector<camera::camera_constant_t>& camera_constants,
-      std::unique_ptr<IPositionSender> sender,
       const wpi::apriltag::AprilTagFieldLayout& layout = kapriltag_layout);
+
+  void RegisterCallback(
+      const std::function<
+          void(position_estimate_t, control_loops::MetaDataList metadata,
+               std::shared_ptr<control_loops::Context>)>& callback) override;
 
   void Accumulate(
       std::shared_ptr<std::vector<apriltag::tag_detection_t>> detections,
@@ -26,6 +29,11 @@ class UnambiguousSolverNode : public IAccumulatingSolverNode {
   auto SolveWithoutNotify(
       const std::vector<std::vector<apriltag::tag_detection_t>>&
           detection_batches,
+      bool reject_far_tags = true) -> std::optional<position_estimate_t>;
+  auto SolveWithoutNotify(
+      const std::vector<std::vector<apriltag::tag_detection_t>>&
+          detection_batches,
+      const std::vector<control_loops::MetaDataList>& metadata_batches,
       bool reject_far_tags = true) -> std::optional<position_estimate_t>;
 
  private:
@@ -42,11 +50,16 @@ class UnambiguousSolverNode : public IAccumulatingSolverNode {
   auto GetAmbiguousEstimates(
       const std::vector<std::vector<apriltag::tag_detection_t>>&
           detection_batches,
+      const std::vector<control_loops::MetaDataList>& metadata_batches,
       bool reject_far_tags) -> std::vector<ambiguous_estimate_t>;
-  void SolveAndReset(std::unique_lock<std::mutex>& lock);
+  void SolveAndReset(std::unique_lock<std::mutex>& lock,
+                     std::shared_ptr<control_loops::Context> ctx);
 
   int num_cameras_;
-  std::unique_ptr<IPositionSender> sender_;
+  std::vector<std::function<void(position_estimate_t,
+                                 control_loops::MetaDataList metadata,
+                                 std::shared_ptr<control_loops::Context>)>>
+      callbacks_;
   std::vector<std::string> camera_names_;
   std::vector<MultiTagSolverNode> multitag_solvers_;
 
@@ -57,7 +70,7 @@ class UnambiguousSolverNode : public IAccumulatingSolverNode {
   std::vector<control_loops::MetaDataList> accumulated_metadata_;
 
   std::optional<position_estimate_t> prev_pose_estimate_;
-  static constexpr double kacceptable_frame_recency = 0.25;
+  static constexpr unsigned long kacceptable_frame_recency = 250'000;
 };
 
 }  // namespace localization

@@ -16,7 +16,7 @@ add_subdirectory(streamer)
 add_subdirectory(localization)
 add_subdirectory(logging)
 add_subdirectory(tools)
-add_subdirectory(main)
+add_subdirectory(runners)
 add_subdirectory(examples)
 
 set(CMAKE_CXX_CLANG_TIDY "")
