@@ -3,10 +3,19 @@
 
 #include "camera/uvc_camera_node.h"
 
+#include <cstring>
 #include <fstream>
 #include <nlohmann/json.hpp>
 
 namespace camera {
+namespace {
+
+auto CaptureTimeSeconds(const timeval& capture_time) -> double {
+  return static_cast<double>(capture_time.tv_sec) +
+         (static_cast<double>(capture_time.tv_usec) / 1'000'000.0);
+}
+
+}  // namespace
 
 UVCCameraConfig::UVCCameraConfig(const camera_constant_t& camera_constant)
     : name(camera_constant.name),
@@ -66,7 +75,8 @@ UVCCameraNode::UVCCameraNode(const UVCCameraConfig& config)
 void UVCCameraNode::CallBack(uvc_frame_t* frame) {
   CHECK(frame->frame_format == UVC_COLOR_FORMAT_MJPEG);
   std::shared_ptr<JpegBuffer> buffer =
-      std::make_shared<JpegBuffer>(frame->data_bytes);
+      std::make_shared<JpegBuffer>(frame->data_bytes,
+                                   CaptureTimeSeconds(frame->capture_time));
   std::memcpy(buffer->ptr(), frame->data, frame->data_bytes);
 
   for (size_t i = 0; i < callbacks_.size(); i++) {  // NOLINT
