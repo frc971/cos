@@ -1,6 +1,9 @@
 #include "localization/networktable_sender.h"
 
+#include <algorithm>
 #include <array>
+#include <cmath>
+#include <cstdint>
 #include <utility>
 
 #include "absl/log/log.h"
@@ -10,6 +13,15 @@ namespace {
 
 constexpr int kmax_tags = 50;
 
+auto TimestampFromMetadata(const control_loops::MetaDataList& metadata)
+    -> int64_t {
+  double timestamp = 0.0;
+  for (const control_loops::MetaData& entry : metadata) {
+    timestamp = std::max(timestamp, entry.timestamp);
+  }
+  return static_cast<int64_t>(std::llround(timestamp * 1'000'000.0));
+}
+
 }  // namespace
 
 NetworkTableSender::NetworkTableSender(const std::string& camera_name,
@@ -17,8 +29,7 @@ NetworkTableSender::NetworkTableSender(const std::string& camera_name,
     : instance_(wpi::nt::NetworkTableInstance::GetDefault()),
       table_(instance_.GetTable("Orin/PoseEstimate/" + camera_name)),
       verbose_(verbose) {
-  pose_publisher_ =
-      table_->GetStructTopic<wpi::math::Pose2d>("Pose").Publish();
+  pose_publisher_ = table_->GetStructTopic<wpi::math::Pose2d>("Pose").Publish();
   pose3d_publisher_ =
       table_->GetStructTopic<wpi::math::Pose3d>("Pose3d").Publish();
   tag_estimation_publisher_ =
@@ -32,12 +43,15 @@ NetworkTableSender::NetworkTableSender(const std::string& camera_name,
   loss_publisher_ = table_->GetDoubleTopic("Loss").Publish();
 }
 
-void NetworkTableSender::Send(const position_estimate_t& estimate) {
+void NetworkTableSender::Send(const position_estimate_t& estimate,
+                              control_loops::MetaDataList metadata,
+                              std::shared_ptr<control_loops::Context> /*ctx*/) {
   std::lock_guard<std::mutex> lock(mutex_);
+  const int64_t timestamp = TimestampFromMetadata(metadata);
 
   const auto pose2d = estimate.pose.ToPose2d();
-  pose_publisher_.Set(pose2d);
-  pose3d_publisher_.Set(estimate.pose);
+  pose_publisher_.Set(pose2d, timestamp);
+  pose3d_publisher_.Set(estimate.pose, timestamp);
 
   std::array<double, 7> tag_estimation{
       estimate.pose.X().value(),
@@ -48,7 +62,7 @@ void NetworkTableSender::Send(const position_estimate_t& estimate) {
       estimate.avg_tag_dist,
       estimate.loss,
   };
-  tag_estimation_publisher_.Set(tag_estimation);
+  tag_estimation_publisher_.Set(tag_estimation, timestamp);
 
   std::array<int, kmax_tags> tags{};
   for (const int tag_id : estimate.tag_ids) {
@@ -64,12 +78,12 @@ void NetworkTableSender::Send(const position_estimate_t& estimate) {
     }
   }
 
-  tag_ids_publisher_.Set(tags);
-  rejected_tag_ids_publisher_.Set(rejected_tags);
-  num_tags_publisher_.Set(estimate.num_tags);
-  variance_publisher_.Set(estimate.variance);
-  avg_tag_dist_publisher_.Set(estimate.avg_tag_dist);
-  loss_publisher_.Set(estimate.loss);
+  tag_ids_publisher_.Set(tags, timestamp);
+  rejected_tag_ids_publisher_.Set(rejected_tags, timestamp);
+  num_tags_publisher_.Set(estimate.num_tags, timestamp);
+  variance_publisher_.Set(estimate.variance, timestamp);
+  avg_tag_dist_publisher_.Set(estimate.avg_tag_dist, timestamp);
+  loss_publisher_.Set(estimate.loss, timestamp);
 
   if (verbose_) {
     LOG(INFO) << estimate;
@@ -82,7 +96,9 @@ auto NetworkTableSender::MakeDoubleChannel(const std::string& subkey)
   auto publisher = std::make_shared<wpi::nt::DoublePublisher>(
       table_->GetDoubleTopic(subkey).Publish());
   double_publishers_.push_back(publisher);
-  return [publisher](double value) { publisher->Set(value); };
+  return [publisher](double value) {
+    publisher->Set(value);
+  };
 }
 
 auto NetworkTableSender::MakeBoolChannel(const std::string& subkey)
@@ -91,7 +107,9 @@ auto NetworkTableSender::MakeBoolChannel(const std::string& subkey)
   auto publisher = std::make_shared<wpi::nt::BooleanPublisher>(
       table_->GetBooleanTopic(subkey).Publish());
   bool_publishers_.push_back(publisher);
-  return [publisher](bool value) { publisher->Set(value); };
+  return [publisher](bool value) {
+    publisher->Set(value);
+  };
 }
 
 auto NetworkTableSender::MakeStringChannel(const std::string& subkey)
@@ -100,7 +118,9 @@ auto NetworkTableSender::MakeStringChannel(const std::string& subkey)
   auto publisher = std::make_shared<wpi::nt::StringPublisher>(
       table_->GetStringTopic(subkey).Publish());
   string_publishers_.push_back(publisher);
-  return [publisher](std::string value) { publisher->Set(std::move(value)); };
+  return [publisher](std::string value) {
+    publisher->Set(std::move(value));
+  };
 }
 
 }  // namespace localization

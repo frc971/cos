@@ -58,8 +58,13 @@ class IPositionSolverNode : public INode<ambiguous_estimate_t> {
   virtual ~IPositionSolverNode() = default;
 };
 
-class IAccumulatingSolverNode {
+class IAccumulatingSolverNode : public INode<position_estimate_t> {
  public:
+  void RegisterCallback(
+      const std::function<void(
+          position_estimate_t, control_loops::MetaDataList metadata,
+          std::shared_ptr<control_loops::Context>)>& callback) override = 0;
+
   virtual void Accumulate(
       std::shared_ptr<std::vector<apriltag::tag_detection_t>> detections,
       control_loops::MetaDataList metadata,

@@ -13,11 +13,8 @@ namespace localization {
 
 UnambiguousSolverNode::UnambiguousSolverNode(
     const std::vector<camera::camera_constant_t>& camera_constants,
-    std::unique_ptr<IPositionSender> sender,
     const wpi::apriltag::AprilTagFieldLayout& layout) {
-  CHECK(sender != nullptr);
   num_cameras_ = static_cast<int>(camera_constants.size());
-  sender_ = std::move(sender);
   accumulated_detections_.resize(camera_constants.size());
   accumulated_metadata_.resize(camera_constants.size());
   camera_reported_.resize(camera_constants.size());
@@ -26,6 +23,13 @@ UnambiguousSolverNode::UnambiguousSolverNode(
     camera_names_.push_back(cc.name);
     multitag_solvers_.emplace_back(cc, layout);
   }
+}
+
+void UnambiguousSolverNode::RegisterCallback(
+    const std::function<
+        void(position_estimate_t, control_loops::MetaDataList metadata,
+             std::shared_ptr<control_loops::Context>)>& callback) {
+  callbacks_.push_back(callback);
 }
 
 auto UnambiguousSolverNode::Cost(const wpi::math::Pose3d& a,
@@ -192,7 +196,7 @@ auto UnambiguousSolverNode::GetAmbiguousEstimates(
 void UnambiguousSolverNode::Accumulate(
     std::shared_ptr<std::vector<apriltag::tag_detection_t>> detections,
     control_loops::MetaDataList metadata,
-    std::shared_ptr<control_loops::Context> /*ctx*/) {
+    std::shared_ptr<control_loops::Context> ctx) {
   if (metadata.empty()) {
     LOG(WARNING) << "UnambiguousSolverNode received empty metadata";
     return;
@@ -219,13 +223,20 @@ void UnambiguousSolverNode::Accumulate(
   }
 
   if (cameras_reported_ == num_cameras_) {
-    SolveAndReset(lock);
+    SolveAndReset(lock, std::move(ctx));
   }
 }
 
-void UnambiguousSolverNode::SolveAndReset(std::unique_lock<std::mutex>& lock) {
+void UnambiguousSolverNode::SolveAndReset(
+    std::unique_lock<std::mutex>& lock,
+    std::shared_ptr<control_loops::Context> ctx) {
   const std::optional<position_estimate_t> result =
       SolveWithoutNotify(accumulated_detections_, accumulated_metadata_);
+  control_loops::MetaDataList output_metadata;
+  for (const control_loops::MetaDataList& metadata : accumulated_metadata_) {
+    output_metadata.insert(output_metadata.end(), metadata.begin(),
+                           metadata.end());
+  }
 
   cameras_reported_ = 0;
   std::fill(camera_reported_.begin(), camera_reported_.end(), false);
@@ -233,7 +244,9 @@ void UnambiguousSolverNode::SolveAndReset(std::unique_lock<std::mutex>& lock) {
   lock.unlock();
 
   if (result.has_value()) {
-    sender_->Send(result.value());
+    for (const auto& cb : callbacks_) {
+      cb(result.value(), output_metadata, ctx);
+    }
   }
 }
 

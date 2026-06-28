@@ -29,7 +29,9 @@ class NetworkTableSender : public IPositionSender {
   explicit NetworkTableSender(const std::string& camera_name,
                               bool verbose = false);
 
-  void Send(const position_estimate_t& estimate) override;
+  void Send(const position_estimate_t& estimate,
+            control_loops::MetaDataList metadata,
+            std::shared_ptr<control_loops::Context> ctx) override;
 
   auto MakeDoubleChannel(const std::string& subkey)
       -> std::function<void(double)>;

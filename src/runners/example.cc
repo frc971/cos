@@ -91,8 +91,14 @@ auto main(int argc, char* argv[]) -> int {
         absl::GetFlag(FLAGS_sender_name));
   }
 
-  auto solver = std::make_unique<localization::UnambiguousSolverNode>(
-      camera_constants, std::move(sender));
+  auto solver =
+      std::make_unique<localization::UnambiguousSolverNode>(camera_constants);
+  solver->RegisterCallback(
+      [sender = sender.get()](localization::position_estimate_t estimate,
+                              control_loops::MetaDataList metadata,
+                              std::shared_ptr<control_loops::Context> ctx) {
+        sender->Send(estimate, std::move(metadata), std::move(ctx));
+      });
   auto controller =
       std::make_shared<control_loops::LoopController>(camera_constants.size());
 
@@ -110,9 +116,8 @@ auto main(int argc, char* argv[]) -> int {
     const camera::camera_constant_t& constant = camera_constants[i];
     const int camera_idx = static_cast<int>(i);
 
-    auto camera =
-        std::make_unique<camera::UVCCameraNode>(camera::UVCCameraConfig(
-            constant));
+    auto camera = std::make_unique<camera::UVCCameraNode>(
+        camera::UVCCameraConfig(constant));
     camera->RegisterCallback(
         [controller, camera_idx](std::shared_ptr<camera::JpegBuffer> frame,
                                  double timestamp) {
@@ -142,9 +147,10 @@ auto main(int argc, char* argv[]) -> int {
 
     auto* detector_ptr = detector.get();
     decoder->RegisterCallback(
-        [detector_ptr](const std::shared_ptr<camera::DecodedJpegNvBuffer>& frame,
-                       control_loops::MetaDataList metadata,
-                       std::shared_ptr<control_loops::Context> ctx) {
+        [detector_ptr](
+            const std::shared_ptr<camera::DecodedJpegNvBuffer>& frame,
+            control_loops::MetaDataList metadata,
+            std::shared_ptr<control_loops::Context> ctx) {
           detector_ptr->Detect(frame, std::move(metadata), std::move(ctx));
         });
 
