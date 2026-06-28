@@ -134,11 +134,19 @@ auto UnambiguousSolverNode::SearchSolutions(
 auto UnambiguousSolverNode::GetAmbiguousEstimates(
     const std::vector<std::vector<apriltag::tag_detection_t>>&
         detection_batches,
+    const std::vector<control_loops::MetaDataList>& metadata_batches,
     bool reject_far_tags) -> std::vector<ambiguous_estimate_t> {
   double latest_timestamp = -1;
-  for (const auto& detections : detection_batches) {
-    if (!detections.empty() && detections[0].timestamp > latest_timestamp) {
-      latest_timestamp = detections[0].timestamp;
+  std::vector<std::optional<double>> detection_timestamps(
+      detection_batches.size());
+  for (size_t i = 0; i < detection_batches.size(); i++) {
+    if (i >= metadata_batches.size() || metadata_batches[i].empty()) {
+      continue;
+    }
+    detection_timestamps[i] = metadata_batches[i].front().timestamp;
+    if (!detection_batches[i].empty() &&
+        detection_timestamps[i].value() > latest_timestamp) {
+      latest_timestamp = detection_timestamps[i].value();
     }
   }
 
@@ -151,8 +159,9 @@ auto UnambiguousSolverNode::GetAmbiguousEstimates(
     if (detections.empty()) {
       continue;
     }
-    if (latest_timestamp - detections[0].timestamp >=
-        kacceptable_frame_recency) {
+    if (latest_timestamp >= 0 && detection_timestamps[i].has_value() &&
+        latest_timestamp - detection_timestamps[i].value() >=
+            kacceptable_frame_recency) {
       continue;
     }
 
@@ -216,7 +225,7 @@ void UnambiguousSolverNode::Accumulate(
 
 void UnambiguousSolverNode::SolveAndReset(std::unique_lock<std::mutex>& lock) {
   const std::optional<position_estimate_t> result =
-      SolveWithoutNotify(accumulated_detections_);
+      SolveWithoutNotify(accumulated_detections_, accumulated_metadata_);
 
   cameras_reported_ = 0;
   std::fill(camera_reported_.begin(), camera_reported_.end(), false);
@@ -232,8 +241,16 @@ auto UnambiguousSolverNode::SolveWithoutNotify(
     const std::vector<std::vector<apriltag::tag_detection_t>>&
         detection_batches,
     bool reject_far_tags) -> std::optional<position_estimate_t> {
-  const auto& ambiguous_estimates =
-      GetAmbiguousEstimates(detection_batches, reject_far_tags);
+  return SolveWithoutNotify(detection_batches, {}, reject_far_tags);
+}
+
+auto UnambiguousSolverNode::SolveWithoutNotify(
+    const std::vector<std::vector<apriltag::tag_detection_t>>&
+        detection_batches,
+    const std::vector<control_loops::MetaDataList>& metadata_batches,
+    bool reject_far_tags) -> std::optional<position_estimate_t> {
+  const auto& ambiguous_estimates = GetAmbiguousEstimates(
+      detection_batches, metadata_batches, reject_far_tags);
   std::vector<position_estimate_t> best_solution;
   std::vector<position_estimate_t> current_solution;
   double best_cost = std::numeric_limits<double>::infinity();
@@ -245,22 +262,18 @@ auto UnambiguousSolverNode::SolveWithoutNotify(
   }
 
   double avg_variance = 0;
-  double avg_timestamp = 0;
   std::vector<int> tag_ids;
   for (const position_estimate_t& est : best_solution) {
     avg_variance += est.variance;
-    avg_timestamp += est.timestamp;
     for (const int tag_id : est.tag_ids) {
       tag_ids.push_back(tag_id);
     }
   }
   avg_variance /= best_solution.size();
-  avg_timestamp /= best_solution.size();
 
   position_estimate_t estimate{.tag_ids = tag_ids,
                                .pose = WeightedAveragePose(best_solution),
                                .variance = avg_variance,
-                               .timestamp = avg_timestamp,
                                .num_tags = static_cast<int>(tag_ids.size()),
                                .loss = cost};
 

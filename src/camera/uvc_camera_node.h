@@ -40,14 +40,11 @@ struct UVCCameraConfig {
 
 class JpegBuffer {
  public:
-  explicit JpegBuffer(size_t size, double timestamp = 0.0)
-      : timestamp(timestamp), size_(size), ptr_(std::malloc(size)) {}
+  explicit JpegBuffer(size_t size) : size_(size), ptr_(std::malloc(size)) {}
   auto ptr() -> void* const { return ptr_; }
 
   auto size() -> size_t const { return size_; }
   ~JpegBuffer() { std::free(ptr_); }
-
-  double timestamp;
 
  private:
   size_t size_;

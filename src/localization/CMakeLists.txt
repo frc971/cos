@@ -53,3 +53,18 @@ target_link_libraries(unambiguous_solver_node PUBLIC
 target_include_directories(unambiguous_solver_node PUBLIC
   ${CMAKE_SOURCE_DIR}
 )
+
+add_library(networktable_sender)
+target_sources(networktable_sender
+  PRIVATE
+    networktable_sender.cc
+)
+target_link_libraries(networktable_sender PUBLIC
+  ntcore::ntcore
+  wpilibc::wpilibc
+  wpimath::wpimath
+  absl::log
+)
+target_include_directories(networktable_sender PUBLIC
+  ${CMAKE_SOURCE_DIR}
+)

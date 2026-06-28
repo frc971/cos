@@ -27,6 +27,11 @@ class UnambiguousSolverNode : public IAccumulatingSolverNode {
       const std::vector<std::vector<apriltag::tag_detection_t>>&
           detection_batches,
       bool reject_far_tags = true) -> std::optional<position_estimate_t>;
+  auto SolveWithoutNotify(
+      const std::vector<std::vector<apriltag::tag_detection_t>>&
+          detection_batches,
+      const std::vector<control_loops::MetaDataList>& metadata_batches,
+      bool reject_far_tags = true) -> std::optional<position_estimate_t>;
 
  private:
   static auto Cost(const wpi::math::Pose3d& a,
@@ -42,6 +47,7 @@ class UnambiguousSolverNode : public IAccumulatingSolverNode {
   auto GetAmbiguousEstimates(
       const std::vector<std::vector<apriltag::tag_detection_t>>&
           detection_batches,
+      const std::vector<control_loops::MetaDataList>& metadata_batches,
       bool reject_far_tags) -> std::vector<ambiguous_estimate_t>;
   void SolveAndReset(std::unique_lock<std::mutex>& lock);
 

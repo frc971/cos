@@ -27,11 +27,13 @@ class MultiTagSolverNode : public IPositionSolverNode {
       const std::vector<cv::Point3d>& tag_corners = kapriltag_corners);
 
   void RegisterCallback(
-      const std::function<void(ambiguous_estimate_t, control_loops::MetaDataList
-                                                         metadata)>& callback);
+      const std::function<
+          void(ambiguous_estimate_t, control_loops::MetaDataList metadata,
+               std::shared_ptr<control_loops::Context>)>& callback) override;
   void AmbiguousSolve(
       const std::shared_ptr<std::vector<apriltag::tag_detection_t>>& detections,
       control_loops::MetaDataList metadata,
+      std::shared_ptr<control_loops::Context> ctx,
       bool reject_far_tags = true) override;
   auto AmbiguousSolveWithoutNotify(
       const std::vector<apriltag::tag_detection_t>& detections,
@@ -46,7 +48,8 @@ class MultiTagSolverNode : public IPositionSolverNode {
   static constexpr double kvariance_scalar_ = 0.7;
   static constexpr double kvariance_min_ = 1.0;
   std::vector<std::function<void(ambiguous_estimate_t,
-                                 control_loops::MetaDataList metadata)>>
+                                 control_loops::MetaDataList metadata,
+                                 std::shared_ptr<control_loops::Context>)>>
       callbacks_;
 };
 

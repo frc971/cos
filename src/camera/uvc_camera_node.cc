@@ -76,7 +76,7 @@ void UVCCameraNode::CallBack(uvc_frame_t* frame) {
   CHECK(frame->frame_format == UVC_COLOR_FORMAT_MJPEG);
   const double timestamp = CaptureTimeSeconds(frame->capture_time);
   std::shared_ptr<JpegBuffer> buffer =
-      std::make_shared<JpegBuffer>(frame->data_bytes, timestamp);
+      std::make_shared<JpegBuffer>(frame->data_bytes);
   std::memcpy(buffer->ptr(), frame->data, frame->data_bytes);
 
   for (size_t i = 0; i < callbacks_.size(); i++) {  // NOLINT
