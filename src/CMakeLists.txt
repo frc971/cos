@@ -9,6 +9,7 @@ endif()
 include_directories(.)
 
 add_subdirectory(utils)
+add_subdirectory(control_loops)
 add_subdirectory(apriltag)
 add_subdirectory(camera)
 add_subdirectory(streamer)

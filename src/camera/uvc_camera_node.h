@@ -4,10 +4,11 @@
 #include <cstdlib>
 #include <functional>
 #include <memory>
+#include <string>
+#include <vector>
 
 #include "libuvc/libuvc.h"
 #include "camera/camera_constants.h"
-#include "utils/node.h"
 
 namespace camera {
 
@@ -39,24 +40,26 @@ struct UVCCameraConfig {
 
 class JpegBuffer {
  public:
-  JpegBuffer(size_t size) : size_(size), ptr_(std::malloc(size)) {}
+  explicit JpegBuffer(size_t size, double timestamp = 0.0)
+      : timestamp(timestamp), size_(size), ptr_(std::malloc(size)) {}
   auto ptr() -> void* const { return ptr_; }
 
   auto size() -> size_t const { return size_; }
   ~JpegBuffer() { std::free(ptr_); }
+
+  double timestamp;
 
  private:
   size_t size_;
   void* ptr_;
 };
 
-class UVCCameraNode : public INode<std::shared_ptr<JpegBuffer>> {
+class UVCCameraNode {
  public:
   UVCCameraNode(const UVCCameraConfig& config);
-  ~UVCCameraNode() override;
+  ~UVCCameraNode();
   void RegisterCallback(
-      const std::function<void(std::shared_ptr<JpegBuffer>)>& callback)
-      override;
+      const std::function<void(std::shared_ptr<JpegBuffer>)>& callback);
   void Start();
   void CallBack(uvc_frame_t* frame);  // This should not be used publicly
 
