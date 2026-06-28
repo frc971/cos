@@ -49,11 +49,8 @@ void GPUApriltagDetectorNode::Detect(
     const std::shared_ptr<camera::DecodedJpegNvBuffer>& frame,
     control_loops::MetaDataList metadata,
     std::shared_ptr<control_loops::Context> ctx) {
-  double timestamp = 0.0;
   if (metadata.empty()) {
     LOG(WARNING) << "GPUApriltagDetectorNode received empty metadata";
-  } else {
-    timestamp = metadata.front().timestamp;
   }
   auto detections = std::make_shared<std::vector<tag_detection_t>>();
   if (frame == nullptr || frame->buffer == nullptr) {
@@ -88,7 +85,6 @@ void GPUApriltagDetectorNode::Detect(
 
     tag_detection_t detection;
     detection.tag_id = gpu_detection->id;
-    detection.timestamp = timestamp;
     detection.confidence = gpu_detection->decision_margin;
     for (int j = 0; j < 4; ++j) {
       detection.corners[j] =

@@ -45,11 +45,8 @@ void OpenCVApriltagDetectorNode::Detect(
     const std::shared_ptr<camera::DecodedJpegNvBuffer>& frame,
     control_loops::MetaDataList metadata,
     std::shared_ptr<control_loops::Context> ctx) {
-  double timestamp = 0.0;
   if (metadata.empty()) {
     LOG(WARNING) << "OpenCVApriltagDetectorNode received empty metadata";
-  } else {
-    timestamp = metadata.front().timestamp;
   }
   auto detections = std::make_shared<std::vector<tag_detection_t>>();
   if (frame == nullptr || frame->buffer == nullptr) {
@@ -79,7 +76,6 @@ void OpenCVApriltagDetectorNode::Detect(
       detections->push_back(tag_detection_t{
           .tag_id = ids[i],
           .corners = corners_array,
-          .timestamp = timestamp,
           .confidence = 1.0,
       });
     }
