@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cmath>
 #include <cstdint>
 #include <utility>
 
@@ -15,11 +14,11 @@ constexpr int kmax_tags = 50;
 
 auto TimestampFromMetadata(const control_loops::MetaDataList& metadata)
     -> int64_t {
-  double timestamp = 0.0;
+  unsigned long timestamp = 0;
   for (const control_loops::MetaData& entry : metadata) {
     timestamp = std::max(timestamp, entry.timestamp);
   }
-  return static_cast<int64_t>(std::llround(timestamp * 1'000'000.0));
+  return static_cast<int64_t>(timestamp);
 }
 
 }  // namespace

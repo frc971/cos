@@ -70,7 +70,7 @@ class UnambiguousSolverNode : public IAccumulatingSolverNode {
   std::vector<control_loops::MetaDataList> accumulated_metadata_;
 
   std::optional<position_estimate_t> prev_pose_estimate_;
-  static constexpr double kacceptable_frame_recency = 0.25;
+  static constexpr unsigned long kacceptable_frame_recency = 250'000;
 };
 
 }  // namespace localization

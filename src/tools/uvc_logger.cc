@@ -59,16 +59,17 @@ auto main(int argc, char* argv[]) -> int {
             absl::GetFlag(FLAGS_port).value());
     uvc_camera_node->RegisterCallback(
         [streamer = jpeg_buffer_streamer_node.get()](
-            const auto& buffer, double) { streamer->Stream(buffer); });
+            const auto& buffer, unsigned long) { streamer->Stream(buffer); });
   }
 
-  uvc_camera_node->RegisterCallback([decoder = nvjpeg_decode_node.get()](
-                                        const auto& buffer, double timestamp) {
-    control_loops::MetaDataList metadata{
-        control_loops::MetaData{.timestamp = timestamp}};
-    decoder->Decode(buffer, metadata,
-                    std::make_shared<control_loops::Context>());
-  });
+  uvc_camera_node->RegisterCallback(
+      [decoder = nvjpeg_decode_node.get()](const auto& buffer,
+                                           unsigned long timestamp) {
+        control_loops::MetaDataList metadata{
+            control_loops::MetaData{.timestamp = timestamp}};
+        decoder->Decode(buffer, metadata,
+                        std::make_shared<control_loops::Context>());
+      });
 
   std::atomic<int> frame_index_atomic = 0;
   if (absl::GetFlag(FLAGS_log_folder).has_value()) {

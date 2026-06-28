@@ -120,7 +120,7 @@ auto main(int argc, char* argv[]) -> int {
         camera::UVCCameraConfig(constant));
     camera->RegisterCallback(
         [controller, camera_idx](std::shared_ptr<camera::JpegBuffer> frame,
-                                 double timestamp) {
+                                 unsigned long timestamp) {
           controller->ReceiveFrame(camera_idx, std::move(frame), timestamp);
         });
     cameras.push_back(std::move(camera));

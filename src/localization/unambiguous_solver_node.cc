@@ -140,8 +140,8 @@ auto UnambiguousSolverNode::GetAmbiguousEstimates(
         detection_batches,
     const std::vector<control_loops::MetaDataList>& metadata_batches,
     bool reject_far_tags) -> std::vector<ambiguous_estimate_t> {
-  double latest_timestamp = -1;
-  std::vector<std::optional<double>> detection_timestamps(
+  std::optional<unsigned long> latest_timestamp;
+  std::vector<std::optional<unsigned long>> detection_timestamps(
       detection_batches.size());
   for (size_t i = 0; i < detection_batches.size(); i++) {
     if (i >= metadata_batches.size() || metadata_batches[i].empty()) {
@@ -149,7 +149,8 @@ auto UnambiguousSolverNode::GetAmbiguousEstimates(
     }
     detection_timestamps[i] = metadata_batches[i].front().timestamp;
     if (!detection_batches[i].empty() &&
-        detection_timestamps[i].value() > latest_timestamp) {
+        (!latest_timestamp.has_value() ||
+         detection_timestamps[i].value() > latest_timestamp.value())) {
       latest_timestamp = detection_timestamps[i].value();
     }
   }
@@ -163,8 +164,8 @@ auto UnambiguousSolverNode::GetAmbiguousEstimates(
     if (detections.empty()) {
       continue;
     }
-    if (latest_timestamp >= 0 && detection_timestamps[i].has_value() &&
-        latest_timestamp - detection_timestamps[i].value() >=
+    if (latest_timestamp.has_value() && detection_timestamps[i].has_value() &&
+        latest_timestamp.value() - detection_timestamps[i].value() >=
             kacceptable_frame_recency) {
       continue;
     }

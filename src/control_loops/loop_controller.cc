@@ -15,13 +15,13 @@ LoopController::LoopController(int num_cameras)
       frame_mutexes_(num_cameras_),
       callbacks_(num_cameras_) {
   for (int i = 0; i < num_cameras_; ++i) {
-    latest_metadata_[i] = {MetaData{.camera_idx = i, .timestamp = 0.0}};
+    latest_metadata_[i] = {MetaData{.camera_idx = i, .timestamp = 0}};
   }
 }
 
 void LoopController::ReceiveFrame(int camera_idx,
                                   std::shared_ptr<camera::JpegBuffer> frame,
-                                  double timestamp) {
+                                  unsigned long timestamp) {
   std::lock_guard<std::mutex> lock(frame_mutexes_[camera_idx]);
   latest_frames_[camera_idx] = std::move(frame);
   latest_metadata_[camera_idx] = {MetaData{
