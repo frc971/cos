@@ -22,9 +22,11 @@ class SquareSolverNode : public IPositionSolverNode {
                    std::vector<cv::Point3d> tag_corners = kapriltag_corners);
 
   void RegisterCallback(
-      const std::function<void(ambiguous_estimate_t)>& callback) override;
+      const std::function<void(ambiguous_estimate_t, control_loops::MetaDataList
+                                                         metadata)>& callback);
   void AmbiguousSolve(
       const std::shared_ptr<std::vector<apriltag::tag_detection_t>>& detections,
+      control_loops::MetaDataList metadata,
       bool reject_far_tags = true) override;
   auto AmbiguousSolveWithoutNotify(
       const std::vector<apriltag::tag_detection_t>& detections,
@@ -42,7 +44,9 @@ class SquareSolverNode : public IPositionSolverNode {
   cv::Mat distortion_coefficients_;
   cv::Mat camera_to_robot_;
   cv::Mat rotate_yaw_wpilib_;
-  std::vector<std::function<void(ambiguous_estimate_t)>> callbacks_;
+  std::vector<std::function<void(ambiguous_estimate_t,
+                                 control_loops::MetaDataList metadata)>>
+      callbacks_;
 };
 
 }  // namespace localization

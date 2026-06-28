@@ -35,9 +35,14 @@ NvjpegDecodeNode::~NvjpegDecodeNode() {
   cv_.notify_one();
   delete decoder_;
 }
-void NvjpegDecodeNode::Decode(const std::shared_ptr<JpegBuffer>& jpeg_buffer) {
-  std::function<void()> task = [this, jpeg_buffer] {
-    DecodeJpegBuffer(jpeg_buffer);
+void NvjpegDecodeNode::Decode(const std::shared_ptr<JpegBuffer>& jpeg_buffer,
+                              control_loops::MetaDataList metadata,
+                              std::shared_ptr<control_loops::Context> ctx) {
+  if (metadata.empty()) {
+    LOG(WARNING) << "NvjpegDecodeNode received empty metadata";
+  }
+  std::function<void()> task = [this, jpeg_buffer, metadata, ctx] {
+    DecodeJpegBuffer(jpeg_buffer, metadata, ctx);
   };
   {
     std::lock_guard<std::timed_mutex> lock(mutex_);
@@ -47,13 +52,25 @@ void NvjpegDecodeNode::Decode(const std::shared_ptr<JpegBuffer>& jpeg_buffer) {
 }
 
 void NvjpegDecodeNode::RegisterCallback(
-    const std::function<void(std::shared_ptr<DecodedJpegNvBuffer>)>& callback) {
+    const std::function<void(std::shared_ptr<DecodedJpegNvBuffer>,
+                             control_loops::MetaDataList metadata,
+                             std::shared_ptr<control_loops::Context>)>&
+        callback) {
   std::unique_lock<std::timed_mutex> lock(mutex_, std::chrono::milliseconds(3));
   callbacks_.push_back(callback);
 }
 
 void NvjpegDecodeNode::DecodeJpegBuffer(
-    const std::shared_ptr<JpegBuffer>& jpeg_buffer) {
+    const std::shared_ptr<JpegBuffer>& jpeg_buffer,
+    control_loops::MetaDataList metadata,
+    std::shared_ptr<control_loops::Context> ctx) {
+  if (jpeg_buffer == nullptr) {
+    for (const auto& callback : callbacks_) {
+      callback(nullptr, metadata, ctx);
+    }
+    return;
+  }
+
   uint32_t pixfmt;
   uint32_t width;
   uint32_t height;
@@ -66,9 +83,7 @@ void NvjpegDecodeNode::DecodeJpegBuffer(
   auto buffer_shared_ptr = std::make_shared<DecodedJpegNvBuffer>(buffer);
 
   for (size_t i = 0; i < callbacks_.size(); i++) {  // NOLINT
-    std::function<void(std::shared_ptr<DecodedJpegNvBuffer>)> callback =
-        callbacks_[i];
-    callback(buffer_shared_ptr);
+    callbacks_[i](buffer_shared_ptr, metadata, ctx);
   }
 }
 

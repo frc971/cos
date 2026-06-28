@@ -2,10 +2,18 @@
 
 #include <atomic>
 #include <memory>
+#include <vector>
 
 namespace control_loops {
 
 class LoopController;
+
+struct MetaData {
+  int camera_idx = -1;
+  double timestamp = 0.0;
+};
+
+using MetaDataList = std::vector<MetaData>;
 
 struct Context {
   std::atomic<bool> stop_token{false};

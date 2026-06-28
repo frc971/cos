@@ -7,8 +7,8 @@
 #include <vector>
 #include <wpi/apriltag/AprilTagFieldLayout.hpp>
 #include "apriltag/tag_detection.h"
+#include "control_loops/context.h"
 #include "localization/position.h"
-#include "utils/node.h"
 
 namespace localization {
 
@@ -42,19 +42,22 @@ inline auto Variance(int num_tags, double distance, double min_variance,
   return distance * scalar / (num_tags * num_tags) + min_variance;
 }
 
-class IPositionSolverNode : public INode<ambiguous_estimate_t> {
+class IPositionSolverNode {
  public:
   virtual void AmbiguousSolve(
       const std::shared_ptr<std::vector<apriltag::tag_detection_t>>& detections,
-      bool reject_far_tags = true) = 0;
+      control_loops::MetaDataList metadata, bool reject_far_tags = true) = 0;
+  virtual ~IPositionSolverNode() = default;
 };
 
-class IJointPositionSolverNode
-    : public INode<std::optional<position_estimate_t>> {
+class IAccumulatingSolverNode {
  public:
-  virtual void Solve(const std::vector<std::vector<apriltag::tag_detection_t>>&
-                         detection_batches,
-                     bool reject_far_tags = true) = 0;
+  virtual void Accumulate(
+      std::shared_ptr<std::vector<apriltag::tag_detection_t>> detections,
+      control_loops::MetaDataList metadata,
+      std::shared_ptr<control_loops::Context> ctx) = 0;
+
+  virtual ~IAccumulatingSolverNode() = default;
 };
 
 }  // namespace localization

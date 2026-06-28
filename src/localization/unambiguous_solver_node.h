@@ -6,22 +6,23 @@
 #include "camera/camera_constants.h"
 #include "localization/multi_tag_solver_node.h"
 #include "localization/position.h"
+#include "localization/position_sender.h"
 #include "localization/position_solver.h"
 
 namespace localization {
 
-class UnambiguousSolverNode : public IJointPositionSolverNode {
+class UnambiguousSolverNode : public IAccumulatingSolverNode {
  public:
-  explicit UnambiguousSolverNode(
+  UnambiguousSolverNode(
       const std::vector<camera::camera_constant_t>& camera_constants,
+      std::unique_ptr<IPositionSender> sender,
       const wpi::apriltag::AprilTagFieldLayout& layout = kapriltag_layout);
 
-  void RegisterCallback(
-      const std::function<void(std::optional<position_estimate_t>)>& callback)
-      override;
-  void Solve(const std::vector<std::vector<apriltag::tag_detection_t>>&
-                 detection_batches,
-             bool reject_far_tags = true) override;
+  void Accumulate(
+      std::shared_ptr<std::vector<apriltag::tag_detection_t>> detections,
+      control_loops::MetaDataList metadata,
+      std::shared_ptr<control_loops::Context> ctx) override;
+
   auto SolveWithoutNotify(
       const std::vector<std::vector<apriltag::tag_detection_t>>&
           detection_batches,
@@ -42,14 +43,21 @@ class UnambiguousSolverNode : public IJointPositionSolverNode {
       const std::vector<std::vector<apriltag::tag_detection_t>>&
           detection_batches,
       bool reject_far_tags) -> std::vector<ambiguous_estimate_t>;
+  void SolveAndReset(std::unique_lock<std::mutex>& lock);
 
+  int num_cameras_;
+  std::unique_ptr<IPositionSender> sender_;
   std::vector<std::string> camera_names_;
   std::vector<MultiTagSolverNode> multitag_solvers_;
+
   std::mutex mutex_;
+  int cameras_reported_{0};
+  std::vector<bool> camera_reported_;
+  std::vector<std::vector<apriltag::tag_detection_t>> accumulated_detections_;
+  std::vector<control_loops::MetaDataList> accumulated_metadata_;
+
   std::optional<position_estimate_t> prev_pose_estimate_;
   static constexpr double kacceptable_frame_recency = 0.25;
-  std::vector<std::function<void(std::optional<position_estimate_t>)>>
-      callbacks_;
 };
 
 }  // namespace localization

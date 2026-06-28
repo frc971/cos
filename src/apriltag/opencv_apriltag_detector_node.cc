@@ -34,21 +34,35 @@ OpenCVApriltagDetectorNode::OpenCVApriltagDetectorNode(
       detector_(MakeDetector()) {}
 
 void OpenCVApriltagDetectorNode::RegisterCallback(
-    const std::function<void(std::shared_ptr<std::vector<tag_detection_t>>)>&
+    const std::function<void(std::shared_ptr<std::vector<tag_detection_t>>,
+                             control_loops::MetaDataList metadata,
+                             std::shared_ptr<control_loops::Context>)>&
         callback) {
   callbacks_.push_back(callback);
 }
 
 void OpenCVApriltagDetectorNode::Detect(
-    const camera::DecodedJpegNvBuffer& frame, double timestamp) {
-  cv::Mat gray = NvBufferToGray(frame);
+    const std::shared_ptr<camera::DecodedJpegNvBuffer>& frame,
+    control_loops::MetaDataList metadata,
+    std::shared_ptr<control_loops::Context> ctx) {
+  if (metadata.empty()) {
+    LOG(WARNING) << "OpenCVApriltagDetectorNode received empty metadata";
+  }
+  auto detections = std::make_shared<std::vector<tag_detection_t>>();
+  if (frame == nullptr || frame->buffer == nullptr) {
+    for (const auto& cb : callbacks_) {
+      cb(detections, metadata, ctx);
+    }
+    return;
+  }
+
+  cv::Mat gray = NvBufferToGray(*frame);
 
   std::vector<std::vector<cv::Point2f>> corners;
   std::vector<int> ids;
   std::vector<std::vector<cv::Point2f>> rejected;
   detector_.detectMarkers(gray, corners, ids, rejected);
 
-  auto detections = std::make_shared<std::vector<tag_detection_t>>();
   if (!ids.empty()) {
     detections->reserve(ids.size());
     for (size_t i = 0; i < ids.size(); ++i) {
@@ -62,14 +76,13 @@ void OpenCVApriltagDetectorNode::Detect(
       detections->push_back(tag_detection_t{
           .tag_id = ids[i],
           .corners = corners_array,
-          .timestamp = timestamp,
           .confidence = 1.0,
       });
     }
   }
 
   for (const auto& cb : callbacks_) {
-    cb(detections);
+    cb(detections, metadata, ctx);
   }
 }
 

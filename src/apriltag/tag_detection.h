@@ -9,7 +9,6 @@ namespace apriltag {
 using tag_detection_t = struct TagDetection {
   int tag_id;
   std::array<cv::Point2d, 4> corners;
-  double timestamp;
   double confidence;
 
   friend auto operator<<(std::ostream& os,
@@ -18,8 +17,6 @@ using tag_detection_t = struct TagDetection {
     for (const cv::Point2d& corner : t.corners) {
       os << "(" << corner.x << ", " << corner.y << ")\n";
     }
-    os << "Timestamp: " << t.timestamp << "\nConfidence: " << t.confidence
-       << std::endl;
     return os;
   }
 };

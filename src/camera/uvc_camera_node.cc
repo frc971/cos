@@ -23,10 +23,10 @@ UVCCameraConfig::UVCCameraConfig(const camera_constant_t& camera_constant)
       height(static_cast<int>(camera_constant.frame_height.value())),
       width(static_cast<int>(camera_constant.frame_width.value())),
       fps(static_cast<int>(camera_constant.fps.value())),
-      max_payload_size(static_cast<int>(
-          camera_constant.max_payload_size.value_or(3072))),
-      max_frame_size(static_cast<int>(
-          camera_constant.max_frame_size.value_or(2048589))) {}
+      max_payload_size(
+          static_cast<int>(camera_constant.max_payload_size.value_or(3072))),
+      max_frame_size(
+          static_cast<int>(camera_constant.max_frame_size.value_or(2048589))) {}
 
 UVCCameraConfig::UVCCameraConfig(const std::string& path) {
   std::ifstream file(path);
@@ -74,13 +74,13 @@ UVCCameraNode::UVCCameraNode(const UVCCameraConfig& config)
 
 void UVCCameraNode::CallBack(uvc_frame_t* frame) {
   CHECK(frame->frame_format == UVC_COLOR_FORMAT_MJPEG);
+  const double timestamp = CaptureTimeSeconds(frame->capture_time);
   std::shared_ptr<JpegBuffer> buffer =
-      std::make_shared<JpegBuffer>(frame->data_bytes,
-                                   CaptureTimeSeconds(frame->capture_time));
+      std::make_shared<JpegBuffer>(frame->data_bytes, timestamp);
   std::memcpy(buffer->ptr(), frame->data, frame->data_bytes);
 
   for (size_t i = 0; i < callbacks_.size(); i++) {  // NOLINT
-    callbacks_[i](buffer);
+    callbacks_[i](buffer, timestamp);
   }
 }
 
@@ -105,7 +105,8 @@ UVCCameraNode::~UVCCameraNode() {
 }
 
 void UVCCameraNode::RegisterCallback(
-    const std::function<void(std::shared_ptr<JpegBuffer>)>& callback) {
+    const std::function<void(std::shared_ptr<JpegBuffer>, double timestamp)>&
+        callback) {
   callbacks_.push_back(callback);
 }
 }  // namespace camera
