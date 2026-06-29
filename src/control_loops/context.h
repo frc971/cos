@@ -6,7 +6,11 @@
 
 namespace control_loops {
 
-class LoopController;
+class LoopControllerWakeable {
+ public:
+  virtual void WakeUp() = 0;
+  virtual ~LoopControllerWakeable() = default;
+};
 
 struct MetaData {
   int camera_idx = -1;
@@ -17,7 +21,7 @@ using MetaDataList = std::vector<MetaData>;
 
 struct Context {
   std::atomic<bool> stop_token{false};
-  std::weak_ptr<LoopController> controller;
+  std::weak_ptr<LoopControllerWakeable> controller;
 
   ~Context();
 };
