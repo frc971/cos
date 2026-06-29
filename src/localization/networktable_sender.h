@@ -27,6 +27,8 @@ namespace localization {
 class NetworkTableSender : public IPositionSender {
  public:
   explicit NetworkTableSender(const std::string& camera_name,
+                              wpi::nt::NetworkTableInstance instance =
+                                  wpi::nt::NetworkTableInstance::GetDefault(),
                               bool verbose = false);
 
   void Send(const position_estimate_t& estimate,

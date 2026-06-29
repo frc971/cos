@@ -24,8 +24,9 @@ auto TimestampFromMetadata(const control_loops::MetaDataList& metadata)
 }  // namespace
 
 NetworkTableSender::NetworkTableSender(const std::string& camera_name,
+                                       wpi::nt::NetworkTableInstance instance,
                                        bool verbose)
-    : instance_(wpi::nt::NetworkTableInstance::GetDefault()),
+    : instance_(instance),
       table_(instance_.GetTable("Orin/PoseEstimate/" + camera_name)),
       verbose_(verbose) {
   pose_publisher_ = table_->GetStructTopic<wpi::math::Pose2d>("Pose").Publish();
