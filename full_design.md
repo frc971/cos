@@ -1,80 +1,102 @@
-# Full Design Plan
+# Full Design
 
 ## Overview
 
-This document specifies the implementation plan for the refactored localization system. It maps every file, class, method, and data flow that needs to be created or changed.
+COS is a CMake/C++20 vision and localization stack for UVC cameras on NVIDIA
+Orin-class hardware. The current runtime is a callback pipeline coordinated by
+`control_loops::LoopController`:
 
-The core architectural shift from `/bos` is replacing the blocking-loop-per-camera-thread model with a single `LoopController` that manages iteration lifecycle via a reference-counted `Context` object. Nodes are wired via callbacks and the iteration gate is implicit: when all nodes release their reference to the current `Context`, the destructor wakes the controller to begin the next iteration.
+1. UVC camera callbacks continuously write the latest JPEG frame for each
+   camera into the controller.
+2. `LoopController::Run()` snapshots the latest frame and metadata for every
+   configured camera into one iteration.
+3. Iteration callbacks stream the JPEG directly when streaming is enabled, and
+   send the frame through decode, AprilTag detection, multi-camera pose solving,
+   and position publishing.
+4. A reference-counted `control_loops::Context` keeps the controller from
+   starting the next iteration until asynchronous downstream work has released
+   its copy.
+
+The implemented wiring entry point is `src/runners/example.cc`, built as the
+`localization_example` executable.
 
 ---
 
-## Data Flow (one iteration, two cameras)
+## Current Module Layout
+
+| Path | Role |
+|------|------|
+| `src/control_loops/context.h` | Iteration `Context`, `MetaData`, and `MetaDataList`. |
+| `src/control_loops/loop_controller.h/.cc` | Latest-frame storage, iteration dispatch, stop/wakeup handling. |
+| `src/utils/node.h` | Generic callback interface used by decode, detect, and solver nodes. |
+| `src/camera/uvc_camera_node.h/.cc` | UVC MJPEG capture. This node is intentionally not an `INode`. |
+| `src/camera/nvjpeg_decode_node.h/.cc` | Asynchronous NVIDIA JPEG decode node. |
+| `src/apriltag/apriltag_detector.h` | Detector interface and `NvBufferToGray` helper. |
+| `src/apriltag/gpu_apriltag_detector_node.h/.cc` | 971/WPILib GPU AprilTag detector implementation. |
+| `src/apriltag/opencv_apriltag_detector_node.h/.cc` | CPU OpenCV AprilTag detector implementation. |
+| `src/localization/square_solver_node.h/.cc` | Single-tag ambiguous pose solver. |
+| `src/localization/multi_tag_solver_node.h/.cc` | Per-camera multi-tag ambiguous pose solver. |
+| `src/localization/unambiguous_solver_node.h/.cc` | Multi-camera accumulator and unambiguous pose selector. |
+| `src/localization/position_sender.h` | `IPositionSender` interface. |
+| `src/localization/networktable_sender.h/.cc` | NetworkTables publisher for final estimates and debug channels. |
+| `src/localization/sim_sender.h` | Header-only in-process sender for tests/simulation. |
+| `src/streamer/jpeg_buffer_streamer_node.h/.cc` | Synchronous MJPEG stream sink. |
+| `src/logging/png_image_log_node.h/.cc` | PNG image logging node. |
+| `src/tools/*.cc` | JPEG log encode/decode/extract tools and UVC logger. |
+| `src/runners/example.cc` | Production-style localization pipeline wiring. |
+| `src/examples/mjpeg_streamer.cc` | Standalone MJPEG streamer example. |
+
+Top-level CMake includes `src`, `third_party`, and `unit_tests`. The root
+`CMakeLists.txt` requires CUDA, JPEG, OpenCV, WPILib, Eigen3, VPI, and libuvc,
+sets C++20/CUDA20, and targets CUDA architecture 87.
+
+---
+
+## Iteration Data Flow
 
 ```
-UVCCameraNode[0] ──writes──► LoopController.latest_frames_[0]
-UVCCameraNode[1] ──writes──► LoopController.latest_frames_[1]
+UVCCameraNode[i]
+  -> LoopController::ReceiveFrame(i, jpeg, timestamp)
 
-LoopController.Run() per iteration:
-  copy latest_frames_ → per_iter_frames_[0..N]
-  create shared_ptr<Context> ctx
+LoopController::Run(), once per iteration:
+  snapshot latest frame + MetaDataList for each camera
+  create shared_ptr<control_loops::Context>
   for each camera i:
-    call registered callbacks(per_iter_frames_[i], ctx)
-      ├─ JpegBufferStreamerNode::Stream(jpeg)        [no ctx needed; synchronous]
-      └─ NvjpegDecodeNode::Decode(jpeg, ctx)
-           └─ (async decode thread)
-                calls IApriltagDetectorNode::Detect(frame, timestamp, ctx)
-                  └─ (detect; may run on GPU)
-                       calls solver callback(detections, camera_idx=i, ctx)
-                         └─ UnambiguousSolverNode::Accumulate(...)
-                              when all N cameras reported:
-                                Solve() → IPositionSender::Send(estimate)
-                              release ctx reference ──► ctx destructor ──► WakeUp()
-  wait on condition_variable
+    call registered iteration callbacks(jpeg, metadata, ctx)
+      -> optional JpegBufferStreamerNode::Stream(jpeg)
+      -> NvjpegDecodeNode::Decode(jpeg, metadata, ctx)
+           async decode thread
+             -> detector->Detect(decoded_frame, metadata, ctx)
+                  -> solver->Accumulate(detections, metadata, ctx)
+                       after all cameras report:
+                         SolveWithoutNotify(...)
+                         callback(position_estimate_t, output_metadata, ctx)
+                           -> IPositionSender::Send(...)
+  wait until Context::~Context calls WakeUp(), or RequestStop() is called
 ```
 
----
-
-## File Layout
-
-### New files
-
-| Path | Purpose |
-|------|---------|
-| `src/utils/context.h` | `Context` struct |
-| `src/utils/loop_controller.h` | `LoopController` declaration |
-| `src/utils/loop_controller.cc` | `LoopController` implementation |
-| `src/localization/position_sender.h` | `IPositionSender` interface |
-| `src/localization/networktable_sender.h` | `NetworkTableSender` (from bos, adapted) |
-| `src/localization/networktable_sender.cc` | implementation |
-| `src/localization/sim_sender.h` | `SimSender` (test/sim stub) |
-| `src/main/main.cc` | wiring entry point |
-
-### Modified files
-
-| Path | Change |
-|------|--------|
-| `src/camera/nvjpeg_decode_node.h/.cc` | `Decode()` gains `shared_ptr<Context>` param; output callback gains it too |
-| `src/apriltag/apriltag_detector.h` | `Detect()` gains `shared_ptr<Context>` param; output callback gains it |
-| `src/apriltag/opencv_apriltag_detector_node.h/.cc` | same |
-| `src/apriltag/gpu_apriltag_detector_node.h/.cc` | same |
-| `src/localization/position_solver.h` | replace `IJointPositionSolverNode` with new per-camera accumulator interface |
-| `src/localization/unambiguous_solver_node.h/.cc` | rewrite input path; holds sender |
-| `src/utils/node.h` | add `shared_ptr<Context>` as second arg to every callback |
-| `src/camera/uvc_camera_node.h/.cc` | **exception**: does not implement `INode<T>`; keeps context-free callback |
-| `src/streamer/jpeg_buffer_streamer_node.h/.cc` | unchanged |
+The controller dispatches callbacks even when a camera has no frame yet. In
+that case the JPEG pointer is `nullptr`; `NvjpegDecodeNode` forwards a null
+decoded frame and the detectors emit an empty detection vector. This lets
+`UnambiguousSolverNode` receive one report per camera per iteration.
 
 ---
 
-## `src/utils/context.h` (new)
+## Context and Metadata
+
+`src/control_loops/context.h` defines:
 
 ```cpp
-#pragma once
-#include <atomic>
-#include <memory>
+namespace control_loops {
 
-namespace utils {
+class LoopController;
 
-class LoopController;  // forward decl
+struct MetaData {
+  int camera_idx = -1;
+  unsigned long timestamp = 0;
+};
+
+using MetaDataList = std::vector<MetaData>;
 
 struct Context {
   std::atomic<bool> stop_token{false};
@@ -82,702 +104,353 @@ struct Context {
   ~Context();
 };
 
-}  // namespace utils
+}  // namespace control_loops
 ```
 
-- `stop_token`: any node can set this to `true` to prevent the next iteration.
-- `~Context()` calls `controller.lock()->WakeUp()` if the controller is still alive.
-- The `Context` destructor is defined in `loop_controller.cc` (after `LoopController` is complete) to avoid circular include issues — alternatively use a forward-declared impl in context.cc.
+`Context::~Context()` is implemented in `loop_controller.cc`; it locks the weak
+controller pointer and calls `LoopController::WakeUp()` when possible. The
+current loop does not read `Context::stop_token`; stopping the runtime is done
+through `LoopController::RequestStop()`.
+
+`MetaDataList` is the metadata channel for the pipeline. The controller creates
+one metadata entry per camera snapshot:
+
+```cpp
+MetaData{.camera_idx = camera_idx, .timestamp = timestamp}
+```
+
+The timestamp is the UVC capture timestamp converted to microseconds by
+`UVCCameraNode`.
 
 ---
 
-## `src/utils/loop_controller.h` (new)
+## Node Callback Contract
+
+All pipeline nodes except `UVCCameraNode` use the generic interface in
+`src/utils/node.h`:
 
 ```cpp
-#pragma once
-#include <atomic>
-#include <condition_variable>
-#include <functional>
-#include <memory>
-#include <mutex>
-#include <vector>
-#include "camera/uvc_camera_node.h"   // for JpegBuffer
-#include "utils/context.h"
-
-namespace utils {
-
-class LoopController : public std::enable_shared_from_this<LoopController> {
- public:
-  explicit LoopController(int num_cameras);
-
-  // Called by UVCCameraNode's registered callback to deliver a new frame.
-  // timestamp is the jpeg capture time from uvc_frame_t->capture_time in microseconds.
-  // Thread-safe; may be called from camera thread.
-  void ReceiveFrame(int camera_idx,
-                    std::shared_ptr<camera::JpegBuffer> frame,
-                    unsigned long timestamp);
-
-  // Register a callback to be called once per iteration for a given camera.
-  // Signature: void(shared_ptr<JpegBuffer>, unsigned long timestamp, shared_ptr<Context>)
-  // timestamp is the jpeg capture time snapshotted at ReceiveFrame time.
-  // Multiple callbacks per camera are allowed (e.g. streamer + decoder).
-  // Must be called before Run().
-  void RegisterIterationCallback(
-      int camera_idx,
-      std::function<void(std::shared_ptr<camera::JpegBuffer>,
-                         unsigned long timestamp,
-                         std::shared_ptr<Context>)>
-          callback);
-
-  // Main loop. Blocks until RequestStop() is called.
-  void Run();
-
-  // Called by Context::~Context() to signal iteration completion.
-  void WakeUp();
-
-  // Called by signal handler to stop the loop after the current iteration.
-  void RequestStop();
-
- private:
-  int num_cameras_;
-
-  // Latest frame and capture timestamp per camera, written by ReceiveFrame().
-  std::vector<std::shared_ptr<camera::JpegBuffer>> latest_frames_;
-  std::vector<unsigned long> latest_timestamps_;  // parallel to latest_frames_
-  std::vector<std::mutex> frame_mutexes_;  // one per camera
-
-  // Downstream callbacks per camera. Index: [camera_idx][callback_idx].
-  std::vector<std::vector<std::function<void(std::shared_ptr<camera::JpegBuffer>,
-                                             unsigned long timestamp,
-                                             std::shared_ptr<Context>)>>>
-      callbacks_;
-
-  // Condition variable for end-of-iteration wakeup.
-  std::mutex wakeup_mutex_;
-  std::condition_variable wakeup_cv_;
-  bool should_wake_{false};
-
-  std::atomic<bool> stop_requested_{false};
-};
-
-}  // namespace utils
-```
-
----
-
-## `src/utils/loop_controller.cc` (new)
-
-### `Context::~Context()` — defined here after LoopController is complete
-
-```cpp
-Context::~Context() {
-  if (auto ctrl = controller.lock()) {
-    ctrl->WakeUp();
-  }
-}
-```
-
-### `LoopController::LoopController(int num_cameras)`
-
-- Resize `latest_frames_`, `frame_mutexes_`, and `callbacks_` to `num_cameras`.
-- `latest_frames_` is initialized to `nullptr`.
-
-### `LoopController::ReceiveFrame(int camera_idx, shared_ptr<JpegBuffer> frame, unsigned long timestamp)`
-
-```cpp
-lock frame_mutexes_[camera_idx]
-latest_frames_[camera_idx]     = frame      // overwrite; no copy of pixel data
-latest_timestamps_[camera_idx] = timestamp  // jpeg capture time
-unlock
-```
-
-This is the "copy whatever is newest" policy. No blocking.
-
-### `LoopController::Run()`
-
-```cpp
-while (!stop_requested_) {
-  // Step 1: snapshot latest frames and timestamps (brief lock per camera)
-  per_iter_frames[N]
-  per_iter_timestamps[N]
-  for i in 0..num_cameras_:
-    lock frame_mutexes_[i]
-    per_iter_frames[i]     = latest_frames_[i]      // shared_ptr copy; zero-copy of data
-    per_iter_timestamps[i] = latest_timestamps_[i]  // jpeg capture time
-    unlock
-
-  // Step 2: create iteration context
-  auto ctx = make_shared<Context>()
-  ctx->controller = weak_from_this()
-
-  // Step 3: call all downstream callbacks
-  for i in 0..num_cameras_:
-    if per_iter_frames[i] == nullptr: continue
-    for each cb in callbacks_[i]:
-      cb(per_iter_frames[i], per_iter_timestamps[i], ctx)
-
-  // Step 4: release our reference to ctx
-  ctx.reset()
-  // ctx will destruct when all downstream nodes release their copies
-
-  // Step 5: wait for WakeUp() (which Context::~Context calls)
-  unique_lock lock(wakeup_mutex_)
-  wakeup_cv_.wait(lock, [this]{ return should_wake_ || stop_requested_; })
-  should_wake_ = false
-
-  // Step 6: if any node set ctx.stop_token (now dead), check system stop
-  // Note: per-iteration stop_token is checked via stop_requested_ set by RequestStop()
-}
-```
-
-Note: `ctx.stop_token` is not checked here because the context is already dead when WakeUp fires. Nodes that want to stop the loop should call `controller->RequestStop()` via the weak_ptr — or the design can be extended to pass the stop decision through Context and have WakeUp read a flag. For now, `RequestStop()` is the mechanism.
-
-### `LoopController::WakeUp()`
-
-```cpp
-{
-  lock_guard lock(wakeup_mutex_)
-  should_wake_ = true
-}
-wakeup_cv_.notify_one()
-```
-
-### `LoopController::RequestStop()`
-
-```cpp
-stop_requested_ = true
-wakeup_cv_.notify_one()  // unblock wait if sleeping
-```
-
----
-
-## `src/utils/node.h` — modified
-
-```cpp
-#pragma once
-#include <functional>
-#include <memory>
-
-namespace utils { struct Context; }
-
 template <typename T>
 class INode {
  public:
   virtual void RegisterCallback(
-      const std::function<void(T, std::shared_ptr<utils::Context>)>& callback) = 0;
+      const std::function<void(T, control_loops::MetaDataList,
+                               std::shared_ptr<control_loops::Context>)>&
+          callback) = 0;
   virtual ~INode() = default;
 };
 ```
 
-Every node in the pipeline (decode, detect, solve) implements `INode<T>` with this two-argument callback. The context is always threaded through.
+Every callback receives:
 
----
+| Argument | Meaning |
+|----------|---------|
+| `T` | The node output payload. |
+| `control_loops::MetaDataList` | Camera index and capture timestamp metadata. |
+| `std::shared_ptr<control_loops::Context>` | Iteration lifetime token. |
 
-## `src/camera/uvc_camera_node.h/.cc` — exception to INode<T>
-
-`UVCCameraNode` does **not** implement `INode<T>`. The context does not exist yet when the camera fires — it is created by `LoopController` at the start of each iteration, after the frame has been written to the latest-frame slot.
-
-`UVCCameraNode` also carries the jpeg capture timestamp from the UVC driver (`uvc_frame_t->capture_time`). This is the authoritative frame timestamp that flows through the entire pipeline.
+`UVCCameraNode` is the exception because camera callbacks run before an
+iteration context exists:
 
 ```cpp
 void RegisterCallback(
-    const std::function<void(std::shared_ptr<JpegBuffer>, unsigned long timestamp)>& callback);
+    const std::function<void(std::shared_ptr<JpegBuffer>,
+                             unsigned long timestamp)>& callback);
 ```
-
-`CallBack()` extracts `frame->capture_time` (converted to microseconds as an unsigned long) and passes it alongside the buffer.
-
-Wired in `main.cc`:
-
-```cpp
-camera.RegisterCallback([&controller, idx](std::shared_ptr<camera::JpegBuffer> frame,
-                                           unsigned long timestamp) {
-  controller->ReceiveFrame(idx, std::move(frame), timestamp);
-});
-```
-
-No other changes to `UVCCameraNode`.
 
 ---
 
-## `src/camera/nvjpeg_decode_node.h` — modified
+## Loop Controller
 
-Introduces `TimestampedDecodedFrame` to carry the jpeg capture timestamp alongside the decoded buffer through the pipeline. Implements `INode<TimestampedDecodedFrame>`.
+`LoopController` owns:
 
-```cpp
-struct TimestampedDecodedFrame {
-  std::shared_ptr<DecodedJpegNvBuffer> buffer;
-  unsigned long timestamp;  // jpeg capture time in microseconds, sourced from uvc_frame_t->capture_time
-};
+- `latest_frames_`: latest JPEG per camera.
+- `latest_metadata_`: latest metadata list per camera.
+- `frame_mutexes_`: one mutex per camera slot.
+- `callbacks_`: iteration callbacks grouped by camera.
+- `wakeup_cv_` and `should_wake_`: the end-of-iteration gate.
+- `stop_requested_`: global loop stop flag.
 
-class NvjpegDecodeNode : public INode<TimestampedDecodedFrame> {
- public:
-  explicit NvjpegDecodeNode(const std::string& name);
-  ~NvjpegDecodeNode() override;
+`ReceiveFrame()` overwrites a camera's latest frame and metadata under that
+camera's mutex. It does not block on downstream pipeline work.
 
-  // INode<TimestampedDecodedFrame>
-  void RegisterCallback(
-      const std::function<void(TimestampedDecodedFrame,
-                               std::shared_ptr<utils::Context>)>& callback) override;
+`Run()` snapshots all camera slots, creates a `Context`, dispatches every
+registered callback for every camera, drops its own context reference, and then
+waits for `WakeUp()`. If there are no callbacks at all, it calls `WakeUp()`
+itself so the loop does not deadlock.
 
-  // Input: called by LoopController's iteration callback.
-  void Decode(const std::shared_ptr<camera::JpegBuffer>& jpeg_buffer,
-              unsigned long timestamp,
-              std::shared_ptr<utils::Context> ctx);
-
- private:
-  void DecodeJpegBuffer(const std::shared_ptr<camera::JpegBuffer>& jpeg_buffer,
-                        unsigned long timestamp,
-                        std::shared_ptr<utils::Context> ctx);
-
-  NvJPEGDecoder* decoder_ = nullptr;
-  std::condition_variable_any cv_;
-  std::timed_mutex mutex_;
-  std::queue<std::function<void()>> tasks_;
-  std::vector<std::function<void(TimestampedDecodedFrame,
-                                 std::shared_ptr<utils::Context>)>>
-      callbacks_;
-  std::jthread decode_thread_;
-};
-```
-
-**`Decode()`:** queues a lambda capturing `jpeg_buffer`, `timestamp`, and `ctx` by value.
-
-**`DecodeJpegBuffer()`:** decodes the buffer, then calls each registered callback with `(TimestampedDecodedFrame{buffer, timestamp}, ctx)`.
+`RequestStop()` sets `stop_requested_` and notifies the condition variable. It
+is used by the signal handler in `src/utils/stop.h`.
 
 ---
 
-## `src/apriltag/apriltag_detector.h` — modified
+## Camera and Decode
 
-`IApriltagDetectorNode` now inherits `INode<std::shared_ptr<std::vector<tag_detection_t>>>`.
+`UVCCameraNode` opens a UVC device based on `UVCCameraConfig`, copies incoming
+MJPEG payloads into `JpegBuffer`, converts `uvc_frame_t::capture_time` to an
+unsigned-long microsecond timestamp, and calls its registered callbacks.
+
+`NvjpegDecodeNode` implements:
 
 ```cpp
-class IApriltagDetectorNode
-    : public INode<std::shared_ptr<std::vector<tag_detection_t>>> {
- public:
-  // INode<shared_ptr<vector<tag_detection_t>>>
-  virtual void RegisterCallback(
-      const std::function<void(std::shared_ptr<std::vector<tag_detection_t>>,
-                               std::shared_ptr<utils::Context>)>& callback) override = 0;
-
-  // Input: called by the decode node's registered callback.
-  // timestamp comes from TimestampedDecodedFrame and is the jpeg capture time.
-  virtual void Detect(const camera::DecodedJpegNvBuffer& frame,
-                      unsigned long timestamp,
-                      std::shared_ptr<utils::Context> ctx) = 0;
-
-  virtual ~IApriltagDetectorNode() = default;
-};
+INode<std::shared_ptr<camera::DecodedJpegNvBuffer>>
 ```
 
-`NvBufferToGray` helper stays here.
+`Decode(jpeg, metadata, ctx)` queues work on a `std::jthread`. The worker calls
+`DecodeJpegBuffer()`, decodes through `NvJPEGDecoder`, wraps the `NvBuffer` in a
+`std::shared_ptr<DecodedJpegNvBuffer>`, and forwards it to registered
+callbacks. If the input JPEG is null, it forwards a null decoded frame with the
+same metadata and context.
 
 ---
 
-## `src/apriltag/opencv_apriltag_detector_node.h/.cc` — modified
+## AprilTag Detection
 
-Implements `IApriltagDetectorNode`. Changes:
-- `Detect()` gains `std::shared_ptr<utils::Context> ctx` parameter (satisfying the interface).
-- `RegisterCallback` stores `std::function<void(shared_ptr<vector<tag_detection_t>>, shared_ptr<Context>)>`.
-- Callbacks called with `(detections, ctx)`. Because `Detect` is synchronous, `ctx` is held on the call stack until all callbacks return, then released naturally.
+`IApriltagDetectorNode` implements:
+
+```cpp
+INode<std::shared_ptr<std::vector<apriltag::tag_detection_t>>>
+```
+
+and exposes:
+
+```cpp
+virtual void Detect(
+    const std::shared_ptr<camera::DecodedJpegNvBuffer>& frame,
+    control_loops::MetaDataList metadata,
+    std::shared_ptr<control_loops::Context> ctx) = 0;
+```
+
+Both detector implementations preserve metadata and context:
+
+- `GPUApriltagDetectorNode` uses the 971/WPILib GPU detector and the configured
+  intrinsics.
+- `OpenCVApriltagDetectorNode` uses OpenCV ArUco with the
+  `DICT_APRILTAG_36h11` dictionary.
+
+If the decoded frame is null or detection fails, both implementations call
+their callbacks with an empty detection vector.
+
+The capture timestamp is not stored in `tag_detection_t`; timestamp and camera
+identity travel through `MetaDataList`.
 
 ---
 
-## `src/apriltag/gpu_apriltag_detector_node.h/.cc` — modified
+## Localization
 
-Same changes as `OpenCVApriltagDetectorNode` — implement updated `IApriltagDetectorNode`, propagate `ctx` through `Detect()` to callbacks.
+`position_estimate_t` currently contains:
+
+```cpp
+std::vector<int> tag_ids;
+std::vector<int> rejected_tag_ids;
+wpi::math::Pose3d pose;
+double variance;
+int num_tags;
+double avg_tag_dist;
+bool invalid = false;
+double loss = 0;
+```
+
+There is no timestamp field on `position_estimate_t`; publishers use
+`MetaDataList` to attach NetworkTables timestamps.
+
+### Solver Interfaces
+
+`IPositionSolverNode` is the per-camera ambiguous solver interface:
+
+```cpp
+INode<ambiguous_estimate_t>
+void AmbiguousSolve(detections, metadata, ctx, bool reject_far_tags = true)
+```
+
+`SquareSolverNode` and `MultiTagSolverNode` implement this interface. The
+unambiguous solver uses their `*WithoutNotify` helpers internally.
+
+`IAccumulatingSolverNode` is the multi-camera final solver interface:
+
+```cpp
+INode<position_estimate_t>
+void Accumulate(detections, metadata, ctx)
+```
+
+### UnambiguousSolverNode
+
+`UnambiguousSolverNode` is constructed with camera constants and an AprilTag
+field layout. It does not own a sender. Instead, it publishes final estimates
+through registered callbacks.
+
+Current accumulation behavior:
+
+1. `Accumulate()` requires non-empty metadata and reads `camera_idx` from the
+   first metadata entry.
+2. Each camera is counted once per iteration via `camera_reported_`.
+3. For each camera, newer metadata replaces older metadata. Non-empty
+   detections replace that camera's accumulated detections only when the
+   metadata is newer.
+4. When every configured camera has reported, `SolveAndReset()` runs.
+5. `SolveAndReset()` calls `SolveWithoutNotify(accumulated_detections_,
+   accumulated_metadata_)`, flattens the accumulated metadata into
+   `output_metadata`, resets the reported-camera flags, unlocks the mutex, and
+   invokes registered callbacks if a result exists.
+
+There is no accumulation timer in the current implementation. The solver waits
+for all configured cameras to report once per controller iteration.
+
+`GetAmbiguousEstimates()` uses metadata timestamps to reject stale camera
+batches. A camera batch is skipped when its timestamp is at least
+`kacceptable_frame_recency` microseconds older than the latest non-empty
+detection batch in the same solve.
+
+The final aggregate estimate currently sets `tag_ids`, `pose`, `variance`,
+`num_tags`, and `loss`. It does not currently aggregate `rejected_tag_ids` or
+`avg_tag_dist` from the per-camera estimates.
 
 ---
 
-## `src/localization/position_sender.h` (new)
+## Position Sending
+
+`IPositionSender` is not an `INode`; it is the final sink interface:
 
 ```cpp
-#pragma once
-#include "localization/position.h"
-
-namespace localization {
-
-class IPositionSender {
- public:
-  virtual void Send(const position_estimate_t& estimate) = 0;
-  virtual ~IPositionSender() = default;
-};
-
-}  // namespace localization
+virtual void Send(const position_estimate_t& estimate,
+                  control_loops::MetaDataList metadata,
+                  std::shared_ptr<control_loops::Context> ctx) = 0;
 ```
 
-This replaces the bos `IPositionSender`. Not a node — nothing registers callbacks on senders.
+`NetworkTableSender` publishes to:
+
+```text
+Orin/PoseEstimate/<sender_name>
+```
+
+It publishes:
+
+- `Pose` as `wpi::math::Pose2d`
+- `Pose3d` as `wpi::math::Pose3d`
+- `TagEstimation` as `[x, y, yaw, variance, num_tags, avg_tag_dist, loss]`
+- `TagId` and `RejectedTagId` as boolean arrays of length 50
+- `NumTags`, `Variance`, `AvgTagDist`, and `Loss`
+
+The NetworkTables timestamp is the maximum timestamp found in the output
+metadata. `NetworkTableSender` also exposes `MakeDoubleChannel`,
+`MakeBoolChannel`, and `MakeStringChannel` helpers for ad hoc debug publishers.
+
+`SimSender` stores `last_estimate`, `last_metadata`, and `last_context` in
+process. It is used by tests and by `localization_example --sim_sender`.
 
 ---
 
-## `src/localization/networktable_sender.h/.cc` (new)
-
-Port of `bos/src/localization/networktable_sender.h/.cc` implementing `IPositionSender`.
-
-### Logging via NetworkTables
-
-NetworkTables publishing **is** the logging mechanism. WPILib automatically records all NT publisher values to the wpilog file via `frc::DataLogManager`. There is no separate log path or `DataLogWriter` to wire up.
-
-**`position_estimate_t` is never extended for logging purposes.** Debug values are published directly to NT via callbacks registered on the sender, independent of `Send()`.
-
-`NetworkTableSender` exposes factory methods that create a typed NT publisher and return a `std::function` that, when called with a value, publishes it immediately:
-
-```cpp
-std::function<void(double)>      MakeDoubleChannel(const std::string& subkey);
-std::function<void(bool)>        MakeBoolChannel(const std::string& subkey);
-std::function<void(std::string)> MakeStringChannel(const std::string& subkey);
-// Add more overloads as needed
-```
-
-Each returned callback is an independent NT publisher scoped under the sender's camera subtable. The caller (typically `main.cc`) holds the callback and passes it to whichever node wants to log that value. The node calls it directly — no `ctx` or `position_estimate_t` involved.
-
-**Adding a new logged field requires touching at most 3 files:**
-- *For a type already supported* (e.g. `double`): only `main.cc` — call `MakeDoubleChannel`, hand the callback to the node.
-- *For a brand-new NT type*: add `Make*Channel` to `networktable_sender.h` and `networktable_sender.cc`, then wire in `main.cc` — 3 files.
-
-### Header
-
-```cpp
-NetworkTableSender(const std::string& camera_name, bool verbose = false);
-void Send(const position_estimate_t& estimate) override;
-
-std::function<void(double)>      MakeDoubleChannel(const std::string& subkey);
-std::function<void(bool)>        MakeBoolChannel(const std::string& subkey);
-std::function<void(std::string)> MakeStringChannel(const std::string& subkey);
-```
-
-No `sim` flag — simulation is handled by `SimSender`. No `DataLogWriter` arg — NT logging is automatic.
-
-### Implementation
-
-Identical to bos `networktable_sender.cc` except:
-- Uses `cos` includes (`localization/position.h` not `src/localization/position.h`).
-- No `latency` field on `position_estimate_t` (field was on bos; check if it exists in cos — if not, omit).
-- Uses `absl/log` (not `LOG` from frc).
-- No `DataLogWriter` integration — removed entirely.
-
-Each `Make*Channel` creates an `nt::*Publisher` (stored in a `std::vector` on the sender to keep it alive) and returns a lambda capturing it by value.
-
----
-
-## `src/localization/sim_sender.h` (new)
-
-```cpp
-#pragma once
-#include "localization/position_sender.h"
-
-namespace localization {
-
-class SimSender : public IPositionSender {
- public:
-  void Send(const position_estimate_t& estimate) override;
-  // Stores the last estimate for test assertions
-  std::optional<position_estimate_t> last_estimate;
-};
-
-}  // namespace localization
-```
-
-Used in tests and simulation runs. `Send()` stores the estimate and optionally logs it.
-
----
-
-## `src/localization/position_solver.h` — modified
-
-Replace the existing `IJointPositionSolverNode` with a new multi-camera accumulator interface:
-
-```cpp
-class IAccumulatingSolverNode {
- public:
-  // Called once per camera per iteration.
-  // camera_idx: which camera's detections these are.
-  // ctx: iteration context; solver holds a copy until all cameras report.
-  virtual void Accumulate(
-      int camera_idx,
-      std::shared_ptr<std::vector<apriltag::tag_detection_t>> detections,
-      std::shared_ptr<utils::Context> ctx) = 0;
-
-  virtual ~IAccumulatingSolverNode() = default;
-};
-```
-
-`IPositionSolverNode` (single-camera, ambiguous) remains unchanged — it is still used internally by `UnambiguousSolverNode`.
-
----
-
-## `src/localization/unambiguous_solver_node.h` — modified
-
-```cpp
-class UnambiguousSolverNode : public IAccumulatingSolverNode {
- public:
-  UnambiguousSolverNode(
-      const std::vector<camera::camera_constant_t>& camera_constants,
-      std::unique_ptr<IPositionSender> sender,
-      const wpi::apriltag::AprilTagFieldLayout& layout = kapriltag_layout);
-
-  // IAccumulatingSolverNode
-  void Accumulate(int camera_idx,
-                  std::shared_ptr<std::vector<apriltag::tag_detection_t>> detections,
-                  std::shared_ptr<utils::Context> ctx) override;
-
-  // Kept for unit testing without the callback machinery
-  auto SolveWithoutNotify(
-      const std::vector<std::vector<apriltag::tag_detection_t>>& detection_batches,
-      bool reject_far_tags = true) -> std::optional<position_estimate_t>;
-
- private:
-  // Solves with whatever is in accumulated_detections_, sends the result, and
-  // resets all per-iteration state. Must be called with mutex_ held via `lock`.
-  // Releases the lock internally before joining the timer thread or releasing
-  // contexts to avoid deadlock.
-  void SolveAndReset(std::unique_lock<std::mutex>& lock);
-
-  // ... existing solve helpers unchanged ...
-
-  int num_cameras_;
-  std::unique_ptr<IPositionSender> sender_;
-
-  // Per-iteration accumulation state (all under mutex_)
-  std::mutex mutex_;
-  int cameras_reported_{0};       // how many distinct cameras have called Accumulate
-  int total_detections_{0};       // sum of detections->size() across all Accumulate calls
-  bool iteration_solved_{false};  // prevents double-solve if timer and last camera race
-  std::vector<std::vector<apriltag::tag_detection_t>> accumulated_detections_;
-  std::vector<std::shared_ptr<utils::Context>> held_contexts_;
-
-  // Launched once total_detections_ >= 2. Fires after kaccumulation_timeout,
-  // then calls SolveAndReset with whatever cameras have reported.
-  std::optional<std::jthread> timer_thread_;
-
-  static constexpr std::chrono::milliseconds kaccumulation_timeout{/* TBD at tuning time */};
-
-  std::optional<position_estimate_t> prev_pose_estimate_;
-  // ... existing members ...
-};
-```
-
-### `Accumulate()` implementation
-
-```
-Accumulate(camera_idx, detections, ctx):
-  unique_lock lock(mutex_)
-
-  accumulated_detections_[camera_idx] = *detections
-  held_contexts_.push_back(ctx)
-  cameras_reported_++
-  total_detections_ += detections->size()
-
-  // Start timeout once we have enough data to attempt a solve
-  if total_detections_ >= 2 && !timer_thread_.has_value() && !iteration_solved_:
-    timer_thread_.emplace([this](std::stop_token st) {
-      std::this_thread::sleep_for(kaccumulation_timeout)
-      if st.stop_requested(): return
-      std::unique_lock lock(mutex_)
-      if !iteration_solved_:
-        SolveAndReset(lock)   // solves with however many cameras have reported
-    })
-
-  // Solve immediately once all cameras have reported, regardless of tag count
-  if cameras_reported_ == num_cameras_ && !iteration_solved_:
-    if timer_thread_.has_value():
-      timer_thread_->request_stop()   // non-blocking; timer exits on its own
-    SolveAndReset(lock)
-```
-
-### `SolveAndReset()` implementation
-
-Called under `mutex_` via a `unique_lock`. Releases the lock before any blocking operations.
-
-```
-SolveAndReset(unique_lock& lock):
-  iteration_solved_ = true
-
-  // Move state out so destructors run after unlock, avoiding two deadlock scenarios:
-  //   1. jthread destructor joins timer thread, which is blocked waiting for mutex_
-  //   2. Context::~Context calls WakeUp (fine, different mutex, but cleaner outside lock)
-  auto old_timer    = std::move(timer_thread_)
-  auto old_contexts = std::move(held_contexts_)
-  timer_thread_     = std::nullopt
-
-  auto result = SolveWithoutNotify(accumulated_detections_)
-
-  // Reset counters for the next iteration
-  cameras_reported_ = 0
-  total_detections_ = 0
-  iteration_solved_ = false
-  for each d in accumulated_detections_: d.clear()
-
-  lock.unlock()
-
-  old_timer.reset()       // request_stop + join; timer sees iteration_solved_==true and exits
-  old_contexts.clear()    // releases ctx refs; last destructor calls WakeUp
-
-  if result.has_value():
-    sender_->Send(*result)
-```
-
-**Thread safety notes:**
-- `mutex_` serializes all `Accumulate` calls and the timer callback; `iteration_solved_` is the once-flag so only one path runs `SolveAndReset`.
-- The `jthread` destructor (which calls `request_stop` + `join`) is never invoked while `mutex_` is held. The timer thread, when it finally acquires `mutex_`, will find `iteration_solved_ == true` and return without calling `SolveAndReset` again.
-- `held_contexts_` is moved out before `unlock()` so `Context::~Context` and `WakeUp()` are always called outside `mutex_`.
-- The `iteration_solved_ = false` reset at the end of `SolveAndReset` happens before `unlock()`, so the next iteration starts clean.
-
----
-
-## Callback Registration Pattern (wiring in `main.cc`)
-
-```cpp
-auto controller = std::make_shared<utils::LoopController>(num_cameras);
-
-// Camera 0 setup
-auto camera0 = std::make_unique<camera::UVCCameraNode>(config0);
-camera0->RegisterCallback([&](std::shared_ptr<camera::JpegBuffer> frame) {
-  controller->ReceiveFrame(0, frame);
-});
-camera0->Start();
-
-// Camera 1 setup (same pattern)
-
-// Streamer for camera 0 (registered as iteration callback; timestamp unused here)
-auto streamer0 = std::make_unique<streamer::JpegBufferStreamerNode>("/stream0", 5800);
-controller->RegisterIterationCallback(
-    0,
-    [&](std::shared_ptr<camera::JpegBuffer> jpeg, double, std::shared_ptr<utils::Context>) {
-      streamer0->Stream(jpeg);
-    });
-
-// Decode → Detect → Solve pipeline for camera 0
-auto decoder0 = std::make_unique<camera::NvjpegDecodeNode>("cam0");
-auto detector0 = std::make_unique<apriltag::GPUApriltagDetectorNode>(
-    width, height, intrinsics0);
-
-detector0->RegisterCallback(
-    [&solver, idx=0](auto detections, auto ctx) {
-      solver->Accumulate(idx, detections, ctx);
-    });
-
-decoder0->RegisterCallback(
-    [&detector0](camera::TimestampedDecodedFrame frame, auto ctx) {
-      detector0->Detect(*frame.buffer, frame.timestamp, ctx);
-    });
-
-controller->RegisterIterationCallback(
-    0,
-    [&decoder0](auto jpeg, unsigned long timestamp, auto ctx) {
-      decoder0->Decode(jpeg, timestamp, ctx);
-    });
-
-// Same for camera 1 with idx=1
-
-// Sender
-auto sender = std::make_unique<localization::NetworkTableSender>("front");
-
-// Solver owns sender
-auto solver = std::make_unique<localization::UnambiguousSolverNode>(
-    camera_constants, std::move(sender));
-
-// Start loop
-stop::RegisterHandler([&]{ controller->RequestStop(); });
-controller->Run();
-```
+## Runtime Wiring in `src/runners/example.cc`
+
+`localization_example` performs this setup:
+
+1. Parse Abseil flags:
+   - `--sim_sender`
+   - `--sender_name`, default `localization`
+2. Load camera constants with `camera::GetCameraConstants()`.
+3. Keep only UVC cameras and sort them by camera name.
+4. Create either `SimSender` or `NetworkTableSender`.
+5. Create `UnambiguousSolverNode` and register a callback that calls
+   `sender->Send(estimate, metadata, ctx)`.
+6. Create `LoopController` with the number of configured UVC cameras.
+7. For each camera:
+   - Create `UVCCameraNode`.
+   - Register its callback to call `controller->ReceiveFrame(...)`.
+   - If a stream port is configured, create `JpegBufferStreamerNode` and
+     register a controller iteration callback for direct JPEG streaming.
+   - Create `NvjpegDecodeNode`.
+   - Create `GPUApriltagDetectorNode` for `austin_gpu` or
+     `OpenCVApriltagDetectorNode` for `opencv_cpu`.
+   - Wire decoder callback to detector `Detect()`.
+   - Wire detector callback to solver `Accumulate()`.
+   - Register a controller iteration callback that calls decoder `Decode()`.
+8. Register signal handling with `stop::RegisterHandler([controller] {
+   controller->RequestStop();
+   })`.
+9. Start all cameras, then call `controller->Run()`.
+
+Configured UVC camera constants live in `constants/camera_constants.json`.
+The current checked-in configuration defines three old-first-bot UVC cameras
+using the `austin_gpu` detector and ports `5801`, `5802`, and `5803`.
 
 ---
 
 ## Timestamp Handling
 
-The jpeg capture timestamp (`uvc_frame_t->capture_time`, converted to microseconds as an `unsigned long`) is the single authoritative timestamp for a frame. It propagates as follows:
+The authoritative frame timestamp is the UVC capture time converted to
+microseconds:
 
-```cpp
+```text
 UVCCameraNode::CallBack()
-  → LoopController::ReceiveFrame(..., timestamp)       stored in latest_timestamps_[i]
-  → iteration callback(jpeg, timestamp, ctx)
-  → NvjpegDecodeNode::Decode(jpeg, timestamp, ctx)
-  → NvjpegDecodeNode::DecodeJpegBuffer(...)
-  → callbacks_(TimestampedDecodedFrame{buffer, timestamp}, ctx)
-  → IApriltagDetectorNode::Detect(frame, timestamp, ctx)
-  → tag_detection_t.timestamp = timestamp              (set per detection)
-  → UnambiguousSolverNode::SolveWithoutNotify()
-      GetAmbiguousEstimates: filters detections by timestamp recency
-      SolveWithoutNotify: averages timestamps → position_estimate_t.timestamp
-  → IPositionSender::Send(estimate)                   estimate.timestamp is the capture time
+  -> LoopController::ReceiveFrame(camera_idx, jpeg, timestamp)
+  -> latest_metadata_[camera_idx] = {MetaData{camera_idx, timestamp}}
+  -> iteration callback(jpeg, metadata, ctx)
+  -> NvjpegDecodeNode::Decode(jpeg, metadata, ctx)
+  -> detector->Detect(decoded, metadata, ctx)
+  -> solver->Accumulate(detections, metadata, ctx)
+  -> solver callback(position_estimate_t, output_metadata, ctx)
+  -> IPositionSender::Send(estimate, output_metadata, ctx)
+  -> NetworkTables Set(..., max(metadata.timestamp))
 ```
 
-The timestamp is never re-derived or replaced at intermediate steps. Decode time and solve time are not recorded. The `UnambiguousSolverNode` existing staleness check (`latest_timestamp - detections[0].timestamp >= kacceptable_frame_recency`) works correctly because all `tag_detection_t` objects from a given camera share the same capture timestamp.
+The timestamp is not re-derived from decode, detection, solve, or publish time.
 
 ---
 
-## Handling Cameras With No New Frame
+## Build Targets and Tests
 
-**Decision for plan: always call all N camera callbacks. Decoder returns immediately and calls detector with empty detections if jpeg is null. Solver always expects exactly N calls.**
+Primary source subdirectories:
 
----
+- `src/control_loops`
+- `src/utils`
+- `src/apriltag`
+- `src/camera`
+- `src/streamer`
+- `src/localization`
+- `src/logging`
+- `src/tools`
+- `src/runners`
+- `src/examples`
 
-## Debug / Development Hooks
+Notable executables:
 
-Per the design doc, no production debug info is baked in. However, the design supports easy hookup during development:
+- `localization_example`
+- `uvc_logger`
+- `jpeg_extract_log`
+- `jpeg_decode_frames`
+- `jpeg_encode_frames`
+- `mjpeg_streamer`
 
-- Any node that receives a `shared_ptr<Context>` can also register additional callbacks. E.g., register a second callback on the decoder to receive decoded frames for display.
-- The `JpegBufferStreamerNode` is already a direct hook: register it as an iteration callback on LoopController without threading it through decode/detect.
-- To log raw detections during development: add a second callback on the detector that receives `(detections, ctx)` and writes to a file.
-- The callback registration pattern in `main.cc` is the extension point — no changes to node internals required.
+Current unit test areas:
 
----
+- AprilTag detector nodes
+- camera constants
+- UVC camera node
+- NVJPEG decode node
+- loop controller
+- NetworkTables sender
+- position sender
+- position solver and solver nodes
+- JPEG buffer streamer
+- JPEG frame tools
 
-## `src/localization/multi_tag_solver_node.h/.cc` — unchanged
+Build commands from `README.md`:
 
-Used internally by `UnambiguousSolverNode::SolveWithoutNotify`. Its `AmbiguousSolveWithoutNotify` method is a pure function (no callbacks fired internally). No changes needed.
-
----
-
-## `src/localization/square_solver_node.h/.cc` — unchanged
-
-Used by `MultiTagSolverNode`. No changes.
-
----
-
-## `src/streamer/jpeg_buffer_streamer_node.h/.cc` — unchanged
-
-`Stream()` is synchronous and doesn't need context. Called from `LoopController` iteration callback as a fire-and-forget sink. Context ref is captured by the lambda but the streamer itself doesn't need it.
-
----
-
-## `src/utils/stop.h/.cc` — modified slightly
-
-`RegisterHandler` should accept a callable so `main.cc` can pass `[&]{ controller->RequestStop(); }`. If the current implementation only supports SIGINT/SIGTERM with a global flag, update it to accept an additional hook function:
-
-```cpp
-void RegisterHandler(std::function<void()> on_stop = {});
+```sh
+cmake -B build -G Ninja -Wno-dev
+cmake --build build
 ```
 
-If the current API is already flexible enough, no change needed.
-
 ---
 
-## CMakeLists changes
+## Extension Points
 
-- `src/utils/CMakeLists.txt`: add `loop_controller.cc`.
-- `src/localization/CMakeLists.txt`: add `networktable_sender.cc`; remove bos-specific deps if any.
-- `src/main/CMakeLists.txt`: add `main.cc`, link all node libraries.
-- New `IPositionSender`, `SimSender` are header-only or added to existing targets.
-
----
-
-## Testing Strategy
-
-### Unit tests (per-node, no camera hardware)
-
-Each node can be tested in isolation because:
-- Inputs are explicit method calls (`Decode()`, `Detect()`, `Accumulate()`).
-- Outputs are registered callbacks, which tests can register with assertions.
-- `Context` can be constructed directly in tests; its destructor is harmless if no LoopController is attached.
-
-Example: test `UnambiguousSolverNode` by constructing it with a `SimSender`, calling `Accumulate()` N times with mock detections, and asserting `SimSender::last_estimate`.
-
-### Integration test (no camera hardware)
-
-Replace `UVCCameraNode` with a `DiskCameraNode` (like `bos/src/camera/disk_camera`) that reads jpegs from disk and calls `LoopController::ReceiveFrame()`. Wire the full pipeline. Assert final `position_estimate_t` values.
-
-### Swappable nodes
-
-- `GPUApriltagDetectorNode` ↔ `OpenCVApriltagDetectorNode`: both implement `IApriltagDetectorNode` (`INode<shared_ptr<vector<tag_detection_t>>>`). Swap by changing `main.cc`.
-- `NetworkTableSender` ↔ `SimSender`: both implement `IPositionSender`. Swap by changing what's passed to `UnambiguousSolverNode`.
-- Any decode node (nvjpeg ↔ opencv decode): if an `OpenCVDecodeNode` is added later, it implements `INode<shared_ptr<DecodedJpegNvBuffer>>` (or a cv::Mat equivalent) with `Decode(jpeg, ctx)` and the same callback contract.
+- Add another camera source by feeding `LoopController::ReceiveFrame()` with a
+  JPEG buffer and capture timestamp.
+- Add another decoder by implementing `INode<decoded-frame-type>` and preserving
+  `MetaDataList` plus `Context` through callbacks.
+- Swap detector implementations through `IApriltagDetectorNode`.
+- Add debug logging by registering additional callbacks on existing nodes or by
+  using `NetworkTableSender::Make*Channel`.
+- Swap final output by implementing `IPositionSender` and changing the sender
+  constructed in `src/runners/example.cc`.
