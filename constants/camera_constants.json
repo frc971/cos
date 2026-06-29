@@ -1,0 +1,52 @@
+{
+  "_comments": [
+    "old_first_bot UVC camera constants copied from ../bos/constants and adapted for COS paths"
+  ],
+  "cameras": [
+    {
+      "name": "old_first_bot_front",
+      "intrinsics_path": "/cos/constants/old_first_bot/front_intrinsics.json",
+      "extrinsics_path": "/cos/constants/old_first_bot/front_extrinsics.json",
+      "frame_width": 1280,
+      "frame_height": 800,
+      "fps": 100.0,
+      "serial_id": "mainfront",
+      "max_frame_size": 2048589,
+      "max_payload_size": 1024,
+      "stream_ratio": 0.5,
+      "port": 5803,
+      "detector_type": "austin_gpu",
+      "camera_type": "uvc"
+    },
+    {
+      "name": "old_first_bot_right",
+      "intrinsics_path": "/cos/constants/old_first_bot/right_intrinsics.json",
+      "extrinsics_path": "/cos/constants/old_first_bot/right_extrinsics.json",
+      "frame_width": 1280,
+      "frame_height": 800,
+      "fps": 100.0,
+      "serial_id": "mainright",
+      "max_frame_size": 2048589,
+      "max_payload_size": 1024,
+      "stream_ratio": 0.5,
+      "port": 5802,
+      "detector_type": "austin_gpu",
+      "camera_type": "uvc"
+    },
+    {
+      "name": "old_first_bot_left",
+      "intrinsics_path": "/cos/constants/old_first_bot/left_intrinsics.json",
+      "extrinsics_path": "/cos/constants/old_first_bot/left_extrinsics.json",
+      "frame_width": 1280,
+      "frame_height": 800,
+      "fps": 100.0,
+      "serial_id": "mainleft",
+      "max_frame_size": 2048589,
+      "max_payload_size": 2048,
+      "stream_ratio": 0.5,
+      "port": 5801,
+      "detector_type": "austin_gpu",
+      "camera_type": "uvc"
+    }
+  ]
+}
