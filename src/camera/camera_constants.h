@@ -28,6 +28,8 @@ using camera_constant_t = struct CameraConstant {
   std::optional<double> stream_ratio = std::nullopt;
   std::optional<uint> port = std::nullopt;
   std::optional<uint> streamer_fps = std::nullopt;
+  std::optional<std::string> yolo_model_path = std::nullopt;
+  bool run_gamepiece = false;
   DetectorType detector_type = DetectorType::INVALID;
   CameraType camera_type = CameraType::INVALID;
 

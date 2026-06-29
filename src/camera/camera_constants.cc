@@ -8,8 +8,8 @@
 #include "absl/log/log.h"
 #include "nlohmann/json.hpp"
 
-ABSL_FLAG(std::string, camera_constants_path,           // NOLINT
-          "/cos/constants/camera_constants.json",       // NOLINT
+ABSL_FLAG(std::string, camera_constants_path,            // NOLINT
+          "/cos/constants/camera_constants.json",        // NOLINT
           "Path to the json file of camera constants");  // NOLINT
 
 namespace camera {
@@ -105,6 +105,12 @@ auto GetCameraConstants(const std::string& path) -> camera_constants_t {
     SetConstant<uint>("port", camera_constant.port, camera_config);
     SetConstant<uint>("streamer_fps", camera_constant.streamer_fps,
                       camera_config);
+    SetConstant<std::string>("yolo_model_path", camera_constant.yolo_model_path,
+                             camera_config);
+    if (camera_config.contains("run_gamepiece") &&
+        !camera_config["run_gamepiece"].is_null()) {
+      camera_constant.run_gamepiece = camera_config["run_gamepiece"];
+    }
 
     if (camera_config.contains("detector_type") &&
         !camera_config["detector_type"].is_null()) {
