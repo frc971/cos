@@ -10,13 +10,14 @@
 #include "apriltag/apriltag_detector.h"
 #include "apriltag/gpu_apriltag_detector_node.h"
 #include "apriltag/opencv_apriltag_detector_node.h"
-#include "cuda_runtime_api.h"
 #include "gtest/gtest.h"
 #include "localization/multi_tag_solver_node.h"
 #include "localization/position_solver.h"
 #include "localization/square_solver_node.h"
 #include "localization/unambiguous_solver_node.h"
 #include "opencv2/imgcodecs.hpp"
+#include "unit_tests/apriltag_test_helpers.h"
+#include "unit_tests/cuda_test_helpers.h"
 #include "unit_tests/test_helpers.h"
 
 namespace {
@@ -24,46 +25,6 @@ namespace {
 auto SolverFixtureRoot() -> std::filesystem::path {
   return std::filesystem::path(COS_BINARY_DIR) / "test_artifacts" /
          "position_solver";
-}
-
-auto RealApriltagFramePath() -> std::filesystem::path {
-  return std::filesystem::path(COS_SOURCE_DIR) / "unit_tests" / "testdata" /
-         "jpeg_frames" / "decoded" / "20.283378.png";
-}
-
-auto CudaDeviceCount() -> std::optional<int> {
-  int device_count = 0;
-  const cudaError_t status = cudaGetDeviceCount(&device_count);
-  if (status != cudaSuccess || device_count <= 0) {
-    return std::nullopt;
-  }
-  return device_count;
-}
-
-auto LoadRealApriltagFrame() -> cv::Mat {
-  const std::filesystem::path frame_path = RealApriltagFramePath();
-  cv::Mat gray = cv::imread(frame_path.string(), cv::IMREAD_GRAYSCALE);
-  EXPECT_FALSE(gray.empty()) << "Missing decoded AprilTag fixture: "
-                             << frame_path;
-  EXPECT_TRUE(gray.empty() || gray.isContinuous());
-  return gray;
-}
-
-auto MakeGrayNvBufferFrame(const cv::Mat& gray)
-    -> std::shared_ptr<camera::DecodedJpegNvBuffer> {
-  auto* nv_buffer =
-      new NvBuffer(V4L2_PIX_FMT_GREY, static_cast<uint32_t>(gray.cols),
-                   static_cast<uint32_t>(gray.rows), 0);
-  nv_buffer->planes[0].data = gray.data;
-  nv_buffer->planes[0].bytesused =
-      static_cast<uint32_t>(gray.total() * gray.elemSize());
-  nv_buffer->planes[0].length = nv_buffer->planes[0].bytesused;
-  nv_buffer->planes[0].fmt.width = static_cast<uint32_t>(gray.cols);
-  nv_buffer->planes[0].fmt.height = static_cast<uint32_t>(gray.rows);
-  nv_buffer->planes[0].fmt.bytesperpixel = 1;
-  nv_buffer->planes[0].fmt.stride = static_cast<uint32_t>(gray.step);
-  nv_buffer->planes[0].fmt.sizeimage = nv_buffer->planes[0].bytesused;
-  return std::make_shared<camera::DecodedJpegNvBuffer>(nv_buffer);
 }
 
 auto DetectWith(apriltag::IApriltagDetectorNode& detector, const cv::Mat& gray)
@@ -76,7 +37,7 @@ auto DetectWith(apriltag::IApriltagDetectorNode& detector, const cv::Mat& gray)
         observed_detections = std::move(detections);
       });
 
-  detector.Detect(MakeGrayNvBufferFrame(gray),
+  detector.Detect(cos_test::testing::MakeGrayNvBufferFrame(gray),
                   {{.camera_idx = 0, .timestamp = 20283378}}, nullptr);
 
   EXPECT_NE(observed_detections, nullptr);
@@ -88,12 +49,12 @@ auto DetectWith(apriltag::IApriltagDetectorNode& detector, const cv::Mat& gray)
 
 auto DetectWithBestAvailableDetector()
     -> std::vector<apriltag::tag_detection_t> {
-  cv::Mat gray = LoadRealApriltagFrame();
+  cv::Mat gray = cos_test::testing::LoadRealApriltagFrame();
   if (gray.empty()) {
     return {};
   }
 
-  if (CudaDeviceCount().has_value()) {
+  if (cos_test::testing::CudaDeviceCount().has_value()) {
     apriltag::GPUApriltagDetectorNode gpu_detector(
         static_cast<uint>(gray.cols), static_cast<uint>(gray.rows),
         cos_test::testing::IntrinsicsJson());

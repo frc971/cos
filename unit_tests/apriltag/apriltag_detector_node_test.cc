@@ -10,65 +10,18 @@
 #include "apriltag/apriltag_detector.h"
 #include "apriltag/gpu_apriltag_detector_node.h"
 #include "apriltag/opencv_apriltag_detector_node.h"
-#include "cuda_runtime_api.h"
 #include "gtest/gtest.h"
 #include "opencv2/imgcodecs.hpp"
 #include "opencv2/imgproc.hpp"
+#include "unit_tests/apriltag_test_helpers.h"
+#include "unit_tests/cuda_test_helpers.h"
 #include "unit_tests/test_helpers.h"
 
 namespace {
 
-auto RealApriltagFramePath() -> std::filesystem::path {
-  return std::filesystem::path(COS_SOURCE_DIR) / "unit_tests" / "testdata" /
-         "jpeg_frames" / "decoded" / "20.283378.png";
-}
-
 auto ApriltagArtifactRoot() -> std::filesystem::path {
   return std::filesystem::path(COS_BINARY_DIR) / "test_artifacts" /
          "apriltag_detections";
-}
-
-auto CudaDeviceCount() -> std::optional<int> {
-  int device_count = 0;
-  const cudaError_t status = cudaGetDeviceCount(&device_count);
-  if (status != cudaSuccess) {
-    std::cerr << "WARNING: skipping GPUApriltagDetectorNode test because CUDA "
-              << "device discovery failed: " << cudaGetErrorString(status)
-              << '\n';
-    return std::nullopt;
-  }
-  if (device_count <= 0) {
-    std::cerr << "WARNING: skipping GPUApriltagDetectorNode test because no "
-              << "CUDA-capable GPU is present\n";
-    return std::nullopt;
-  }
-  return device_count;
-}
-
-auto LoadRealApriltagFrame() -> cv::Mat {
-  const std::filesystem::path frame_path = RealApriltagFramePath();
-  cv::Mat gray = cv::imread(frame_path.string(), cv::IMREAD_GRAYSCALE);
-  EXPECT_FALSE(gray.empty()) << "Missing decoded AprilTag fixture: "
-                             << frame_path;
-  EXPECT_TRUE(gray.empty() || gray.isContinuous());
-  return gray;
-}
-
-auto MakeGrayNvBufferFrame(const cv::Mat& gray)
-    -> std::shared_ptr<camera::DecodedJpegNvBuffer> {
-  auto* nv_buffer =
-      new NvBuffer(V4L2_PIX_FMT_GREY, static_cast<uint32_t>(gray.cols),
-                   static_cast<uint32_t>(gray.rows), 0);
-  nv_buffer->planes[0].data = gray.data;
-  nv_buffer->planes[0].bytesused =
-      static_cast<uint32_t>(gray.total() * gray.elemSize());
-  nv_buffer->planes[0].length = nv_buffer->planes[0].bytesused;
-  nv_buffer->planes[0].fmt.width = static_cast<uint32_t>(gray.cols);
-  nv_buffer->planes[0].fmt.height = static_cast<uint32_t>(gray.rows);
-  nv_buffer->planes[0].fmt.bytesperpixel = 1;
-  nv_buffer->planes[0].fmt.stride = static_cast<uint32_t>(gray.step);
-  nv_buffer->planes[0].fmt.sizeimage = nv_buffer->planes[0].bytesused;
-  return std::make_shared<camera::DecodedJpegNvBuffer>(nv_buffer);
 }
 
 void WriteDetectionOverlay(
@@ -136,10 +89,10 @@ void ExpectNullFramePublishesEmptyDetections(
 void ExpectDetectsTwoTagsInRealLog181Frame(
     std::unique_ptr<apriltag::IApriltagDetectorNode> detector,
     const std::filesystem::path& proof_path) {
-  cv::Mat gray = LoadRealApriltagFrame();
+  cv::Mat gray = cos_test::testing::LoadRealApriltagFrame();
   ASSERT_FALSE(gray.empty());
 
-  auto frame = MakeGrayNvBufferFrame(gray);
+  auto frame = cos_test::testing::MakeGrayNvBufferFrame(gray);
   std::shared_ptr<std::vector<apriltag::tag_detection_t>> observed_detections;
   detector->RegisterCallback(
       [&](std::shared_ptr<std::vector<apriltag::tag_detection_t>> detections,
@@ -162,7 +115,7 @@ auto MakeOpenCVDetector() -> std::unique_ptr<apriltag::IApriltagDetectorNode> {
 
 auto MakeGPUDetectorForRealFrame()
     -> std::unique_ptr<apriltag::IApriltagDetectorNode> {
-  cv::Mat gray = LoadRealApriltagFrame();
+  cv::Mat gray = cos_test::testing::LoadRealApriltagFrame();
   EXPECT_FALSE(gray.empty());
   return std::make_unique<apriltag::GPUApriltagDetectorNode>(
       static_cast<uint>(gray.cols), static_cast<uint>(gray.rows),
@@ -188,7 +141,7 @@ TEST(OpenCVApriltagDetectorNodeTest, DetectsTwoTagsInRealLog181Frame) {
 
 TEST(GPUApriltagDetectorNodeTest,
      DetectsTwoTagsInRealLog181FrameAndWritesVisualProof) {
-  const std::optional<int> device_count = CudaDeviceCount();
+  const std::optional<int> device_count = cos_test::testing::CudaDeviceCount();
   if (!device_count.has_value()) {
     GTEST_SKIP() << "WARNING: no usable CUDA GPU is present";
   }
@@ -200,7 +153,7 @@ TEST(GPUApriltagDetectorNodeTest,
 
 TEST(GPUApriltagDetectorNodeTest,
      NullFramePublishesEmptyDetectionsWhenGpuPresent) {
-  const std::optional<int> device_count = CudaDeviceCount();
+  const std::optional<int> device_count = cos_test::testing::CudaDeviceCount();
   if (!device_count.has_value()) {
     GTEST_SKIP() << "WARNING: no usable CUDA GPU is present";
   }
