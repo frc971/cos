@@ -48,5 +48,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(googletest)
 
 add_subdirectory(src)
+enable_testing()
+add_subdirectory(unit_tests)
 
 include(cmake/DevOrin.cmake)
