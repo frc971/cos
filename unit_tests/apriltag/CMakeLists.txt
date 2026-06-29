@@ -6,3 +6,7 @@ target_link_libraries(apriltag_unit_tests PRIVATE
   gpu_apriltag_detector_node
   absl::flags
 )
+target_compile_definitions(apriltag_unit_tests PRIVATE
+  COS_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+  COS_BINARY_DIR="${CMAKE_BINARY_DIR}"
+)

@@ -1,6 +1,9 @@
-#include <memory>
+#include <cmath>
+#include <filesystem>
 #include <iostream>
+#include <memory>
 #include <optional>
+#include <sstream>
 #include <type_traits>
 #include <vector>
 
@@ -9,9 +12,21 @@
 #include "apriltag/opencv_apriltag_detector_node.h"
 #include "cuda_runtime_api.h"
 #include "gtest/gtest.h"
+#include "opencv2/imgcodecs.hpp"
+#include "opencv2/imgproc.hpp"
 #include "unit_tests/test_helpers.h"
 
 namespace {
+
+auto RealApriltagFramePath() -> std::filesystem::path {
+  return std::filesystem::path(COS_SOURCE_DIR) / "unit_tests" / "testdata" /
+         "jpeg_frames" / "decoded" / "20.283378.png";
+}
+
+auto ApriltagArtifactRoot() -> std::filesystem::path {
+  return std::filesystem::path(COS_BINARY_DIR) / "test_artifacts" /
+         "apriltag_detections";
+}
 
 auto CudaDeviceCount() -> std::optional<int> {
   int device_count = 0;
@@ -30,6 +45,130 @@ auto CudaDeviceCount() -> std::optional<int> {
   return device_count;
 }
 
+auto LoadRealApriltagFrame() -> cv::Mat {
+  const std::filesystem::path frame_path = RealApriltagFramePath();
+  cv::Mat gray = cv::imread(frame_path.string(), cv::IMREAD_GRAYSCALE);
+  EXPECT_FALSE(gray.empty()) << "Missing decoded AprilTag fixture: "
+                             << frame_path;
+  EXPECT_TRUE(gray.empty() || gray.isContinuous());
+  return gray;
+}
+
+auto MakeGrayNvBufferFrame(const cv::Mat& gray)
+    -> std::shared_ptr<camera::DecodedJpegNvBuffer> {
+  auto* nv_buffer =
+      new NvBuffer(V4L2_PIX_FMT_GREY, static_cast<uint32_t>(gray.cols),
+                   static_cast<uint32_t>(gray.rows), 0);
+  nv_buffer->planes[0].data = gray.data;
+  nv_buffer->planes[0].bytesused =
+      static_cast<uint32_t>(gray.total() * gray.elemSize());
+  nv_buffer->planes[0].length = nv_buffer->planes[0].bytesused;
+  nv_buffer->planes[0].fmt.width = static_cast<uint32_t>(gray.cols);
+  nv_buffer->planes[0].fmt.height = static_cast<uint32_t>(gray.rows);
+  nv_buffer->planes[0].fmt.bytesperpixel = 1;
+  nv_buffer->planes[0].fmt.stride = static_cast<uint32_t>(gray.step);
+  nv_buffer->planes[0].fmt.sizeimage = nv_buffer->planes[0].bytesused;
+  return std::make_shared<camera::DecodedJpegNvBuffer>(nv_buffer);
+}
+
+void WriteDetectionOverlay(
+    const cv::Mat& gray,
+    const std::vector<apriltag::tag_detection_t>& detections,
+    const std::filesystem::path& output_path) {
+  std::filesystem::create_directories(output_path.parent_path());
+
+  cv::Mat overlay;
+  cv::cvtColor(gray, overlay, cv::COLOR_GRAY2BGR);
+  for (const apriltag::tag_detection_t& detection : detections) {
+    std::vector<cv::Point> corners;
+    corners.reserve(detection.corners.size());
+    for (const cv::Point2d& corner : detection.corners) {
+      corners.emplace_back(static_cast<int>(std::lround(corner.x)),
+                           static_cast<int>(std::lround(corner.y)));
+    }
+    cv::polylines(overlay, corners, true, cv::Scalar(0, 255, 0), 3,
+                  cv::LINE_AA);
+    for (size_t i = 0; i < corners.size(); ++i) {
+      cv::circle(overlay, corners[i], 7, cv::Scalar(0, 0, 255), -1,
+                 cv::LINE_AA);
+      cv::putText(overlay, std::to_string(i), corners[i] + cv::Point{8, -8},
+                  cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(255, 255, 255), 2,
+                  cv::LINE_AA);
+    }
+    if (!corners.empty()) {
+      cv::putText(overlay, "id " + std::to_string(detection.tag_id),
+                  corners.front() + cv::Point{12, 24},
+                  cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(0, 255, 255), 2,
+                  cv::LINE_AA);
+    }
+  }
+
+  ASSERT_TRUE(cv::imwrite(output_path.string(), overlay))
+      << "Failed to write AprilTag detection proof: " << output_path;
+  std::cout << "AprilTag detection proof written to " << output_path << '\n';
+}
+
+void ExpectNullFramePublishesEmptyDetections(
+    std::unique_ptr<apriltag::IApriltagDetectorNode> detector,
+    control_loops::MetaData expected_metadata) {
+  int callback_count = 0;
+  control_loops::MetaDataList observed_metadata;
+  detector->RegisterCallback(
+      [&](std::shared_ptr<std::vector<apriltag::tag_detection_t>> detections,
+          control_loops::MetaDataList metadata,
+          std::shared_ptr<control_loops::Context> ctx) {
+        callback_count++;
+        observed_metadata = std::move(metadata);
+        EXPECT_NE(detections, nullptr);
+        EXPECT_TRUE(detections->empty());
+        EXPECT_EQ(ctx, nullptr);
+      });
+
+  detector->Detect(nullptr, {expected_metadata}, nullptr);
+
+  EXPECT_EQ(callback_count, 1);
+  ASSERT_EQ(observed_metadata.size(), 1);
+  EXPECT_EQ(observed_metadata.front().camera_idx,
+            expected_metadata.camera_idx);
+  EXPECT_EQ(observed_metadata.front().timestamp, expected_metadata.timestamp);
+}
+
+void ExpectDetectsTwoTagsInRealLog181Frame(
+    std::unique_ptr<apriltag::IApriltagDetectorNode> detector,
+    const std::filesystem::path& proof_path) {
+  cv::Mat gray = LoadRealApriltagFrame();
+  ASSERT_FALSE(gray.empty());
+
+  auto frame = MakeGrayNvBufferFrame(gray);
+  std::shared_ptr<std::vector<apriltag::tag_detection_t>> observed_detections;
+  detector->RegisterCallback(
+      [&](std::shared_ptr<std::vector<apriltag::tag_detection_t>> detections,
+          control_loops::MetaDataList,
+          std::shared_ptr<control_loops::Context>) {
+        observed_detections = std::move(detections);
+      });
+
+  detector->Detect(frame, {{.camera_idx = 0, .timestamp = 20283378}}, nullptr);
+
+  ASSERT_NE(observed_detections, nullptr);
+  WriteDetectionOverlay(gray, *observed_detections, proof_path);
+  EXPECT_EQ(observed_detections->size(), 2);
+}
+
+auto MakeOpenCVDetector() -> std::unique_ptr<apriltag::IApriltagDetectorNode> {
+  return std::make_unique<apriltag::OpenCVApriltagDetectorNode>(
+      cos_test::testing::IntrinsicsJson());
+}
+
+auto MakeGPUDetectorForRealFrame()
+    -> std::unique_ptr<apriltag::IApriltagDetectorNode> {
+  cv::Mat gray = LoadRealApriltagFrame();
+  EXPECT_FALSE(gray.empty());
+  return std::make_unique<apriltag::GPUApriltagDetectorNode>(
+      static_cast<uint>(gray.cols), static_cast<uint>(gray.rows),
+      cos_test::testing::IntrinsicsJson());
+}
+
 TEST(ApriltagDetectorInterfacesTest, ConcreteDetectorsImplementInterface) {
   EXPECT_TRUE((std::is_base_of_v<apriltag::IApriltagDetectorNode,
                                  apriltag::OpenCVApriltagDetectorNode>));
@@ -38,58 +177,38 @@ TEST(ApriltagDetectorInterfacesTest, ConcreteDetectorsImplementInterface) {
 }
 
 TEST(OpenCVApriltagDetectorNodeTest, NullFramePublishesEmptyDetections) {
-  apriltag::OpenCVApriltagDetectorNode detector(
-      cos_test::testing::IntrinsicsJson());
-
-  int callback_count = 0;
-  control_loops::MetaDataList observed_metadata;
-  detector.RegisterCallback(
-      [&](std::shared_ptr<std::vector<apriltag::tag_detection_t>> detections,
-          control_loops::MetaDataList metadata,
-          std::shared_ptr<control_loops::Context> ctx) {
-        callback_count++;
-        observed_metadata = std::move(metadata);
-        EXPECT_NE(detections, nullptr);
-        EXPECT_TRUE(detections->empty());
-        EXPECT_EQ(ctx, nullptr);
-      });
-
-  detector.Detect(nullptr, {{.camera_idx = 2, .timestamp = 1234}}, nullptr);
-
-  EXPECT_EQ(callback_count, 1);
-  ASSERT_EQ(observed_metadata.size(), 1);
-  EXPECT_EQ(observed_metadata.front().camera_idx, 2);
-  EXPECT_EQ(observed_metadata.front().timestamp, 1234UL);
+  ExpectNullFramePublishesEmptyDetections(
+      MakeOpenCVDetector(), {.camera_idx = 2, .timestamp = 1234});
 }
 
-TEST(GPUApriltagDetectorNodeTest, NullFramePublishesEmptyDetectionsWhenGpuPresent) {
+TEST(OpenCVApriltagDetectorNodeTest, DetectsTwoTagsInRealLog181Frame) {
+  ExpectDetectsTwoTagsInRealLog181Frame(
+      MakeOpenCVDetector(), ApriltagArtifactRoot() / "opencv_20.283378.png");
+}
+
+TEST(GPUApriltagDetectorNodeTest,
+     DetectsTwoTagsInRealLog181FrameAndWritesVisualProof) {
   const std::optional<int> device_count = CudaDeviceCount();
   if (!device_count.has_value()) {
     GTEST_SKIP() << "WARNING: no usable CUDA GPU is present";
   }
 
-  apriltag::GPUApriltagDetectorNode detector(
-      640, 480, cos_test::testing::IntrinsicsJson());
+  ExpectDetectsTwoTagsInRealLog181Frame(
+      MakeGPUDetectorForRealFrame(),
+      ApriltagArtifactRoot() / "gpu_20.283378.png");
+}
 
-  int callback_count = 0;
-  control_loops::MetaDataList observed_metadata;
-  detector.RegisterCallback(
-      [&](std::shared_ptr<std::vector<apriltag::tag_detection_t>> detections,
-          control_loops::MetaDataList metadata,
-          std::shared_ptr<control_loops::Context> ctx) {
-        callback_count++;
-        observed_metadata = std::move(metadata);
-        EXPECT_NE(detections, nullptr);
-        EXPECT_TRUE(detections->empty());
-        EXPECT_EQ(ctx, nullptr);
-      });
+TEST(GPUApriltagDetectorNodeTest,
+     NullFramePublishesEmptyDetectionsWhenGpuPresent) {
+  const std::optional<int> device_count = CudaDeviceCount();
+  if (!device_count.has_value()) {
+    GTEST_SKIP() << "WARNING: no usable CUDA GPU is present";
+  }
 
-  detector.Detect(nullptr, {{.camera_idx = 4, .timestamp = 5678}}, nullptr);
-
-  EXPECT_EQ(callback_count, 1);
-  ASSERT_EQ(observed_metadata.size(), 1);
-  EXPECT_EQ(observed_metadata.front().camera_idx, 4);
-  EXPECT_EQ(observed_metadata.front().timestamp, 5678UL);
+  ExpectNullFramePublishesEmptyDetections(
+      std::make_unique<apriltag::GPUApriltagDetectorNode>(
+          640, 480, cos_test::testing::IntrinsicsJson()),
+      {.camera_idx = 4, .timestamp = 5678});
 }
 
 TEST(TagDetectionTest, StreamsIdAndCorners) {
