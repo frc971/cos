@@ -42,11 +42,12 @@ TEST(CameraConstantsTest, ParsesValidCamerasAndSkipsInvalidEntries) {
          {{"name", "front"}, {"camera_type", "mipi"}},
          {{"name", "rear"},
           {"detector_type", "austin_gpu"},
-          {"camera_type", "opencv"}}}}});
+          {"camera_type", "opencv"}},
+         {{"name", "minimal"}}}}});
 
   const camera::camera_constants_t constants = camera::GetCameraConstants(path);
 
-  ASSERT_EQ(constants.size(), 2);
+  ASSERT_EQ(constants.size(), 3);
   const auto& front = constants.at("front");
   EXPECT_EQ(front.name, "front");
   EXPECT_EQ(front.pipeline, "pipe");
@@ -66,13 +67,18 @@ TEST(CameraConstantsTest, ParsesValidCamerasAndSkipsInvalidEntries) {
   EXPECT_EQ(front.port, 1181U);
   EXPECT_EQ(front.streamer_fps, 15U);
   EXPECT_EQ(front.yolo_model_path, "/tmp/model.engine");
-  EXPECT_TRUE(front.run_gamepiece);
+  EXPECT_EQ(front.run_gamepiece, true);
   EXPECT_EQ(front.detector_type, camera::DetectorType::OPENCV_CPU);
   EXPECT_EQ(front.camera_type, camera::CameraType::UVC);
 
   EXPECT_EQ(constants.at("rear").detector_type,
             camera::DetectorType::AUSTIN_GPU);
   EXPECT_EQ(constants.at("rear").camera_type, camera::CameraType::OPENCV);
+
+  const auto& minimal = constants.at("minimal");
+  EXPECT_FALSE(minimal.run_gamepiece.has_value());
+  EXPECT_FALSE(minimal.detector_type.has_value());
+  EXPECT_FALSE(minimal.camera_type.has_value());
 }
 
 TEST(CameraConstantTest, SortsByName) {

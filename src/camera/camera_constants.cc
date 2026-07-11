@@ -24,6 +24,21 @@ void SetConstant(const std::string_view config_name, std::optional<T>& config,
   if (camera_config.contains(config_name) &&
       !camera_config[config_name].is_null()) {
     config = camera_config[config_name];
+  } else {
+    LOG(WARNING) << "No value inserted for camera constant: " << config_name;
+  }
+}
+
+template <typename T, typename Converter>
+void SetConvertedConstant(const std::string_view config_name,
+                          std::optional<T>& config,
+                          const nlohmann::json& camera_config,
+                          Converter converter) {
+  if (camera_config.contains(config_name) &&
+      !camera_config[config_name].is_null()) {
+    config = converter(camera_config[config_name].get<std::string>());
+  } else {
+    LOG(WARNING) << "No value inserted for camera constant: " << config_name;
   }
 }
 
@@ -107,22 +122,13 @@ auto GetCameraConstants(const std::string& path) -> camera_constants_t {
                       camera_config);
     SetConstant<std::string>("yolo_model_path", camera_constant.yolo_model_path,
                              camera_config);
-    if (camera_config.contains("run_gamepiece") &&
-        !camera_config["run_gamepiece"].is_null()) {
-      camera_constant.run_gamepiece = camera_config["run_gamepiece"];
-    }
-
-    if (camera_config.contains("detector_type") &&
-        !camera_config["detector_type"].is_null()) {
-      camera_constant.detector_type =
-          StringToDetectorType(camera_config["detector_type"]);
-    }
-
-    if (camera_config.contains("camera_type") &&
-        !camera_config["camera_type"].is_null()) {
-      camera_constant.camera_type =
-          StringToCameraType(camera_config["camera_type"]);
-    }
+    SetConstant<bool>("run_gamepiece", camera_constant.run_gamepiece,
+                      camera_config);
+    SetConvertedConstant<DetectorType>("detector_type",
+                                       camera_constant.detector_type,
+                                       camera_config, StringToDetectorType);
+    SetConvertedConstant<CameraType>("camera_type", camera_constant.camera_type,
+                                     camera_config, StringToCameraType);
 
     camera_constants.insert({camera_constant.name, camera_constant});
   }

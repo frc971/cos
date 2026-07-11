@@ -126,7 +126,7 @@ Two new optional fields are added to `camera_constant_t`
 std::optional<std::string> yolo_model_path = std::nullopt;
 // If present, this camera participates in the gamepiece loop and uses this
 // TRT engine file path.
-bool run_gamepiece = false;
+std::optional<bool> run_gamepiece = std::nullopt;
 ```
 
 Parsing is added to `camera_constants.cc` alongside the existing fields.
@@ -313,7 +313,7 @@ if (absl::GetFlag(FLAGS_run_gamepiece)) {
   // Collect gamepiece-enabled cameras in the same sorted order.
   std::vector<int> gamepiece_camera_indices;
   for (size_t i = 0; i < camera_constants.size(); ++i) {
-    if (camera_constants[i].run_gamepiece) {
+    if (camera_constants[i].run_gamepiece.value_or(false)) {
       gamepiece_camera_indices.push_back(static_cast<int>(i));
     }
   }
