@@ -14,7 +14,7 @@
 #include <opencv2/core.hpp>
 #include <wpi/math/geometry/Pose3d.hpp>
 
-#include "camera/nvjpeg_decode_node.h"
+#include "camera/decoded_jpeg_buffer.h"
 #include "gamepiece/gamepiece_detection.h"
 #include "utils/node.h"
 #include "yolo/yolo.h"

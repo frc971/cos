@@ -17,6 +17,19 @@ auto CaptureTimeMicros(const timeval& capture_time) -> unsigned long {
 
 }  // namespace
 
+auto UvcFrameTimestampMicros(const uvc_frame_t& frame) -> unsigned long {
+  return CaptureTimeMicros(frame.capture_time);
+}
+
+auto JpegBufferFromUvcFrame(const uvc_frame_t& frame)
+    -> std::shared_ptr<JpegBuffer> {
+  CHECK(frame.frame_format == UVC_COLOR_FORMAT_MJPEG);
+  std::shared_ptr<JpegBuffer> buffer =
+      std::make_shared<JpegBuffer>(frame.data_bytes);
+  std::memcpy(buffer->ptr(), frame.data, frame.data_bytes);
+  return buffer;
+}
+
 UVCCameraConfig::UVCCameraConfig(const camera_constant_t& camera_constant)
     : name(camera_constant.name),
       serial_id(camera_constant.serial_id.value()),
@@ -73,11 +86,8 @@ UVCCameraNode::UVCCameraNode(const UVCCameraConfig& config)
 }
 
 void UVCCameraNode::CallBack(uvc_frame_t* frame) {
-  CHECK(frame->frame_format == UVC_COLOR_FORMAT_MJPEG);
-  const unsigned long timestamp = CaptureTimeMicros(frame->capture_time);
-  std::shared_ptr<JpegBuffer> buffer =
-      std::make_shared<JpegBuffer>(frame->data_bytes);
-  std::memcpy(buffer->ptr(), frame->data, frame->data_bytes);
+  const unsigned long timestamp = UvcFrameTimestampMicros(*frame);
+  std::shared_ptr<JpegBuffer> buffer = JpegBufferFromUvcFrame(*frame);
 
   for (size_t i = 0; i < callbacks_.size(); i++) {  // NOLINT
     callbacks_[i](buffer, timestamp);
@@ -104,9 +114,7 @@ UVCCameraNode::~UVCCameraNode() {
   LOG(INFO) << name_ << " has been destructed";
 }
 
-void UVCCameraNode::RegisterCallback(
-    const std::function<void(std::shared_ptr<JpegBuffer>,
-                             unsigned long timestamp)>& callback) {
+void UVCCameraNode::RegisterCallback(const CameraCallback& callback) {
   callbacks_.push_back(callback);
 }
 }  // namespace camera

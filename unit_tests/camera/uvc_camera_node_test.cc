@@ -1,7 +1,10 @@
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <memory>
 #include <type_traits>
 
+#include "camera/disk_camera.h"
 #include "camera/uvc_camera_node.h"
 #include "gtest/gtest.h"
 #include "unit_tests/test_helpers.h"
@@ -30,9 +33,14 @@ TEST(UVCCameraConfigTest, BuildsFromCameraConstantWithDefaults) {
 TEST(UVCCameraConfigTest, BuildsFromJsonFile) {
   const auto path = cos_test::testing::WriteJsonFile(
       std::filesystem::temp_directory_path() / "uvc_camera_config_test.json",
-      {{"camera_type", "uvc"}, {"name", "front"}, {"serial_id", "serial"},
-       {"height", 480},        {"width", 640},    {"fps", 30},
-       {"max_payload_size", 1}, {"max_frame_size", 2}});
+      {{"camera_type", "uvc"},
+       {"name", "front"},
+       {"serial_id", "serial"},
+       {"height", 480},
+       {"width", 640},
+       {"fps", 30},
+       {"max_payload_size", 1},
+       {"max_frame_size", 2}});
 
   const camera::UVCCameraConfig config(path);
 
@@ -56,8 +64,36 @@ TEST(JpegBufferTest, OwnsWritableMemoryAndReportsSize) {
 }
 
 TEST(UVCCameraNodeTest, IsMoveAndCopyDisabledByOwnedNativeHandles) {
+  EXPECT_TRUE((std::is_base_of_v<camera::ICamera, camera::UVCCameraNode>));
   EXPECT_FALSE(std::is_copy_constructible_v<camera::UVCCameraNode>);
   EXPECT_FALSE(std::is_move_constructible_v<camera::UVCCameraNode>);
+}
+
+TEST(DiskCameraTest, ImplementsCameraInterfaceAndPublishesDiskFrame) {
+  const std::filesystem::path path =
+      std::filesystem::temp_directory_path() / "disk_camera_test.mjpg";
+  {
+    std::ofstream out(path, std::ios::binary);
+    out << "jpeg";
+  }
+
+  camera::DiskCamera disk_camera(path, 1234);
+  EXPECT_TRUE((std::is_base_of_v<camera::ICamera, camera::DiskCamera>));
+
+  std::shared_ptr<camera::JpegBuffer> observed_frame;
+  unsigned long observed_timestamp = 0;
+  disk_camera.RegisterCallback(
+      [&](std::shared_ptr<camera::JpegBuffer> frame, unsigned long timestamp) {
+        observed_frame = std::move(frame);
+        observed_timestamp = timestamp;
+      });
+
+  disk_camera.Start();
+
+  ASSERT_NE(observed_frame, nullptr);
+  EXPECT_EQ(observed_frame->size(), 4U);
+  EXPECT_EQ(std::memcmp(observed_frame->ptr(), "jpeg", 4), 0);
+  EXPECT_EQ(observed_timestamp, 1234UL);
 }
 
 }  // namespace

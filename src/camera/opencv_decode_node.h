@@ -5,16 +5,21 @@
 #include <string>
 #include <thread>
 
-#include "NvJpegDecoder.h"
-
 #include "camera/decoded_jpeg_buffer.h"
 #include "utils/node.h"
+
 namespace camera {
 
-class NvjpegDecodeNode : public IDecodeNode {
+// CPU-only JPEG decoder, backed by cv::imdecode instead of NVIDIA's hardware
+// decoder. Produces the same DecodedJpegNvBuffer type as NvjpegDecodeNode
+// (grayscale data in plane 0), so it is a drop-in replacement for it anywhere
+// an IDecodeNode is expected -- in particular this lets the rest of the
+// pipeline (apriltag detection, gamepiece detection) run entirely on CPU.
+class OpenCVDecodeNode : public IDecodeNode {
  public:
-  NvjpegDecodeNode(const std::string& name);
-  ~NvjpegDecodeNode() override;
+  explicit OpenCVDecodeNode(const std::string& name);
+  ~OpenCVDecodeNode() override;
+
   void RegisterCallback(
       const std::function<void(std::shared_ptr<DecodedJpegNvBuffer>,
                                control_loops::MetaDataList metadata,
@@ -30,7 +35,7 @@ class NvjpegDecodeNode : public IDecodeNode {
                         std::shared_ptr<control_loops::Context> ctx);
 
  private:
-  NvJPEGDecoder* decoder_ = nullptr;
+  std::string name_;
   std::condition_variable_any cv_;
   std::timed_mutex mutex_;
   std::queue<std::function<void()>> tasks_;

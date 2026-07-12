@@ -4,7 +4,7 @@
 #include <opencv2/core/mat.hpp>
 #include <vector>
 #include "apriltag/tag_detection.h"
-#include "camera/nvjpeg_decode_node.h"
+#include "camera/decoded_jpeg_buffer.h"
 #include "utils/node.h"
 
 namespace apriltag {

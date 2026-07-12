@@ -26,6 +26,15 @@ target_link_libraries(uvc_camera_node PRIVATE
   camera_constants
 )
 
+add_library(disk_camera)
+target_sources(disk_camera
+  PRIVATE
+    disk_camera.cc
+)
+target_link_libraries(disk_camera PUBLIC
+  absl::check
+)
+
 add_library(nvjpeg_decode_node)
 target_sources(nvjpeg_decode_node
   PRIVATE
@@ -37,4 +46,16 @@ target_compile_options(nvjpeg_decode_node PRIVATE
 target_link_libraries(nvjpeg_decode_node PUBLIC
   nvjpeg
   absl::log
+)
+
+add_library(opencv_decode_node)
+target_sources(opencv_decode_node
+  PRIVATE
+    opencv_decode_node.cc
+)
+target_link_libraries(opencv_decode_node PUBLIC
+  nvjpeg
+  ${OpenCV_LIBS}
+  absl::log
+  absl::check
 )

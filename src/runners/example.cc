@@ -15,6 +15,7 @@
 #include "apriltag/apriltag_detector.h"
 #include "apriltag/gpu_apriltag_detector_node.h"
 #include "apriltag/opencv_apriltag_detector_node.h"
+#include "camera/camera.h"
 #include "camera/camera_constants.h"
 #include "camera/nvjpeg_decode_node.h"
 #include "camera/uvc_camera_node.h"
@@ -108,7 +109,7 @@ auto main(int argc, char* argv[]) -> int {
   auto controller = std::make_shared<control_loops::LocalizationLoopController>(
       camera_constants.size());
 
-  std::vector<std::unique_ptr<camera::UVCCameraNode>> cameras;
+  std::vector<std::unique_ptr<camera::ICamera>> cameras;
   std::vector<std::unique_ptr<streamer::JpegBufferStreamerNode>> streamers;
   std::vector<std::unique_ptr<camera::NvjpegDecodeNode>> decoders;
   std::vector<std::unique_ptr<apriltag::IApriltagDetectorNode>> detectors;
