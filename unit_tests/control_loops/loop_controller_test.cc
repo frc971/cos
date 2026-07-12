@@ -3,13 +3,15 @@
 #include <memory>
 #include <thread>
 
+#include "camera/uvc_camera_node.h"
 #include "control_loops/loop_controller.h"
 #include "gtest/gtest.h"
 
 namespace {
 
 TEST(LoopControllerTest, DispatchesLatestFrameAndMetadata) {
-  auto controller = std::make_shared<control_loops::LoopController>(1);
+  auto controller =
+      std::make_shared<control_loops::LocalizationLoopController>(1);
   auto frame = std::make_shared<camera::JpegBuffer>(3);
   std::atomic<int> callback_count{0};
 
@@ -38,12 +40,12 @@ TEST(LoopControllerTest, DispatchesLatestFrameAndMetadata) {
 }
 
 TEST(ContextTest, DestructionWakesControllerRunLoop) {
-  auto controller = std::make_shared<control_loops::LoopController>(1);
+  auto controller =
+      std::make_shared<control_loops::LocalizationLoopController>(1);
   std::atomic<int> callback_count{0};
 
   controller->RegisterIterationCallback(
-      0, [&](std::shared_ptr<camera::JpegBuffer>,
-             control_loops::MetaDataList,
+      0, [&](std::shared_ptr<camera::JpegBuffer>, control_loops::MetaDataList,
              std::shared_ptr<control_loops::Context> ctx) {
         callback_count.fetch_add(1);
         controller->RequestStop();

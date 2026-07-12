@@ -14,5 +14,6 @@ target_link_libraries(localization_example PRIVATE
   opencv_apriltag_detector_node
   unambiguous_solver_node
   networktable_sender
+  gamepiece
   stop
 )

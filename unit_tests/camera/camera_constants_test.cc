@@ -34,6 +34,8 @@ TEST(CameraConstantsTest, ParsesValidCamerasAndSkipsInvalidEntries) {
           {"stream_ratio", 0.5},
           {"port", 1181},
           {"streamer_fps", 15},
+          {"yolo_model_path", "/tmp/model.engine"},
+          {"run_gamepiece", true},
           {"detector_type", "opencv_cpu"},
           {"camera_type", "uvc"}},
          nullptr,
@@ -63,6 +65,8 @@ TEST(CameraConstantsTest, ParsesValidCamerasAndSkipsInvalidEntries) {
   EXPECT_EQ(front.stream_ratio, 0.5);
   EXPECT_EQ(front.port, 1181U);
   EXPECT_EQ(front.streamer_fps, 15U);
+  EXPECT_EQ(front.yolo_model_path, "/tmp/model.engine");
+  EXPECT_TRUE(front.run_gamepiece);
   EXPECT_EQ(front.detector_type, camera::DetectorType::OPENCV_CPU);
   EXPECT_EQ(front.camera_type, camera::CameraType::UVC);
 

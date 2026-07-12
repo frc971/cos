@@ -1,12 +1,45 @@
-#include "camera/nvjpeg_decode_node.h"
-#include <nvbufsurface.h>
+#include "camera/opencv_decode_node.h"
+
+#include <cstring>
+
+#include <opencv2/imgcodecs.hpp>
+
 #include "absl/log/check.h"
 #include "absl/log/log.h"
 
 namespace camera {
+namespace {
 
-NvjpegDecodeNode::NvjpegDecodeNode(const std::string& name) {
-  decoder_ = NvJPEGDecoder::createJPEGDecoder(name.c_str());
+// Builds an NvBuffer whose plane 0 mirrors the layout NvjpegDecodeNode
+// produces (a single 8-bit grayscale/luma plane), so downstream consumers
+// (apriltag detection, gamepiece detection) work unmodified regardless of
+// which decoder produced the frame.
+auto MakeGrayNvBuffer(const cv::Mat& gray) -> NvBuffer* {
+  NvBuffer::NvBufferPlaneFormat fmt{};
+  fmt.width = static_cast<uint32_t>(gray.cols);
+  fmt.height = static_cast<uint32_t>(gray.rows);
+  fmt.bytesperpixel = 1;
+  fmt.stride = fmt.width;
+  fmt.sizeimage = fmt.stride * fmt.height;
+
+  auto* buffer = new NvBuffer(V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE,
+                              V4L2_MEMORY_USERPTR, 1, &fmt, 0);
+  CHECK_EQ(buffer->allocateMemory(), 0);
+
+  NvBuffer::NvBufferPlane& plane = buffer->planes[0];
+  for (uint32_t row = 0; row < fmt.height; ++row) {
+    std::memcpy(plane.data + (row * fmt.stride), gray.ptr(static_cast<int>(row)),
+               fmt.width);
+  }
+  plane.bytesused = fmt.sizeimage;
+  plane.length = fmt.sizeimage;
+
+  return buffer;
+}
+
+}  // namespace
+
+OpenCVDecodeNode::OpenCVDecodeNode(const std::string& name) : name_(name) {
   decode_thread_ = std::jthread([this](const std::stop_token& stop_token) {
     std::function<void()> task;
     while (!stop_token.stop_requested()) {
@@ -35,17 +68,17 @@ NvjpegDecodeNode::NvjpegDecodeNode(const std::string& name) {
   });
 }
 
-NvjpegDecodeNode::~NvjpegDecodeNode() {
-  LOG(INFO) << "Destructing NvjpegDecodeNode";
+OpenCVDecodeNode::~OpenCVDecodeNode() {
+  LOG(INFO) << "Destructing OpenCVDecodeNode " << name_;
   decode_thread_.request_stop();
   cv_.notify_one();
-  delete decoder_;
 }
-void NvjpegDecodeNode::Decode(const std::shared_ptr<JpegBuffer>& jpeg_buffer,
+
+void OpenCVDecodeNode::Decode(const std::shared_ptr<JpegBuffer>& jpeg_buffer,
                               control_loops::MetaDataList metadata,
                               std::shared_ptr<control_loops::Context> ctx) {
   if (metadata.empty()) {
-    LOG(WARNING) << "NvjpegDecodeNode received empty metadata";
+    LOG(WARNING) << "OpenCVDecodeNode received empty metadata";
   }
   std::function<void()> task = [this, jpeg_buffer, metadata, ctx] {
     DecodeJpegBuffer(jpeg_buffer, metadata, ctx);
@@ -57,7 +90,7 @@ void NvjpegDecodeNode::Decode(const std::shared_ptr<JpegBuffer>& jpeg_buffer,
   }
 }
 
-void NvjpegDecodeNode::RegisterCallback(
+void OpenCVDecodeNode::RegisterCallback(
     const std::function<void(std::shared_ptr<DecodedJpegNvBuffer>,
                              control_loops::MetaDataList metadata,
                              std::shared_ptr<control_loops::Context>)>&
@@ -66,7 +99,7 @@ void NvjpegDecodeNode::RegisterCallback(
   callbacks_.push_back(callback);
 }
 
-void NvjpegDecodeNode::DecodeJpegBuffer(
+void OpenCVDecodeNode::DecodeJpegBuffer(
     const std::shared_ptr<JpegBuffer>& jpeg_buffer,
     control_loops::MetaDataList metadata,
     std::shared_ptr<control_loops::Context> ctx) {
@@ -77,19 +110,16 @@ void NvjpegDecodeNode::DecodeJpegBuffer(
     return;
   }
 
-  uint32_t pixfmt;
-  uint32_t width;
-  uint32_t height;
-  NvBuffer* buffer = nullptr;
+  const cv::Mat encoded(1, static_cast<int>(jpeg_buffer->size()), CV_8UC1,
+                        jpeg_buffer->ptr());
+  const cv::Mat gray = cv::imdecode(encoded, cv::IMREAD_GRAYSCALE);
+  CHECK(!gray.empty()) << "OpenCVDecodeNode failed to decode JPEG buffer";
 
-  CHECK(!decoder_->decodeToBuffer(
-      &buffer, static_cast<unsigned char*>(jpeg_buffer->ptr()),
-      jpeg_buffer->size(), &pixfmt, &width, &height));
+  auto buffer_shared_ptr =
+      std::make_shared<DecodedJpegNvBuffer>(MakeGrayNvBuffer(gray));
 
-  auto buffer_shared_ptr = std::make_shared<DecodedJpegNvBuffer>(buffer);
-
-  for (size_t i = 0; i < callbacks_.size(); i++) {  // NOLINT
-    callbacks_[i](buffer_shared_ptr, metadata, ctx);
+  for (const auto& callback : callbacks_) {
+    callback(buffer_shared_ptr, metadata, ctx);
   }
 }
 

@@ -4,7 +4,7 @@
 #include <filesystem>
 #include <memory>
 
-#include "camera/nvjpeg_decode_node.h"
+#include "camera/decoded_jpeg_buffer.h"
 #include "gtest/gtest.h"
 #include "opencv2/imgcodecs.hpp"
 
