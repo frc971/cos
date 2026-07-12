@@ -26,8 +26,22 @@ else
   BUILD_DIR="${NAME}-build"
 fi
 
+WPILIB_BUILD_CMAKE="/allwpilib/allwpilib/build-cmake"
+CMAKE_WPILIB_ARGS=()
+if [ -d "$WPILIB_BUILD_CMAKE" ]; then
+  if [ -n "${CMAKE_PREFIX_PATH:-}" ]; then
+    CMAKE_WPILIB_ARGS=("-DCMAKE_PREFIX_PATH=$WPILIB_BUILD_CMAKE;$CMAKE_PREFIX_PATH")
+  else
+    CMAKE_WPILIB_ARGS=("-DCMAKE_PREFIX_PATH=$WPILIB_BUILD_CMAKE")
+  fi
+  for package in apriltag cameraserver cscore datalog hal ntcore wpilib \
+    wpilibc wpimath wpinet wpiutil; do
+    CMAKE_WPILIB_ARGS+=("-D${package}_DIR=$WPILIB_BUILD_CMAKE")
+  done
+fi
+
 # git submodule update --init --progress --depth 1
-cmake -Wno-dev -DENABLE_CLANG_TIDY=OFF -DCMAKE_BUILD_TYPE=Release -B "$BUILD_DIR" -G Ninja .
+cmake -Wno-dev -DENABLE_CLANG_TIDY=OFF -DCMAKE_BUILD_TYPE=Release "${CMAKE_WPILIB_ARGS[@]}" -B "$BUILD_DIR" -G Ninja .
 cmake --build "$BUILD_DIR"
 
 if [ "$RUN_UNIT_TESTS" -eq 1 ]; then

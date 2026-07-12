@@ -29,9 +29,9 @@ using camera_constant_t = struct CameraConstant {
   std::optional<uint> port = std::nullopt;
   std::optional<uint> streamer_fps = std::nullopt;
   std::optional<std::string> yolo_model_path = std::nullopt;
-  bool run_gamepiece = false;
-  DetectorType detector_type = DetectorType::INVALID;
-  CameraType camera_type = CameraType::INVALID;
+  std::optional<bool> run_gamepiece = std::nullopt;
+  std::optional<DetectorType> detector_type = std::nullopt;
+  std::optional<CameraType> camera_type = std::nullopt;
 
   auto operator<(const CameraConstant& other) const -> bool {
     return name < other.name;

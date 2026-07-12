@@ -51,7 +51,8 @@ auto SortedUvcCameras() -> std::vector<camera::camera_constant_t> {
   std::vector<camera::camera_constant_t> cameras;
   cameras.reserve(constants.size());
   for (const auto& [name, constant] : constants) {
-    if (constant.camera_type == camera::CameraType::UVC) {
+    if (constant.camera_type.value_or(camera::CameraType::INVALID) ==
+        camera::CameraType::UVC) {
       cameras.push_back(constant);
     }
   }
@@ -65,7 +66,7 @@ auto MakeDetector(const camera::camera_constant_t& constant)
       << "Camera " << constant.name << " is missing intrinsics_path";
   const nlohmann::json intrinsics = ReadJsonFile(*constant.intrinsics_path);
 
-  switch (constant.detector_type) {
+  switch (constant.detector_type.value_or(camera::DetectorType::INVALID)) {
     case camera::DetectorType::AUSTIN_GPU:
       CHECK(constant.frame_width.has_value());
       CHECK(constant.frame_height.has_value());
@@ -190,7 +191,7 @@ auto main(int argc, char* argv[]) -> int {
   if (absl::GetFlag(FLAGS_run_gamepiece)) {
     std::vector<int> gamepiece_camera_indices;
     for (size_t i = 0; i < camera_constants.size(); ++i) {
-      if (camera_constants[i].run_gamepiece) {
+      if (camera_constants[i].run_gamepiece.value_or(false)) {
         gamepiece_camera_indices.push_back(static_cast<int>(i));
       }
     }
