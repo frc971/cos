@@ -35,6 +35,16 @@ target_link_libraries(disk_camera PUBLIC
   absl::check
 )
 
+add_library(simulated_disk_camera)
+target_sources(simulated_disk_camera
+  PRIVATE
+    simulated_disk_camera.cc
+)
+target_link_libraries(simulated_disk_camera PUBLIC
+  absl::check
+)
+
+
 add_library(nvjpeg_decode_node)
 target_sources(nvjpeg_decode_node
   PRIVATE

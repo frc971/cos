@@ -1,10 +1,15 @@
+#include <chrono>
+#include <condition_variable>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <mutex>
 #include <type_traits>
+#include <vector>
 
 #include "camera/disk_camera.h"
+#include "camera/simulated_disk_camera.h"
 #include "camera/uvc_camera_node.h"
 #include "gtest/gtest.h"
 #include "unit_tests/test_helpers.h"
@@ -95,5 +100,36 @@ TEST(DiskCameraTest, ImplementsCameraInterfaceAndPublishesDiskFrame) {
   EXPECT_EQ(std::memcmp(observed_frame->ptr(), "jpeg", 4), 0);
   EXPECT_EQ(observed_timestamp, 1234UL);
 }
+
+TEST(SimulatedDiskCameraTest, PublishesFramesAtSimulatedTimestamps) {
+  std::vector<std::vector<unsigned char>> frames = {{1}, {2}, {3}};
+  camera::SimulatedDiskCamera camera(frames, 1000,
+                                     std::chrono::microseconds(250),
+                                     std::chrono::microseconds(1));
+  EXPECT_TRUE(
+      (std::is_base_of_v<camera::ICamera, camera::SimulatedDiskCamera>));
+
+  std::mutex mutex;
+  std::condition_variable received;
+  std::vector<unsigned long> timestamps;
+  std::vector<unsigned char> values;
+  camera.RegisterCallback(
+      [&](const std::shared_ptr<camera::JpegBuffer>& frame,
+          unsigned long timestamp) {
+        std::lock_guard<std::mutex> lock(mutex);
+        timestamps.push_back(timestamp);
+        values.push_back(static_cast<unsigned char*>(frame->ptr())[0]);
+        received.notify_one();
+      });
+
+  camera.Start();
+
+  std::unique_lock<std::mutex> lock(mutex);
+  ASSERT_TRUE(received.wait_for(lock, std::chrono::seconds(1),
+                                [&] { return timestamps.size() == 3; }));
+  EXPECT_EQ(timestamps, (std::vector<unsigned long>{1000, 1250, 1500}));
+  EXPECT_EQ(values, (std::vector<unsigned char>{1, 2, 3}));
+}
+
 
 }  // namespace

@@ -12,6 +12,7 @@ target_link_libraries(camera_unit_tests PRIVATE
   opencv_decode_node
   uvc_camera_node
   disk_camera
+  simulated_disk_camera
 )
 target_compile_definitions(camera_unit_tests PRIVATE
   COS_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
