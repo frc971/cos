@@ -2,6 +2,7 @@
 #include <array>
 #include <cstddef>
 #include <mutex>
+#include <optional>
 #include <string>
 
 #include <nvjpeg.h>
@@ -60,7 +61,8 @@ class NvjpegDecodeNode final : public control_loop::INode,
   void EnableTiming(std::string_view latency_channel) override;
 
  private:
-  auto DecodeJpegBuffer(const JpegBuffer* jpeg_buffer) -> DecodedJpegBuffer;
+  auto DecodeJpegBuffer(const JpegBuffer* jpeg_buffer)
+      -> std::optional<DecodedJpegBuffer>;
 
  private:
   std::string input_path_;
