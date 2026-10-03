@@ -21,8 +21,7 @@ class NetworkTablesDataLogger {
                           const std::string& log_path)
       : instance_(instance), log_(log_path, "networktables.wpilog") {
     entry_logger_ = instance_.StartEntryDataLog(log_, "", "NT:");
-    connection_logger_ =
-        instance_.StartConnectionDataLog(log_, "NTConnection");
+    connection_logger_ = instance_.StartConnectionDataLog(log_, "NTConnection");
   }
 
   ~NetworkTablesDataLogger() {
@@ -48,7 +47,7 @@ void StartLogging(nt::NetworkTableInstance instance,
 // Publishes logname such as log32 to networktables so we can easily find match logs
 void PublishLogName(const std::string& path) {
   static auto log_name_publisher = nt::NetworkTableInstance::GetDefault()
-                                       .GetTable("Orin")
+                                       .GetTable("COS")
                                        ->GetStringTopic("LogName")
                                        .Publish();
   log_name_publisher.Set(path);
