@@ -24,6 +24,8 @@ struct DetectionResult {
   cv::Mat charuco_ids;
   std::vector<cv::Point2f> image_points;
   std::vector<cv::Point3f> object_points;
+  std::vector<std::vector<cv::Point2f>> marker_corners;
+  std::vector<int> marker_ids;
 };
 
 inline auto CreateBoard() -> cv::aruco::CharucoBoard {
@@ -65,7 +67,8 @@ inline auto DetectCharucoBoard(const cv::Mat& frame,
                                const cv::aruco::CharucoDetector& detector)
     -> DetectionResult {
   DetectionResult result;
-  detector.detectBoard(frame, result.charuco_corners, result.charuco_ids);
+  detector.detectBoard(frame, result.charuco_corners, result.charuco_ids,
+                       result.marker_corners, result.marker_ids);
   if (result.charuco_corners.total() > 3U) {
     detector.getBoard().matchImagePoints(
         result.charuco_corners, result.charuco_ids, result.object_points,

@@ -66,15 +66,16 @@ using charuco_calibration::GenerateBoardImage;
 using charuco_calibration::HasEnoughCorners;
 using charuco_calibration::IntrinsicsToJson;
 
-auto DrawDetectionResult(const cv::Mat& frame,
-                         const DetectionResult& detection_result) -> cv::Mat {
-  cv::Mat result;
-  frame.copyTo(result);
-  if (detection_result.charuco_corners.total() > 3U) {
+auto DrawDetectionResult(cv::Mat& result,
+                         const DetectionResult& detection_result) -> void {
+  if (!detection_result.marker_ids.empty()) {
+    cv::aruco::drawDetectedMarkers(result, detection_result.marker_corners,
+                                   detection_result.marker_ids);
+  }
+  if (!detection_result.charuco_corners.empty()) {
     cv::aruco::drawDetectedCornersCharuco(
         result, detection_result.charuco_corners, detection_result.charuco_ids);
   }
-  return result;
 }
 
 auto EncodeJpeg(const cv::Mat& image) -> std::string {
@@ -112,6 +113,9 @@ auto main(int argc, char* argv[]) -> int {
 
   CHECK(!absl::GetFlag(FLAGS_config_path).empty())
       << "--config_path is required";
+  const int port = absl::GetFlag(FLAGS_port);
+  CHECK_GT(port, 0);
+  CHECK_LT(port, 65535) << "--port must leave room for the capture stream";
 
   const cv::aruco::CharucoBoard board = CreateBoard();
   const cv::aruco::CharucoDetector detector = CreateDetector(board);
@@ -129,7 +133,11 @@ auto main(int argc, char* argv[]) -> int {
       std::make_shared<camera::UVCCameraNode>("jpeg_stream", config);
 
   MJPEGStreamer streamer;
-  streamer.start(absl::GetFlag(FLAGS_port));
+  streamer.start(port);
+  MJPEGStreamer captured_streamer;
+  captured_streamer.start(port + 1);
+  cv::Mat captured_canvas;
+  std::string captured_jpeg;
 
   std::mutex detections_mutex;
   std::vector<DetectionResult> detection_results;
@@ -162,7 +170,12 @@ auto main(int argc, char* argv[]) -> int {
     }
 
     DetectionResult detection_result = DetectCharucoBoard(frame, detector);
-    cv::Mat annotated_frame = DrawDetectionResult(frame, detection_result);
+    cv::Mat annotated_frame = frame.clone();
+    DrawDetectionResult(annotated_frame, detection_result);
+    if (captured_canvas.empty()) {
+      captured_canvas = cv::Mat::zeros(frame.size(), frame.type());
+      captured_jpeg = EncodeJpeg(captured_canvas);
+    }
 
     size_t captured_count = 0;
     {
@@ -186,6 +199,8 @@ auto main(int argc, char* argv[]) -> int {
     if (pending > 0) {
       const int entered_count = entered_frames.load();
       if (HasEnoughCorners(detection_result)) {
+        DrawDetectionResult(captured_canvas, detection_result);
+        captured_jpeg = EncodeJpeg(captured_canvas);
         std::scoped_lock lock(detections_mutex);
         detection_results.push_back(std::move(detection_result));
         std::cout << "Captured frame " << detection_results.size() << " of "
@@ -195,6 +210,7 @@ auto main(int argc, char* argv[]) -> int {
                   << ": not enough ChArUco corners" << std::endl;
       }
     }
+    captured_streamer.publish(absl::GetFlag(FLAGS_stream_path), captured_jpeg);
   });
 
   camera_node->Start();
@@ -203,6 +219,8 @@ auto main(int argc, char* argv[]) -> int {
   std::cout << "Streaming annotated frames on port "
             << absl::GetFlag(FLAGS_port) << absl::GetFlag(FLAGS_stream_path)
             << '\n'
+            << "Streaming all captured detections on port " << port + 1
+            << absl::GetFlag(FLAGS_stream_path) << '\n'
             << "Press Enter to capture a frame, or type q then Enter to "
                "calibrate and quit."
             << std::endl;
@@ -283,6 +301,7 @@ auto main(int argc, char* argv[]) -> int {
 
   control_loop.Stop();
   streamer.stop();
+  captured_streamer.stop();
 
   if (stop::stop && !calibrate_and_quit.load()) {
     return 0;
