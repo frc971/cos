@@ -29,7 +29,7 @@ ABSL_FLAG(uint, max_context, 1,                                   // NOLINT
           "Maximum number of concurrent control-loop contexts");  // NOLINT
 ABSL_FLAG(bool, latency_log, false,                               // NOLINT
           "Log control-loop latency and loops per second");       // NOLINT
-ABSL_FLAG(
+ABSL_FLAG(                                                        // NOLINT
     bool, log_images, false,                                      // NOLINT
     "Log timestamped JPEG frames to the run's log directory in "  // NOLINT
     "per-camera subfolders");                                     // NOLINT

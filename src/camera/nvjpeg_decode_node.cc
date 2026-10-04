@@ -2,6 +2,7 @@
 #include "control_loop/timer.h"
 
 #include <array>
+#include <utility>
 
 #include "absl/log/check.h"
 #include "absl/log/log.h"
@@ -183,8 +184,12 @@ auto NvjpegDecodeNode::CreateCallback()
 
     std::function<void()> task = [this, context, jpeg_buffer]() -> void {
       control_loop::Timer timer;
-      std::unique_ptr<control_loop::IMessage> decoded_buffer =
-          std::make_unique<DecodedJpegBuffer>(DecodeJpegBuffer(jpeg_buffer));
+      auto decoded = DecodeJpegBuffer(jpeg_buffer);
+      std::unique_ptr<control_loop::IMessage> decoded_buffer;
+      if (decoded.has_value()) {
+        decoded_buffer =
+            std::make_unique<DecodedJpegBuffer>(std::move(*decoded));
+      }
 
       context->SetMessage(output_path_, std::move(decoded_buffer));
       if (latency_channel_.has_value()) {
@@ -203,8 +208,20 @@ auto NvjpegDecodeNode::CreateCallback()
 }
 
 auto NvjpegDecodeNode::DecodeJpegBuffer(const JpegBuffer* const jpeg_buffer)
-    -> DecodedJpegBuffer {
+    -> std::optional<DecodedJpegBuffer> {
   std::scoped_lock lock(decode_mutex_);
+
+  auto succeeded = [this, jpeg_buffer](nvjpegStatus_t status,
+                                      const char* operation) -> bool {
+    if (status == NVJPEG_STATUS_SUCCESS) {
+      return true;
+    }
+    LOG(WARNING) << "Dropping undecodable JPEG on " << input_path_
+                 << ": size=" << jpeg_buffer->size
+                 << " timestamp=" << jpeg_buffer->timestamp
+                 << ": " << operation << " failed with nvJPEG status " << status;
+    return false;
+  };
 
   int components = 0;
   nvjpegChromaSubsampling_t subsampling = NVJPEG_CSS_UNKNOWN;
@@ -212,10 +229,21 @@ auto NvjpegDecodeNode::DecodeJpegBuffer(const JpegBuffer* const jpeg_buffer)
   std::array<int, NVJPEG_MAX_COMPONENT> heights = {};
   const auto* jpeg_data = static_cast<unsigned char*>(jpeg_buffer->ptr);
 
-  CHECK_EQ(
-      nvjpegGetImageInfo(handle_, jpeg_data, jpeg_buffer->size, &components,
-                         &subsampling, widths.data(), heights.data()),
-      NVJPEG_STATUS_SUCCESS);
+  if (!succeeded(
+          nvjpegGetImageInfo(handle_, jpeg_data, jpeg_buffer->size, &components,
+                             &subsampling, widths.data(), heights.data()),
+          "nvjpegGetImageInfo")) {
+    return std::nullopt;
+  }
+
+  if (!succeeded(nvjpegJpegStreamParse(handle_, jpeg_data, jpeg_buffer->size,
+                                      0, 0, jpeg_stream_),
+                 "nvjpegJpegStreamParse") ||
+      !succeeded(nvjpegDecodeJpegHost(handle_, decoder_, state_, decode_params_,
+                                     jpeg_stream_),
+                 "nvjpegDecodeJpegHost")) {
+    return std::nullopt;
+  }
 
   DecodedJpegBuffer decoded_buffer{};
   decoded_buffer.timestamp = jpeg_buffer->timestamp;
@@ -232,17 +260,17 @@ auto NvjpegDecodeNode::DecodeJpegBuffer(const JpegBuffer* const jpeg_buffer)
         decoded_buffer.channel_sizes[channel]));
   }
 
-  CHECK(nvjpegJpegStreamParse(handle_, jpeg_data, jpeg_buffer->size, 0, 0,
-                              jpeg_stream_) == NVJPEG_STATUS_SUCCESS);
-  CHECK(nvjpegDecodeJpegHost(handle_, decoder_, state_, decode_params_,
-                             jpeg_stream_) == NVJPEG_STATUS_SUCCESS);
-  CHECK(nvjpegDecodeJpegTransferToDevice(handle_, decoder_, state_,
-                                         jpeg_stream_,
-                                         nullptr) == NVJPEG_STATUS_SUCCESS);
-  CHECK(nvjpegDecodeJpegDevice(handle_, decoder_, state_,
-                               &decoded_buffer.destination,
-                               stream_) == NVJPEG_STATUS_SUCCESS);
+  if (!succeeded(nvjpegDecodeJpegTransferToDevice(handle_, decoder_, state_,
+                                                 jpeg_stream_, nullptr),
+                 "nvjpegDecodeJpegTransferToDevice")) {
+    return std::nullopt;
+  }
+  const auto decode_status = nvjpegDecodeJpegDevice(
+      handle_, decoder_, state_, &decoded_buffer.destination, stream_);
   CheckCuda(cudaStreamSynchronize(stream_));
+  if (!succeeded(decode_status, "nvjpegDecodeJpegDevice")) {
+    return std::nullopt;
+  }
 
   return decoded_buffer;
 }

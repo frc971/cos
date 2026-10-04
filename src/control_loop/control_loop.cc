@@ -51,7 +51,7 @@ void ControlLoop::Start() {
         }
       }
     };
-    collect(dependancy_nodes_);
+    collect(dependency_nodes_);
     collect(nodes_);
     wpilog_writer_ = std::make_shared<logging::WPILogWriter>(
         wpilog_filename_, log_publications);
@@ -90,8 +90,8 @@ void ControlLoop::Start() {
           Context context(new ContextInternal(std::chrono::steady_clock::now(),
                                               this, stop_source.get_token(),
                                               ++loop_count_, wpilog_writer_));
-          for (const auto& dependancy : dependencies_) {
-            dependancy(context);
+          for (const auto& dependency : dependencies_) {
+            dependency(context);
           }
 
           for (const auto& callback : callbacks_) {
@@ -123,15 +123,15 @@ void ControlLoop::RegisterCallback(
 }
 
 void ControlLoop::RegisterDependency(
-    const std::function<void(const Context&)>& dependancy) {
-  dependencies_.emplace_back(dependancy);
+    const std::function<void(const Context&)>& dependency) {
+  dependencies_.emplace_back(dependency);
 }
 
 void ControlLoop::RegisterNode(const std::shared_ptr<INode>& node) {
   nodes_.emplace_back(node);
 }
 void ControlLoop::RegisterDependencyNode(const std::shared_ptr<INode>& node) {
-  dependancy_nodes_.emplace_back(node);
+  dependency_nodes_.emplace_back(node);
   dependencies_.emplace_back(node->CreateCallback());
 }
 
@@ -145,7 +145,7 @@ void ControlLoop::EnableWPILog(std::string_view filename) {
 
 void ControlLoop::ValidateNodeGraph() {
   std::unordered_map<std::string, std::type_index> publishers;
-  for (const auto& node : dependancy_nodes_) {
+  for (const auto& node : dependency_nodes_) {
     for (const auto& message_descriptor : node->GetPublications()) {
       PCHECK(!publishers.contains(message_descriptor.GetChannel()))
           << "Multiple publishers to the same channel. Channel is: "
@@ -172,7 +172,7 @@ void ControlLoop::ValidateNodeGraph() {
   for (const auto& node : nodes_) {
     for (const auto& message_descriptor : node->GetDependencies()) {
       PCHECK(publishers.contains(message_descriptor.GetChannel()))
-          << "Node channel dependancy does has not been registered. Channel "
+          << "Node channel dependency does has not been registered. Channel "
              "is: "
           << message_descriptor.GetChannel();
       PCHECK(message_descriptor.GetTypes().contains(
@@ -186,7 +186,7 @@ void ControlLoop::ValidateNodeGraph() {
 
 void ControlLoop::RegisterNodeCallbacks() {
   std::unordered_map<std::string, INode*> publishers;
-  for (const auto& node : dependancy_nodes_) {
+  for (const auto& node : dependency_nodes_) {
     for (const auto& message_descriptor : node->GetPublications()) {
       publishers.insert({message_descriptor.GetChannel(), node.get()});
     }
