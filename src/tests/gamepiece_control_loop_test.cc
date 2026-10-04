@@ -15,8 +15,10 @@
 
 #include "camera/nvjpeg_decode_node.h"
 #include "control_loop/context.h"
+#include "control_loop/control_loop.h"
 #include "control_loop/message.h"
 #include "control_loop/node.h"
+#include "control_loop/thread_pool.h"
 #include "gamepiece/gamepiece_control_loop.h"
 
 using namespace std::chrono_literals;
@@ -290,6 +292,158 @@ TEST(GamepieceControlLoopTest, RunsNodesSequentiallyWhenOneOverruns) {
     EXPECT_EQ(started_frames[1], 2.0);
   }
   loop.Stop();
+}
+
+TEST(GamepieceControlLoopTest, WaitsForAsyncWorkBeforeTakingLatestFrame) {
+  constexpr std::string_view kChannel = "decoded/front";
+  auto decoder = std::make_shared<FakeDecoderNode>(kChannel);
+  control_loop::ThreadPool thread_pool(1);
+  std::mutex mutex;
+  std::condition_variable condition;
+  std::vector<double> submitted_frames;
+  bool first_frame_entered = false;
+  bool release_first_frame = false;
+  bool third_frame_completed = false;
+
+  auto consumer = std::make_shared<FakeGamepieceNode>(
+      kChannel,
+      [&](const control_loop::Context& context,
+          const std::shared_ptr<camera::DecodedJpegBuffer>& frame) {
+        {
+          std::lock_guard lock(mutex);
+          submitted_frames.push_back(frame->timestamp);
+        }
+        thread_pool.Submit([&, context, frame] {
+          std::unique_lock lock(mutex);
+          if (frame->timestamp == 1.0) {
+            first_frame_entered = true;
+            condition.notify_all();
+            condition.wait(lock, [&] { return release_first_frame; });
+          }
+          third_frame_completed |= frame->timestamp == 3.0;
+          condition.notify_all();
+        }, context->id);
+      });
+
+  gamepiece::GamepieceControlLoop loop(10ms);
+  loop.RegisterDecodedFrameSource(decoder, kChannel);
+  loop.RegisterNode(consumer);
+  const auto first_frame = EmitFrame(*decoder, kChannel, 1.0);
+  loop.Start();
+  bool entered;
+  {
+    std::unique_lock lock(mutex);
+    entered = condition.wait_for(lock, 2s, [&] {
+      return first_frame_entered;
+    });
+  }
+  const auto second_frame = EmitFrame(*decoder, kChannel, 2.0);
+  std::this_thread::sleep_for(30ms);
+  const auto third_frame = EmitFrame(*decoder, kChannel, 3.0);
+  std::this_thread::sleep_for(30ms);
+  const bool first_frame_retained = !first_frame.expired();
+  const bool second_frame_dropped = second_frame.expired();
+  size_t submissions_while_blocked;
+  {
+    std::lock_guard lock(mutex);
+    submissions_while_blocked = submitted_frames.size();
+    release_first_frame = true;
+  }
+  condition.notify_all();
+  bool completed;
+  {
+    std::unique_lock lock(mutex);
+    completed = condition.wait_for(lock, 2s, [&] {
+      return third_frame_completed;
+    });
+  }
+  loop.Stop();
+  thread_pool.Shutdown();
+
+  EXPECT_TRUE(entered);
+  EXPECT_TRUE(completed);
+  EXPECT_TRUE(first_frame_retained);
+  EXPECT_TRUE(second_frame_dropped);
+  EXPECT_EQ(submissions_while_blocked, 1U);
+  EXPECT_EQ(submitted_frames, (std::vector<double>{1.0, 3.0}));
+  EXPECT_TRUE(first_frame.expired());
+  EXPECT_TRUE(third_frame.expired());
+}
+
+TEST(GamepieceControlLoopTest, SharesWorkersWithIndependentLocalizationLoop) {
+  constexpr std::string_view kChannel = "decoded/front";
+  control_loop::ThreadPool thread_pool(2);
+  auto decoder = std::make_shared<FakeDecoderNode>(kChannel);
+  std::mutex mutex;
+  std::condition_variable condition;
+  bool gamepiece_entered = false;
+  bool release_gamepiece = false;
+  size_t localization_completions = 0;
+  std::thread::id gamepiece_scheduler;
+  std::thread::id gamepiece_worker;
+  std::thread::id localization_scheduler;
+  std::thread::id localization_worker;
+
+  auto consumer = std::make_shared<FakeGamepieceNode>(
+      kChannel,
+      [&](const control_loop::Context& context,
+          const std::shared_ptr<camera::DecodedJpegBuffer>&) {
+        {
+          std::lock_guard lock(mutex);
+          gamepiece_scheduler = std::this_thread::get_id();
+        }
+        thread_pool.Submit([&, context] {
+          std::unique_lock lock(mutex);
+          gamepiece_worker = std::this_thread::get_id();
+          gamepiece_entered = true;
+          condition.notify_all();
+          condition.wait(lock, [&] { return release_gamepiece; });
+        }, context->id);
+      });
+
+  control_loop::ControlLoop localization_loop(1ms);
+  localization_loop.RegisterCallback(
+      [&](const control_loop::Context& context) {
+        {
+          std::lock_guard lock(mutex);
+          localization_scheduler = std::this_thread::get_id();
+        }
+        thread_pool.Submit([&, context] {
+          std::lock_guard lock(mutex);
+          localization_worker = std::this_thread::get_id();
+          ++localization_completions;
+          condition.notify_all();
+        }, context->id);
+      });
+  gamepiece::GamepieceControlLoop gamepiece_loop(10ms);
+  gamepiece_loop.RegisterDecodedFrameSource(decoder, kChannel);
+  gamepiece_loop.RegisterNode(consumer);
+  EmitFrame(*decoder, kChannel, 1.0);
+  gamepiece_loop.Start();
+  bool entered;
+  {
+    std::unique_lock lock(mutex);
+    entered = condition.wait_for(lock, 2s, [&] { return gamepiece_entered; });
+  }
+
+  localization_loop.Start();
+  bool localization_progressed;
+  {
+    std::unique_lock lock(mutex);
+    localization_progressed = condition.wait_for(
+        lock, 2s, [&] { return localization_completions >= 3; });
+    release_gamepiece = true;
+  }
+  condition.notify_all();
+  localization_loop.Stop();
+  gamepiece_loop.Stop();
+  thread_pool.Shutdown();
+
+  EXPECT_TRUE(entered);
+  EXPECT_TRUE(localization_progressed);
+  EXPECT_NE(gamepiece_scheduler, localization_scheduler);
+  EXPECT_NE(gamepiece_scheduler, gamepiece_worker);
+  EXPECT_NE(localization_scheduler, localization_worker);
 }
 
 TEST(GamepieceControlLoopTest, KeepsCameraChannelsIndependent) {

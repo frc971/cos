@@ -20,6 +20,8 @@ namespace gamepiece {
 
 // Runs gamepiece nodes independently from localization while retaining only
 // the latest decoded frame from each registered decoder channel.
+// Scheduling and waits run on a dedicated thread; asynchronous nodes submit
+// their work to the same ThreadPool supplied to the localization nodes.
 class GamepieceControlLoop {
  public:
   explicit GamepieceControlLoop(

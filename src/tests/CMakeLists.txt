@@ -15,6 +15,23 @@ target_link_libraries(gamepiece_node_test PRIVATE
 )
 add_test(NAME gamepiece_node_test COMMAND gamepiece_node_test)
 
+# Device replay test: requires a real TensorRT engine and timestamped JPEGs.
+add_executable(full_robot_gamepiece_pipeline_test
+  full_robot_gamepiece_pipeline_test.cc)
+target_link_libraries(full_robot_gamepiece_pipeline_test PRIVATE
+  gamepiece
+  cos::uvc_disk_camera_node
+  cos::get_earliest_timestamp
+  cos::rio_clock
+  cos::stop
+  cos::cpu_decode_node
+  cos::cpu_apriltag_detector_node
+  cos::unambiguous_solver_node
+  cos::camera_config
+  absl::flags_parse
+  absl::log_initialize
+)
+
 add_executable(log_fields_test log_fields_test.cc)
 target_link_libraries(log_fields_test PRIVATE cos::wpilog_writer
   cos::control_loop GTest::gtest_main GTest::gtest cos::localization_solver_common)

@@ -28,7 +28,9 @@ GamepieceControlLoop::GamepieceControlLoop(std::chrono::milliseconds period)
   CHECK_GT(period_.count(), 0);
 }
 
-GamepieceControlLoop::~GamepieceControlLoop() { Stop(); }
+GamepieceControlLoop::~GamepieceControlLoop() {
+  Stop();
+}
 
 void GamepieceControlLoop::RegisterDecodedFrameSource(
     const std::shared_ptr<control_loop::INode>& decoder,
@@ -54,8 +56,8 @@ void GamepieceControlLoop::RegisterDecodedFrameSource(
       [weak_state, source_index,
        channel](const control_loop::Context& localization_context) {
         auto frame =
-            localization_context
-                ->GetSharedMessage<camera::DecodedJpegBuffer>(channel);
+            localization_context->GetSharedMessage<camera::DecodedJpegBuffer>(
+                channel);
         auto state = weak_state.lock();
         if (frame == nullptr || state == nullptr) {
           return;
@@ -134,15 +136,13 @@ void GamepieceControlLoop::ValidateNodeGraph() {
 
 void GamepieceControlLoop::RegisterNodeCallbacks() {
   std::unordered_map<std::string,
-                     std::function<void(
-                         const std::function<void(
-                             const control_loop::Context&)>&)>>
+                     std::function<void(const std::function<void(
+                                            const control_loop::Context&)>&)>>
       callback_registrars;
 
   for (size_t i = 0; i < decoded_channels_in_order_.size(); ++i) {
     callback_registrars.emplace(
-        decoded_channels_in_order_[i],
-        [this, i](const auto& callback) {
+        decoded_channels_in_order_[i], [this, i](const auto& callback) {
           decoded_frame_callbacks_[i].push_back(callback);
         });
   }
@@ -170,16 +170,14 @@ void GamepieceControlLoop::Run(std::stop_token stop_token) {
     {
       std::unique_lock lock(decoded_frame_state_->mutex);
       decoded_frame_state_->frame_available.wait_until(
-          lock, next_tick,
-          [&] { return stop_token.stop_requested(); });
+          lock, next_tick, [&] { return stop_token.stop_requested(); });
       if (stop_token.stop_requested()) {
         return;
       }
       next_tick += period_;
-      if (!std::ranges::any_of(decoded_frame_state_->decoded_buffers,
-                               [](const auto& buffer) {
-                                 return buffer != nullptr;
-                               })) {
+      if (!std::ranges::any_of(
+              decoded_frame_state_->decoded_buffers,
+              [](const auto& buffer) { return buffer != nullptr; })) {
         continue;
       }
       decoded_buffers = decoded_frame_state_->decoded_buffers;
@@ -199,6 +197,10 @@ void GamepieceControlLoop::Run(std::stop_token stop_token) {
       for (const auto& callback : decoded_frame_callbacks_[i]) {
         callback(context);
       }
+    }
+
+    while (context.use_count() > 1 && !stop_token.stop_requested()) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
     const auto finished = std::chrono::steady_clock::now();
