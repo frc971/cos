@@ -32,14 +32,13 @@
 #include "camera/cpu_decode_node.h"
 #include "camera/nvjpeg_decode_node.h"
 #include "camera/uvc_disk_camera_node.h"
+#include "control_loop/context_handoff_node.h"
 #include "control_loop/control_loop.h"
 #include "control_loop/rio_clock.h"
 #include "control_loop/thread_pool.h"
-#include "gamepiece/gamepiece_control_loop.h"
 #include "gamepiece/gamepiece_detection.h"
 #include "gamepiece/gamepiece_node.h"
 #include "gamepiece/yolo.h"
-#include "localization/position.h"
 #include "localization/unambiguous_solver_node.h"
 #include "utils/stop.h"
 
@@ -48,7 +47,7 @@ using namespace std::chrono_literals;
 
 ABSL_FLAG(std::string, image_folder, "/cos-logs/gamepiece",  // NOLINT
           "Directory containing timestamped JPEG frames");
-ABSL_FLAG(std::string, model_path,
+ABSL_FLAG(std::string, model_path,  // NOLINT
           "/root/gamepiece_models/best_nms_gray.engine",  // NOLINT
           "TensorRT engine with embedded NMS output");
 ABSL_FLAG(std::string, annotation_dir, "/root/gamepiece_logs/annotated",  // NOLINT
@@ -68,7 +67,7 @@ auto IsTimestampedJpeg(const fs::path& path) -> bool {
   }
   std::string extension = path.extension().string();
   std::ranges::transform(extension, extension.begin(),
-                         [](unsigned char character) {
+                         [](unsigned char character) -> char {
                            return static_cast<char>(std::tolower(character));
                          });
   if (extension != ".jpg" && extension != ".jpeg") {
@@ -87,7 +86,7 @@ auto IsTimestampedJpeg(const fs::path& path) -> bool {
 auto CountFrames(const fs::path& directory) -> size_t {
   CHECK(fs::is_directory(directory)) << "Missing image folder: " << directory;
   const size_t count = std::ranges::count_if(
-      fs::directory_iterator(directory), [](const fs::directory_entry& entry) {
+      fs::directory_iterator(directory), [](const fs::directory_entry& entry) -> bool {
         return entry.is_regular_file() && IsTimestampedJpeg(entry.path());
       });
   CHECK_GT(count, 0U) << "No timestamped JPEGs found in " << directory;
@@ -190,7 +189,7 @@ class AnnotatingDetector final : public gamepiece::ObjectDetector {
       cv::putText(annotated, label.str(), origin, cv::FONT_HERSHEY_SIMPLEX,
                   0.7, cv::Scalar(0, 255, 0), 2, cv::LINE_AA);
     }
-    std::lock_guard lock(output_mutex_);
+    std::scoped_lock lock(output_mutex_);
     nlohmann::json record = {{"frame_index", frame_index_},
                              {"detections", nlohmann::json::array()}};
     for (const auto& detection : detections) {
@@ -200,7 +199,7 @@ class AnnotatingDetector final : public gamepiece::ObjectDetector {
            {"bounds", {detection.bounds.x, detection.bounds.y,
                         detection.bounds.width, detection.bounds.height}}});
     }
-    detections_log_ << record.dump() << std::endl;
+    detections_log_ << record.dump() << '\n' << std::flush;
     CHECK(detections_log_.good());
     std::ostringstream filename;
     filename << std::setfill('0') << std::setw(6) << frame_index_++ << ".jpg";
@@ -291,15 +290,15 @@ auto main(int argc, char* argv[]) -> int {
   control_loop::RioClock::EnableSimulation();
   auto camera = std::make_shared<camera::UVCDiskCameraNode>(
       image_folder.string(), kJpegChannel, replay_offset);
-  camera->RegisterCallback([&](const control_loop::Context& context) {
+  camera->RegisterCallback([&](const control_loop::Context& context) -> void {
     const auto* jpeg = context->GetMessage<camera::JpegBuffer>(kJpegChannel);
     if (jpeg != nullptr && jpeg->ptr != nullptr) {
-      std::lock_guard lock(completion_mutex);
+      std::scoped_lock lock(completion_mutex);
       ++encoded_frames;
       last_encoded_timestamp = jpeg->timestamp;
     }
   });
-  decoder->RegisterCallback([&](const control_loop::Context& context) {
+  decoder->RegisterCallback([&](const control_loop::Context& context) -> void {
     const auto* decoded =
         context->GetMessage<camera::DecodedJpegBuffer>(kDecodedChannel);
     if (decoded != nullptr && decoded->destination.channel[0] != nullptr) {
@@ -309,23 +308,23 @@ auto main(int argc, char* argv[]) -> int {
     }
   });
   apriltag_detector->RegisterCallback(
-      [&](const control_loop::Context& context) {
+      [&](const control_loop::Context& context) -> void {
         const auto* detections =
             context->GetMessage<apriltag::TagDetections>(kAprilTagChannel);
         if (detections != nullptr) {
           ++localization_detection_batches;
         }
       });
-  solver->RegisterCallback([&](const control_loop::Context& context) {
+  solver->RegisterCallback([&](const control_loop::Context& context) -> void {
     if (context->GetMessage<apriltag::TagDetections>(kAprilTagChannel) !=
         nullptr) {
       ++localization_callbacks;
     }
-    std::lock_guard lock(completion_mutex);
+    std::scoped_lock lock(completion_mutex);
     completion.notify_one();
   });
   gamepiece_node->RegisterCallback(
-      [&](const control_loop::Context& context) {
+      [&](const control_loop::Context& context) -> void {
         const auto* detections =
             context->GetMessage<gamepiece::GamepieceDetections>(
                 kDetectionChannel);
@@ -348,7 +347,7 @@ auto main(int argc, char* argv[]) -> int {
           CHECK(std::isfinite(detection.pose.Y().value()));
           CHECK(std::isfinite(detection.pose.Z().value()));
         }
-        std::lock_guard lock(completion_mutex);
+        std::scoped_lock lock(completion_mutex);
         if (frame->timestamp <= last_gamepiece_timestamp) {
           ++nonmonotonic_frames;
         }
@@ -362,8 +361,9 @@ auto main(int argc, char* argv[]) -> int {
         completion.notify_one();
       });
 
-  gamepiece::GamepieceControlLoop gamepiece_loop(20ms);
-  gamepiece_loop.RegisterDecodedFrameSource(decoder, kDecodedChannel);
+  control_loop::ControlLoop gamepiece_loop(20ms);
+  gamepiece_loop.RegisterDependencyNode(
+      std::make_shared<control_loop::ContextHandoffNode>(decoder));
   gamepiece_loop.RegisterNode(gamepiece_node);
   localization_loop.RegisterDependencyNode(camera);
   localization_loop.RegisterNode(localization_decoder);
@@ -380,7 +380,7 @@ auto main(int argc, char* argv[]) -> int {
   {
     std::unique_lock lock(completion_mutex);
     completed = completion.wait_for(
-        lock, std::chrono::seconds(absl::GetFlag(FLAGS_timeout_seconds)), [&] {
+        lock, std::chrono::seconds(absl::GetFlag(FLAGS_timeout_seconds)), [&]() -> bool {
           return stop::StopRequested() && encoded_frames.load() > 0U &&
                  last_gamepiece_timestamp == last_encoded_timestamp &&
                  decoded_frames.load() == encoded_frames.load() &&

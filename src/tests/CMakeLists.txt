@@ -1,12 +1,13 @@
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
 
-add_executable(gamepiece_control_loop_test gamepiece_control_loop_test.cc)
-target_link_libraries(gamepiece_control_loop_test PRIVATE
-  gamepiece_control_loop
+add_executable(context_handoff_node_test context_handoff_node_test.cc)
+target_link_libraries(context_handoff_node_test PRIVATE
+  cos::control_loop
+  cos::thread_pool
   cos::nvjpeg_decode_node
   GTest::gtest_main
 )
-add_test(NAME gamepiece_control_loop_test COMMAND gamepiece_control_loop_test)
+add_test(NAME context_handoff_node_test COMMAND context_handoff_node_test)
 
 add_executable(gamepiece_node_test gamepiece_node_test.cc)
 target_link_libraries(gamepiece_node_test PRIVATE
