@@ -1,6 +1,8 @@
 #pragma once
 
+#include <atomic>
 #include <chrono>
+#include <concepts>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -8,10 +10,13 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 
 #include "control_loop/message.h"
 
-namespace logging { class WPILogWriter; }
+namespace logging {
+class WPILogWriter;
+}
 
 namespace control_loop {
 
@@ -50,7 +55,17 @@ struct ContextInternal {
     return dynamic_cast<T*>(message_it->second.get());
   }
 
-  void SetMessage(std::string_view path, std::unique_ptr<IMessage> message) {
+  template <typename T>
+  auto GetSharedMessage(std::string_view path) const -> std::shared_ptr<T> {
+    std::scoped_lock lock(messages_mutex_);
+    const auto message_it = messages_.find(std::string(path));
+    if (message_it == messages_.end()) {
+      return nullptr;
+    }
+    return std::dynamic_pointer_cast<T>(message_it->second);
+  }
+
+  void SetMessage(std::string_view path, std::shared_ptr<IMessage> message) {
     std::scoped_lock lock(messages_mutex_);
     messages_.emplace(path, std::move(message));
   }
@@ -73,7 +88,7 @@ struct ContextInternal {
  private:
   std::shared_ptr<logging::WPILogWriter> wpilog_writer_;
   mutable std::mutex messages_mutex_;
-  std::unordered_map<std::string, std::unique_ptr<IMessage>> messages_;
+  std::unordered_map<std::string, std::shared_ptr<IMessage>> messages_;
 };
 
 using Context = std::shared_ptr<ContextInternal>;
