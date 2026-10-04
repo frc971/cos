@@ -65,12 +65,6 @@ struct ContextInternal {
     return std::dynamic_pointer_cast<T>(message_it->second);
   }
 
-  template <typename T>
-    requires std::derived_from<T, IMessage>
-  void SetMessage(std::string_view path, std::unique_ptr<T> message) {
-    SetMessage(path, std::shared_ptr<IMessage>(std::move(message)));
-  }
-
   void SetMessage(std::string_view path, std::shared_ptr<IMessage> message) {
     std::scoped_lock lock(messages_mutex_);
     messages_.emplace(path, std::move(message));
