@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <exception>
+#include <string>
 #include <unordered_set>
 #include <utility>
 
@@ -28,8 +29,8 @@ ContextInternal::~ContextInternal() {
     try {
       wpilog_writer_->Log(*this);
     } catch (const std::exception& error) {
-      LOG(ERROR) << "Failed to write context " << id << " to WPILog: "
-                 << error.what();
+      LOG(ERROR) << "Failed to write context " << id
+                 << " to WPILog: " << error.what();
     }
   }
 }
@@ -38,24 +39,6 @@ ControlLoop::ControlLoop(std::chrono::milliseconds period) : period_(period) {}
 
 void ControlLoop::Start() {
   ValidateNodeGraph();
-  if (!wpilog_filename_.empty()) {
-    std::vector<MessageDescriptor> log_publications;
-    const auto collect = [&log_publications](const auto& nodes) {
-      for (const auto& node : nodes) {
-        for (const auto& publication : node->GetPublications()) {
-          // Image payloads retain their original untyped descriptors and are
-          // intentionally excluded. Typed publications have logging metadata.
-          if (publication.GetRegistration().has_value()) {
-            log_publications.push_back(publication);
-          }
-        }
-      }
-    };
-    collect(dependency_nodes_);
-    collect(nodes_);
-    wpilog_writer_ = std::make_shared<logging::WPILogWriter>(
-        wpilog_filename_, log_publications);
-  }
   RegisterNodeCallbacks();
 
   contexts_.reserve(max_contexts_);
@@ -122,11 +105,6 @@ void ControlLoop::RegisterCallback(
   callbacks_.emplace_back(callback);
 }
 
-void ControlLoop::RegisterDependency(
-    const std::function<void(const Context&)>& dependency) {
-  dependencies_.emplace_back(dependency);
-}
-
 void ControlLoop::RegisterNode(const std::shared_ptr<INode>& node) {
   nodes_.emplace_back(node);
 }
@@ -139,8 +117,26 @@ void ControlLoop::EnableLatencyLog() {
   log_latency_ = true;
 }
 
-void ControlLoop::EnableWPILog(std::string_view filename) {
-  wpilog_filename_ = filename;
+auto ControlLoop::GetLogPublications() const -> std::vector<MessageDescriptor> {
+  std::vector<MessageDescriptor> log_publications;
+  const auto collect = [&log_publications](const auto& nodes) -> void {
+    for (const auto& node : nodes) {
+      for (const auto& publication : node->GetPublications()) {
+        // Image payloads retain their original untyped descriptors and are
+        // intentionally excluded. Typed publications have logging metadata.
+        if (publication.GetRegistration().has_value()) {
+          log_publications.push_back(publication);
+        }
+      }
+    }
+  };
+  collect(dependency_nodes_);
+  collect(nodes_);
+  return log_publications;
+}
+
+void ControlLoop::EnableWPILog(std::shared_ptr<logging::WPILogWriter> writer) {
+  wpilog_writer_ = std::move(writer);
 }
 
 void ControlLoop::ValidateNodeGraph() {
