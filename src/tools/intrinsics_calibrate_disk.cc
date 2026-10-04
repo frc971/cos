@@ -17,6 +17,9 @@
 #include "absl/log/initialize.h"
 #include "absl/log/log.h"
 
+#include <opencv2/imgcodecs.hpp>
+#include <opencv2/imgproc.hpp>
+
 #include "tools/charuco_calibration.h"
 #include "utils/stop.h"
 
@@ -30,6 +33,9 @@ ABSL_FLAG(int, max_detections, 50,  // NOLINT
 ABSL_FLAG(std::string, intrinsics_output_path,        // NOLINT
           "intrinsics.json",                          // NOLINT
           "path for the generated intrinsics JSON");  // NOLINT
+ABSL_FLAG(std::string, coverage_output_path,             // NOLINT
+          "calibration_coverage.png",                    // NOLINT
+          "path for the detections and density image");  // NOLINT
 
 namespace {
 
@@ -41,6 +47,45 @@ using charuco_calibration::HasEnoughCorners;
 using charuco_calibration::IntrinsicsToJson;
 
 constexpr std::size_t kBlocksPerTrait = 20;
+
+auto WriteCoverageImage(const std::vector<DetectionResult>& detections,
+                        cv::Size image_size) -> void {
+  cv::Mat overlay = cv::Mat::zeros(image_size, CV_8UC3);
+  cv::Mat density = cv::Mat::zeros(image_size, CV_32FC1);
+  for (const auto& detection : detections) {
+    cv::aruco::drawDetectedCornersCharuco(
+        overlay, detection.charuco_corners, detection.charuco_ids,
+        cv::Scalar(255, 0, 0));
+    for (const auto& point : detection.image_points) {
+      if (std::isfinite(point.x) && std::isfinite(point.y) && point.x >= 0 &&
+          point.y >= 0 && point.x < image_size.width &&
+          point.y < image_size.height) {
+        density.at<float>(static_cast<int>(point.y),
+                          static_cast<int>(point.x)) += 1.0F;
+      }
+    }
+  }
+  // Accumulate before smoothing so overlapping captures increase density.
+  const double sigma = std::max(1.0, image_size.width / 100.0);
+  cv::GaussianBlur(density, density, cv::Size(), sigma, sigma);
+  cv::Mat normalized;
+  cv::normalize(density, normalized, 0, 255, cv::NORM_MINMAX, CV_8UC1);
+  cv::Mat heatmap;
+  cv::applyColorMap(normalized, heatmap, cv::COLORMAP_TURBO);
+  cv::Mat frame;
+  cv::hconcat(overlay, heatmap, frame);
+  cv::putText(frame, "Selected detections: " + std::to_string(detections.size()),
+              cv::Point(20, 30), cv::FONT_HERSHEY_SIMPLEX, 0.7,
+              cv::Scalar(255, 255, 255), 2);
+  cv::putText(frame, "Corner density: blue = low, red = high",
+              cv::Point(image_size.width + 20, 30), cv::FONT_HERSHEY_SIMPLEX,
+              0.7, cv::Scalar(255, 255, 255), 2);
+  const auto path = absl::GetFlag(FLAGS_coverage_output_path);
+  if (!cv::imwrite(path, frame)) {
+    throw std::runtime_error("Failed to write " + path);
+  }
+  LOG(INFO) << "Wrote calibration coverage to " << path;
+}
 
 auto DetectionStratum(const DetectionResult& detection, cv::Size image_size)
     -> std::size_t {
@@ -110,6 +155,9 @@ auto CalibrateDetectionsFile(const std::string& path, int max_detections)
     input >> saved;
     const cv::Size image_size(saved.at("image_size").at("width").get<int>(),
                               saved.at("image_size").at("height").get<int>());
+    if (image_size.width <= 0 || image_size.height <= 0) {
+      throw std::runtime_error("Image dimensions must be positive");
+    }
     const auto& detections = saved.at("detections");
     const auto limit = static_cast<std::size_t>(max_detections);
     std::vector<DetectionResult> results;
@@ -177,6 +225,9 @@ auto CalibrateDetectionsFile(const std::string& path, int max_detections)
     }
     LOG(INFO) << "Selected " << results.size() << " of " << detections.size()
               << " saved detections from " << path;
+    if (!results.empty()) {
+      WriteCoverageImage(results, image_size);
+    }
     return RunCalibration(results, image_size);
   } catch (const std::exception& error) {
     LOG(ERROR) << "Failed to calibrate saved detections: " << error.what();

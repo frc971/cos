@@ -7,6 +7,11 @@ On the device (use `build/tools/` for local build paths):
 ./tools/intrinsics_calibrate_disk --detections_path=detections.json --intrinsics_output_path=intrinsics.json
 ```
 
+The disk calibrator also writes `calibration_coverage.png` (override with
+`--coverage_output_path`): selected ChArUco detections in blue on the left and
+a smoothed corner-density heatmap on the right, scaled from blue (low) to red
+(high) for the selected frames.
+
 The helper processes the directory's frames one at a time and writes all
 results, including frames without enough corners, directly to JSON.
 The JSON records image dimensions and an array of detections containing

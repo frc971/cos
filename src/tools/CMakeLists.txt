@@ -94,6 +94,8 @@ target_link_libraries(intrinsics_calibrate_disk PRIVATE
   absl::log_initialize
   nlohmann_json::nlohmann_json
   opencv_core
+  opencv_imgproc
+  opencv_imgcodecs
   opencv_objdetect
   opencv_calib3d
 )
