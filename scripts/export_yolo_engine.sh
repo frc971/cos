@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 # Export a grayscale Ultralytics detector with NMS embedded in ONNX, then build
-# a TensorRT engine. Run this script on the Jetson Orin.
+# a TensorRT engine. Run this script on the workstation: Python runs locally,
+# while the Orin's existing trtexec builds the engine over SSH.
 #
 # Usage: export_yolo_engine.sh MODEL.pt [OUTPUT.engine]
+# Both arguments are local paths. The engine is kept on the Orin and downloaded
+# to OUTPUT.engine. ORIN_HOST defaults to root@dev-orin; ORIN_OUTPUT_DIR defaults
+# to /root/gamepiece_models. PYTHON_BIN selects the local export environment.
 
 set -Eeuo pipefail
 
@@ -26,6 +30,9 @@ CONF_THRESHOLD="${CONF_THRESHOLD:-0.25}"
 IOU_THRESHOLD="${IOU_THRESHOLD:-0.45}"
 MAX_DETECTIONS="${MAX_DETECTIONS:-300}"
 ONNX_OPSET="${ONNX_OPSET:-17}"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
+ORIN_HOST="${ORIN_HOST:-root@dev-orin}"
+ORIN_OUTPUT_DIR="${ORIN_OUTPUT_DIR:-/root/gamepiece_models}"
 
 if [[ ! -f "${MODEL_PATH}" ]]; then
   echo "Model not found: ${MODEL_PATH}" >&2
@@ -33,18 +40,20 @@ if [[ ! -f "${MODEL_PATH}" ]]; then
 fi
 
 mkdir -p -- "$(dirname -- "${ONNX_PATH}")" "$(dirname -- "${ENGINE_PATH}")"
+REMOTE_ENGINE_PATH="${ORIN_OUTPUT_DIR%/}/$(basename -- "${ENGINE_PATH}")"
+REMOTE_ONNX_PATH="${REMOTE_ENGINE_PATH%.*}.onnx"
+# Timing caches are specific to the device's TensorRT builder, so this path is
+# remote, unlike ONNX_PATH and OUTPUT.engine.
+TIMING_CACHE_PATH="${TIMING_CACHE_PATH:-${REMOTE_ENGINE_PATH%.*}.timing.cache}"
 
-if command -v trtexec >/dev/null 2>&1; then
-  TRTEXEC="$(command -v trtexec)"
-elif [[ -x /usr/src/tensorrt/bin/trtexec ]]; then
-  TRTEXEC=/usr/src/tensorrt/bin/trtexec
-else
-  echo "trtexec was not found in PATH or /usr/src/tensorrt/bin." >&2
-  exit 1
-fi
+# SSH sends a command string to the remote shell. Quote paths explicitly rather
+# than relying on local argument boundaries to survive that extra shell.
+shell_quote() {
+  printf "'%s'" "${1//\'/\'\\\'\'}"
+}
 
-echo "Exporting ${MODEL_PATH} to ${ONNX_PATH}"
-python3 - "${MODEL_PATH}" "${ONNX_PATH}" "${IMAGE_SIZE}" \
+echo "Exporting ${MODEL_PATH} to ${ONNX_PATH} on this workstation"
+YOLO_AUTOINSTALL=false "${PYTHON_BIN}" - "${MODEL_PATH}" "${ONNX_PATH}" "${IMAGE_SIZE}" \
   "${CONF_THRESHOLD}" "${IOU_THRESHOLD}" "${MAX_DETECTIONS}" \
   "${ONNX_OPSET}" <<'PY'
 import shutil
@@ -53,12 +62,14 @@ from pathlib import Path
 
 try:
     import onnx
+    import onnxslim
     import torch
     from ultralytics import YOLO
 except ImportError as exc:
     raise SystemExit(
-        f"Missing Python dependency: {exc.name}. Install ultralytics and onnx "
-        "in the Orin-side Python environment."
+        f"Missing local Python dependency: {exc.name}. Install "
+        "scripts/yolo-export-requirements.txt in a workstation virtual "
+        "environment and select its Python with PYTHON_BIN."
     ) from exc
 
 model_path = Path(sys.argv[1]).resolve()
@@ -98,7 +109,9 @@ exported_path = Path(
         iou=iou,
         max_det=max_det,
         opset=opset,
-        simplify=False,
+        # Fold the NMS padding/shape graph before TensorRT consumes it. The
+        # unsimplified graph can build but overflow during enqueue on Orin.
+        simplify=True,
         device="cpu",
     )
 ).resolve()
@@ -119,16 +132,52 @@ if not any(node.op_type == "NonMaxSuppression" for node in graph.graph.node):
 print(f"Verified grayscale input and embedded NMS in {onnx_path}")
 PY
 
-echo "Building FP16 TensorRT engine ${ENGINE_PATH}"
-"${TRTEXEC}" \
-  --onnx="${ONNX_PATH}" \
-  --saveEngine="${ENGINE_PATH}" \
-  --fp16 \
-  --buildOnly
+echo "Uploading ONNX to ${ORIN_HOST}:${REMOTE_ONNX_PATH}"
+ssh "${ORIN_HOST}" \
+  "mkdir -p -- $(shell_quote "${ORIN_OUTPUT_DIR}") && cat > $(shell_quote "${REMOTE_ONNX_PATH}")" \
+  < "${ONNX_PATH}"
 
-if [[ ! -s "${ENGINE_PATH}" ]]; then
-  echo "trtexec completed without producing a non-empty engine: ${ENGINE_PATH}" >&2
+echo "Building FP16 TensorRT engine on ${ORIN_HOST}"
+ssh "${ORIN_HOST}" \
+  "bash -s -- $(shell_quote "${REMOTE_ONNX_PATH}") $(shell_quote "${REMOTE_ENGINE_PATH}") $(shell_quote "${TIMING_CACHE_PATH}")" <<'REMOTE'
+set -Eeuo pipefail
+onnx_path="$1"
+engine_path="$2"
+timing_cache_path="$3"
+
+if command -v trtexec >/dev/null 2>&1; then
+  trtexec_bin="$(command -v trtexec)"
+elif [[ -x /usr/src/tensorrt/bin/trtexec ]]; then
+  trtexec_bin=/usr/src/tensorrt/bin/trtexec
+else
+  echo "The Orin image must provide trtexec; add it through the Yocto build." >&2
   exit 1
 fi
 
-echo "Created ${ENGINE_PATH}"
+# Preserve a working engine if the builder fails.
+pending_engine="${engine_path}.building.$$"
+trap 'rm -f -- "$pending_engine"' EXIT
+mkdir -p -- "$(dirname -- "$timing_cache_path")"
+"${trtexec_bin}" \
+  --onnx="${onnx_path}" \
+  --saveEngine="${pending_engine}" \
+  --timingCacheFile="${timing_cache_path}" \
+  --fp16 \
+  --skipInference
+
+if [[ ! -s "${pending_engine}" ]]; then
+  echo "trtexec completed without producing a non-empty engine: ${engine_path}" >&2
+  exit 1
+fi
+mv -- "${pending_engine}" "${engine_path}"
+REMOTE
+
+pending_local_engine="$(mktemp "${ENGINE_PATH}.download.XXXXXX")"
+trap 'rm -f -- "$pending_local_engine"' EXIT
+ssh "${ORIN_HOST}" "cat -- $(shell_quote "${REMOTE_ENGINE_PATH}")" > "${pending_local_engine}"
+if [[ ! -s "${pending_local_engine}" ]]; then
+  echo "Downloaded engine is empty: ${ENGINE_PATH}" >&2
+  exit 1
+fi
+mv -- "${pending_local_engine}" "${ENGINE_PATH}"
+echo "Created ${ENGINE_PATH} and ${ORIN_HOST}:${REMOTE_ENGINE_PATH}"
