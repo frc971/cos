@@ -24,7 +24,6 @@ class ControlLoop {
   ControlLoop(
       std::chrono::milliseconds frequency = std::chrono::milliseconds(10));
   void RegisterCallback(const std::function<void(const Context&)>& callback);
-  void RegisterDependency(const std::function<void(const Context&)>&);
   void RegisterNode(const std::shared_ptr<INode>& node);
   void RegisterDependencyNode(const std::shared_ptr<INode>& node);
   void EnableLatencyLog();
