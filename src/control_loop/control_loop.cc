@@ -28,8 +28,8 @@ ContextInternal::~ContextInternal() {
     try {
       wpilog_writer_->Log(*this);
     } catch (const std::exception& error) {
-      LOG(ERROR) << "Failed to write context " << id << " to WPILog: "
-                 << error.what();
+      LOG(ERROR) << "Failed to write context " << id
+                 << " to WPILog: " << error.what();
     }
   }
 }
@@ -53,8 +53,8 @@ void ControlLoop::Start() {
     };
     collect(dependency_nodes_);
     collect(nodes_);
-    wpilog_writer_ = std::make_shared<logging::WPILogWriter>(
-        wpilog_filename_, log_publications);
+    wpilog_writer_ = std::make_shared<logging::WPILogWriter>(wpilog_filename_,
+                                                             log_publications);
   }
   RegisterNodeCallbacks();
 

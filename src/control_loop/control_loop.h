@@ -13,7 +13,9 @@
 #include "control_loop/context.h"
 #include "control_loop/node.h"
 
-namespace logging { class WPILogWriter; }
+namespace logging {
+class WPILogWriter;
+}
 
 namespace control_loop {
 
