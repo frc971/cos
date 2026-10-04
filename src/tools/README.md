@@ -12,12 +12,15 @@ results, including frames without enough corners, directly to JSON.
 The JSON records image dimensions and an array of detections containing
 filenames, ChArUco corners and IDs, image points, and object points. The helper
 does not run calibration.
-`intrinsics_calibrate_disk` walks the recording in 0.5-second steps until it
-collects 50 usable detections. If the first pass falls short, it continues from
-the beginning offset by 0.25 seconds, keeping the first pass's detections and
-skipping duplicates. If both passes fall short, calibration reports an error.
-Timestamp filename stems must be in seconds. `--max_detections` changes the
-capture count; `--max_detections=0` uses all usable results.
+`intrinsics_calibrate_disk` randomly selects 50 usable detections without
+replacement. Each detection's position is the centroid of its image points
+relative to the image center. Positions are stratified into 20 equal radius
+bands from the center to an image corner and 20 equal angle sectors, forming
+400 blocks. Sampling draws once from each populated block per round, in random
+order, until the requested count is reached; exhausted blocks are skipped in
+later rounds. If there are too few usable detections, calibration reports an
+error. `--max_detections` changes the capture count;
+`--max_detections=0` uses all usable results.
 The saved JSON can be reused without decoding frames or running detection
 again. For live calibration, run
 `intrinsics_calibrate --config_path=/path/to/config.json`,

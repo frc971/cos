@@ -1,9 +1,11 @@
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <cstddef>
-#include <filesystem>
 #include <fstream>
-#include <iostream>
+#include <numbers>
 #include <optional>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -21,9 +23,10 @@
 ABSL_FLAG(std::string, detections_path, "",  // NOLINT
           "ChArUco detection JSON exported by calib_helper; calibrates "
           "without loading images");  // NOLINT
-ABSL_FLAG(int, max_detections, 50,    // NOLINT
-          "calibration captures selected in 0.5-second steps "
-          "(0 uses all usable detections)");          // NOLINT
+ABSL_FLAG(int, max_detections, 50,  // NOLINT
+          "calibration captures sampled evenly across 20 radius bands and "
+          "20 angle sectors relative to the image center "
+          "(0 uses all usable detections)");  // NOLINT
 ABSL_FLAG(std::string, intrinsics_output_path,        // NOLINT
           "intrinsics.json",                          // NOLINT
           "path for the generated intrinsics JSON");  // NOLINT
@@ -36,6 +39,34 @@ using charuco_calibration::DetectionFromJson;
 using charuco_calibration::DetectionResult;
 using charuco_calibration::HasEnoughCorners;
 using charuco_calibration::IntrinsicsToJson;
+
+constexpr std::size_t kBlocksPerTrait = 20;
+
+auto DetectionStratum(const DetectionResult& detection, cv::Size image_size)
+    -> std::size_t {
+  cv::Point2d centroid;
+  for (const auto& point : detection.image_points) {
+    centroid.x += point.x;
+    centroid.y += point.y;
+  }
+  centroid /= static_cast<double>(detection.image_points.size());
+  const double x = centroid.x - image_size.width / 2.0;
+  const double y = centroid.y - image_size.height / 2.0;
+  const double max_radius =
+      std::hypot(image_size.width / 2.0, image_size.height / 2.0);
+  const double radius = std::hypot(x, y) / max_radius;
+  const double angle =
+      (std::atan2(y, x) + std::numbers::pi) / (2.0 * std::numbers::pi);
+  if (!std::isfinite(radius) || !std::isfinite(angle)) {
+    throw std::runtime_error("Detection position must be finite");
+  }
+  const auto block = [](double position) -> std::size_t {
+    return std::min(kBlocksPerTrait - 1,
+                    static_cast<std::size_t>(
+                        std::clamp(position, 0.0, 1.0) * kBlocksPerTrait));
+  };
+  return block(radius) * kBlocksPerTrait + block(angle);
+}
 
 auto WriteIntrinsicsToFile(const cv::Mat& camera_matrix,
                            const cv::Mat& dist_coeffs, const std::string& path)
@@ -93,46 +124,55 @@ auto CalibrateDetectionsFile(const std::string& path, int max_detections)
         }
       }
     } else {
-      std::vector<std::pair<double, std::size_t>> frames;
+      std::vector<std::pair<DetectionResult, std::size_t>> candidates;
+      std::array<std::vector<std::size_t>, kBlocksPerTrait * kBlocksPerTrait>
+          strata;
       for (std::size_t index = 0; index < detections.size(); ++index) {
-        const std::filesystem::path filename =
-            detections[index].at("filename").get<std::string>();
-        frames.emplace_back(std::stod(filename.stem().string()), index);
-      }
-      std::ranges::sort(frames);
-      std::vector<bool> selected(detections.size(), false);
-      for (const double offset : {0.0, 0.25}) {
-        if (frames.empty() || results.size() == limit) {
-          break;
+        if (stop::stop) {
+          return 0;
         }
-        double next_timestamp = frames.front().first + offset;
-        for (const auto& [timestamp, index] : frames) {
+        auto result = DetectionFromJson(detections[index]);
+        if (HasEnoughCorners(result)) {
+          strata[DetectionStratum(result, image_size)].push_back(
+              candidates.size());
+          candidates.emplace_back(std::move(result), index);
+        }
+      }
+      if (candidates.size() < limit) {
+        throw std::runtime_error("Only " + std::to_string(candidates.size()) +
+                                 " usable frames; " +
+                                 std::to_string(max_detections) + " required");
+      }
+      std::mt19937 generator(std::random_device{}());
+      std::vector<std::size_t> populated_strata;
+      for (std::size_t index = 0; index < strata.size(); ++index) {
+        if (!strata[index].empty()) {
+          std::shuffle(strata[index].begin(), strata[index].end(), generator);
+          populated_strata.push_back(index);
+        }
+      }
+      // Draw once per populated stratum per round. Randomize the order so a
+      // partial final round does not favor smaller radii or angles.
+      while (results.size() < limit) {
+        std::shuffle(populated_strata.begin(), populated_strata.end(),
+                     generator);
+        for (const auto stratum : populated_strata) {
           if (stop::stop) {
             return 0;
           }
-          if (timestamp < next_timestamp) {
-            continue;
-          }
-          next_timestamp = timestamp + 0.5;
-          if (selected[index]) {
-            continue;
-          }
-          auto result = DetectionFromJson(detections[index]);
-          if (HasEnoughCorners(result)) {
-            selected[index] = true;
-            results.push_back(std::move(result));
-            LOG(INFO) << "Selected frame: "
-                      << detections[index].at("filename").get<std::string>();
-            if (results.size() == limit) {
-              break;
-            }
+          auto& bucket = strata[stratum];
+          auto& [result, index] = candidates[bucket.back()];
+          bucket.pop_back();
+          results.push_back(std::move(result));
+          LOG(INFO) << "Selected frame: "
+                    << detections[index].at("filename").get<std::string>();
+          if (results.size() == limit) {
+            break;
           }
         }
-      }
-      if (results.size() < limit) {
-        throw std::runtime_error("Only " + std::to_string(results.size()) +
-                                 " usable frames after both sampling passes; " +
-                                 std::to_string(max_detections) + " required");
+        std::erase_if(populated_strata, [&strata](std::size_t index) -> bool {
+          return strata[index].empty();
+        });
       }
     }
     LOG(INFO) << "Selected " << results.size() << " of " << detections.size()
