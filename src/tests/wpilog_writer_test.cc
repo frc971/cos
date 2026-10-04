@@ -1,6 +1,7 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <future>
 #include <memory>
 #include <limits>
 #include <stop_token>
@@ -15,6 +16,7 @@
 #include <unistd.h>
 
 #include "control_loop/context.h"
+#include "control_loop/control_loop.h"
 #include "localization/position.h"
 #include "logging/wpilog_writer.h"
 #include "wpilog_test_utils.h"
@@ -39,6 +41,9 @@ struct IntegerSample {
   std::uint64_t value = 0;
   LOG_FIELDS(IntegerSample, value)
 };
+
+static_assert(requires { Pose2dSample::RegisterWPILog; });
+static_assert(requires { IntegerSample::RegisterWPILog; });
 
 TEST(WPILogWriterTest, WritesRegisteredFieldsAndSkipsMissingMessages) {
   const auto path = LogPath();
@@ -78,7 +83,7 @@ TEST(WPILogWriterTest, WritesRegisteredFieldsAndSkipsMissingMessages) {
       "temperature", "pose/pose", "pose/variance", "pose/tag_ids",
       "pose/num_tags",
       "pose/distances"};
-  wpilog_test::VisitLogValues(path, [&](const auto& name, const auto& record) {
+  wpilog_test::VisitLogValues(path, [&](const auto& name, const auto& record) -> void {
     if (!expected_names.contains(name)) {
       return;
     }
@@ -117,10 +122,10 @@ TEST(WPILogWriterTest, FlushesValuesWhileWriterIsActive) {
   const std::vector publications{
       control_loop::MessageDescriptor::Publication<std::int64_t>("count")};
 
-  const auto has_value = [&](std::int64_t expected) {
+  const auto has_value = [&](std::int64_t expected) -> bool {
     bool found = false;
     try {
-      wpilog_test::VisitLogValues(path, [&](const auto& name, const auto& record) {
+      wpilog_test::VisitLogValues(path, [&](const auto& name, const auto& record) -> void {
         if (name != "count") return;
         std::int64_t value = 0;
         if (record.GetInteger(&value) && value == expected) found = true;
@@ -153,6 +158,53 @@ TEST(WPILogWriterTest, FlushesValuesWhileWriterIsActive) {
     }
     EXPECT_TRUE(has_value(2));
   }
+  std::filesystem::remove(path);
+}
+
+TEST(WPILogWriterTest, ControlLoopUsesExistingWriterAndRetainedContexts) {
+  const auto path = LogPath();
+  const std::vector publications{
+      control_loop::MessageDescriptor::Publication<int>("count")};
+  auto writer =
+      std::make_shared<logging::WPILogWriter>(path.string(), publications);
+  {
+    control_loop::ContextInternal context(std::chrono::steady_clock::now(),
+                                         nullptr, std::stop_token{}, 1);
+    context.SetMessage(
+        "count", std::make_unique<control_loop::ValueMessage<int>>(1));
+    writer->Log(context);
+  }
+
+  std::promise<control_loop::Context> retained_context;
+  auto future = retained_context.get_future();
+  control_loop::ControlLoop loop(std::chrono::milliseconds(1));
+  loop.EnableWPILog(writer);
+  loop.RegisterCallback([&](const control_loop::Context& context) -> void {
+    context->SetMessage(
+        "count", std::make_unique<control_loop::ValueMessage<int>>(2));
+    retained_context.set_value(context);
+  });
+  loop.Start();
+  const auto status = future.wait_for(std::chrono::seconds(5));
+  loop.Stop();
+  ASSERT_EQ(status, std::future_status::ready);
+
+  // A context held past Stop() keeps the supplied writer alive.
+  const std::weak_ptr<logging::WPILogWriter> weak_writer = writer;
+  writer.reset();
+  EXPECT_FALSE(weak_writer.expired());
+  auto context = future.get();
+  context.reset();
+  EXPECT_TRUE(weak_writer.expired());
+
+  std::vector<std::int64_t> values;
+  wpilog_test::VisitLogValues(path, [&](const auto& name, const auto& record) -> void {
+    if (name != "count") return;
+    std::int64_t value = 0;
+    ASSERT_TRUE(record.GetInteger(&value));
+    values.push_back(value);
+  });
+  EXPECT_EQ(values, (std::vector<std::int64_t>{1, 2}));
   std::filesystem::remove(path);
 }
 
@@ -217,7 +269,7 @@ TEST(WPILogWriterTest, PrimitiveAndAnnotatedIntegersShareCheckedConversion) {
   }
 
   std::unordered_map<std::string, int> counts;
-  wpilog_test::VisitLogValues(path, [&](const auto& name, const auto& record) {
+  wpilog_test::VisitLogValues(path, [&](const auto& name, const auto& record) -> void {
     if (name != "primitive" && name != "annotated/value") return;
     std::int64_t value = 0;
     ASSERT_TRUE(record.GetInteger(&value));
@@ -257,7 +309,7 @@ TEST(WPILogWriterTest, WritesBuiltInTypesAndPose2d) {
   }
 
   std::unordered_set<std::string> seen;
-  wpilog_test::VisitLogValues(path, [&](const auto& name, const auto& record) {
+  wpilog_test::VisitLogValues(path, [&](const auto& name, const auto& record) -> void {
       if (name == "ready") {
         bool value = false;
         ASSERT_TRUE(record.GetBoolean(&value));

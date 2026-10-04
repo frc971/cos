@@ -5,8 +5,6 @@
 #include <functional>
 #include <memory>
 #include <queue>
-#include <string>
-#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -27,7 +25,8 @@ class ControlLoop {
   void RegisterNode(const std::shared_ptr<INode>& node);
   void RegisterDependencyNode(const std::shared_ptr<INode>& node);
   void EnableLatencyLog();
-  void EnableWPILog(std::string_view filename);
+  [[nodiscard]] auto GetLogPublications() const -> std::vector<MessageDescriptor>;
+  void EnableWPILog(std::shared_ptr<logging::WPILogWriter> writer);
   void Start();
   void Stop();
   [[nodiscard]] auto GetLoopsPerSecond() const -> double;
@@ -50,7 +49,6 @@ class ControlLoop {
   std::vector<std::shared_ptr<ContextInternal>> contexts_;
   size_t max_contexts_ = 1;
   std::uint64_t loop_count_ = 0;
-  std::string wpilog_filename_;
   std::shared_ptr<logging::WPILogWriter> wpilog_writer_;
 
  private:

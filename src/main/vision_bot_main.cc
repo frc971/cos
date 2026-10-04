@@ -15,6 +15,7 @@
 #include "localization/unambiguous_solver_node.h"
 #include "localization/variance_calculator_node.h"
 #include "logging/jpeg_buffer_log_node.h"
+#include "logging/wpilog_writer.h"
 #include "networktables/NetworkTableInstance.h"
 #include "simulation/simulation_position_sender_node.h"
 #include "streamer/jpeg_buffer_streamer_node.h"
@@ -29,7 +30,7 @@ ABSL_FLAG(uint, max_context, 1,                                   // NOLINT
           "Maximum number of concurrent control-loop contexts");  // NOLINT
 ABSL_FLAG(bool, latency_log, false,                               // NOLINT
           "Log control-loop latency and loops per second");       // NOLINT
-ABSL_FLAG(
+ABSL_FLAG(  // NOLINT
     bool, log_images, false,                                      // NOLINT
     "Log timestamped JPEG frames to the run's log directory in "  // NOLINT
     "per-camera subfolders");                                     // NOLINT
@@ -98,7 +99,6 @@ auto main(int argc, char** argv) -> int {
   control_loop::StartNetworktables(8971);
 
   control_loop::ControlLoop control_loop(1ms);
-  control_loop.EnableWPILog("/root/vision_bot.wpilog");
   control_loop.SetMaxContext(absl::GetFlag(FLAGS_max_context));
   control_loop::ThreadPool thread_pool;
 
@@ -145,6 +145,9 @@ auto main(int argc, char** argv) -> int {
     control_loop.EnableLatencyLog();
   }
 
+  auto wpilog_writer = std::make_shared<logging::WPILogWriter>(
+      "/root/vision_bot.wpilog", control_loop.GetLogPublications());
+  control_loop.EnableWPILog(wpilog_writer);
   control_loop.Start();
 
   stop::WaitUntilStop();

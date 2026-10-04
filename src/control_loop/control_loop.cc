@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <exception>
+#include <string>
 #include <unordered_set>
 #include <utility>
 
@@ -38,24 +39,6 @@ ControlLoop::ControlLoop(std::chrono::milliseconds period) : period_(period) {}
 
 void ControlLoop::Start() {
   ValidateNodeGraph();
-  if (!wpilog_filename_.empty()) {
-    std::vector<MessageDescriptor> log_publications;
-    const auto collect = [&log_publications](const auto& nodes) {
-      for (const auto& node : nodes) {
-        for (const auto& publication : node->GetPublications()) {
-          // Image payloads retain their original untyped descriptors and are
-          // intentionally excluded. Typed publications have logging metadata.
-          if (publication.GetRegistration().has_value()) {
-            log_publications.push_back(publication);
-          }
-        }
-      }
-    };
-    collect(dependency_nodes_);
-    collect(nodes_);
-    wpilog_writer_ = std::make_shared<logging::WPILogWriter>(wpilog_filename_,
-                                                             log_publications);
-  }
   RegisterNodeCallbacks();
 
   contexts_.reserve(max_contexts_);
@@ -134,8 +117,26 @@ void ControlLoop::EnableLatencyLog() {
   log_latency_ = true;
 }
 
-void ControlLoop::EnableWPILog(std::string_view filename) {
-  wpilog_filename_ = filename;
+auto ControlLoop::GetLogPublications() const -> std::vector<MessageDescriptor> {
+  std::vector<MessageDescriptor> log_publications;
+  const auto collect = [&log_publications](const auto& nodes) -> void {
+    for (const auto& node : nodes) {
+      for (const auto& publication : node->GetPublications()) {
+        // Image payloads retain their original untyped descriptors and are
+        // intentionally excluded. Typed publications have logging metadata.
+        if (publication.GetRegistration().has_value()) {
+          log_publications.push_back(publication);
+        }
+      }
+    }
+  };
+  collect(dependency_nodes_);
+  collect(nodes_);
+  return log_publications;
+}
+
+void ControlLoop::EnableWPILog(std::shared_ptr<logging::WPILogWriter> writer) {
+  wpilog_writer_ = std::move(writer);
 }
 
 void ControlLoop::ValidateNodeGraph() {
