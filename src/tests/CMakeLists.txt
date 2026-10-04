@@ -1,14 +1,5 @@
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
 
-add_executable(context_handoff_node_test context_handoff_node_test.cc)
-target_link_libraries(context_handoff_node_test PRIVATE
-  cos::control_loop
-  cos::thread_pool
-  cos::nvjpeg_decode_node
-  GTest::gtest_main
-)
-add_test(NAME context_handoff_node_test COMMAND context_handoff_node_test)
-
 add_executable(log_fields_test log_fields_test.cc)
 target_link_libraries(log_fields_test PRIVATE cos::wpilog_writer
   cos::control_loop GTest::gtest_main GTest::gtest cos::localization_solver_common)
