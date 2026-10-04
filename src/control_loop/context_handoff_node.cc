@@ -11,6 +11,8 @@ namespace control_loop {
 struct ContextHandoffNode::State {
   std::mutex mutex;
   std::vector<std::shared_ptr<IMessage>> messages;
+  std::condition_variable cv;
+  bool holds_new_message_;
 };
 
 ContextHandoffNode::ContextHandoffNode(const std::shared_ptr<INode>& node)
@@ -29,6 +31,8 @@ ContextHandoffNode::ContextHandoffNode(const std::shared_ptr<INode>& node)
               state->messages[i] = std::move(message);
             }
           }
+          state->holds_new_message_ = true;
+          state->cv.notify_one();
         }
       });
 }
@@ -37,13 +41,16 @@ auto ContextHandoffNode::CreateCallback()
     -> std::function<void(const Context&)> {
   return [this](const Context& context) -> void {
     {
-      std::scoped_lock lock(state_->mutex);
+      std::unique_lock lock(state_->mutex);
+      state_->cv.wait(lock,
+                      [this] -> bool { return state_->holds_new_message_; });
       for (std::size_t i = 0; i < publications_.size(); ++i) {
         if (state_->messages[i]) {
           context->SetMessage(publications_[i].GetChannel(),
                               std::move(state_->messages[i]));
         }
       }
+      state_->holds_new_message_ = false;
     }
     for (const auto& callback : callbacks_) {
       callback(context);
