@@ -20,4 +20,4 @@ target_sources(cos.wpilog_writer
   PUBLIC FILE_SET HEADERS BASE_DIRS ${PROJECT_SOURCE_DIR}/src
   FILES log_registration.h wpilog_writer.h
 )
-target_link_libraries(cos.wpilog_writer PUBLIC wpiutil wpimath)
+target_link_libraries(cos.wpilog_writer PUBLIC wpiutil wpimath ntcore)

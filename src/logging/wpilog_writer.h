@@ -6,18 +6,20 @@
 #include <string>
 #include <string_view>
 #include <thread>
-#include <utility>
 #include <vector>
 
 #include "control_loop/context.h"
-#include "logging/log_registration.h"
+#include "logging/log_registration.h"  // IWYU pragma: export
 
 namespace logging {
 
 class WPILogWriter {
  public:
+  // Each field is appended to the file and published to the same NT path.
   WPILogWriter(std::string_view filename,
-               const std::vector<control_loop::MessageDescriptor>& publications);
+               const std::vector<control_loop::MessageDescriptor>& publications,
+               const nt::NetworkTableInstance& instance =
+                   nt::NetworkTableInstance::GetDefault());
   ~WPILogWriter() = default;
 
   WPILogWriter(const WPILogWriter&) = delete;

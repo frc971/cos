@@ -11,11 +11,13 @@
 #include <vector>
 
 namespace wpi::log { class DataLogWriter; }
+namespace nt { class NetworkTableInstance; }
 namespace control_loop { class IMessage; }
 namespace logging {
 using LogFunction = std::move_only_function<bool(const control_loop::IMessage&)>;
 template <typename T>
-auto RegisterFields(wpi::log::DataLogWriter&, std::string_view,
+auto RegisterFields(wpi::log::DataLogWriter&, const nt::NetworkTableInstance&,
+                    std::string_view,
                     std::vector<std::string>&) -> LogFunction;
 }
 
@@ -46,7 +48,8 @@ class ValueMessage final : public IMessage {
 class MessageDescriptor {
  public:
   using RegistrationFunction = logging::LogFunction (*)(
-      wpi::log::DataLogWriter&, std::string_view, std::vector<std::string>&);
+      wpi::log::DataLogWriter&, const nt::NetworkTableInstance&, std::string_view,
+      std::vector<std::string>&);
   MessageDescriptor(std::string_view channel, std::type_index type)
       : channel_(channel), types_({type}) {}
   MessageDescriptor(std::string_view channel,

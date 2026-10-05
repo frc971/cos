@@ -5,6 +5,12 @@ target_link_libraries(log_fields_test PRIVATE cos::wpilog_writer
   cos::control_loop GTest::gtest_main GTest::gtest cos::localization_solver_common)
 add_test(NAME log_fields_test COMMAND log_fields_test)
 
+add_executable(networktables_fields_test networktables_fields_test.cc)
+target_link_libraries(networktables_fields_test PRIVATE cos::wpilog_writer
+  cos::control_loop GTest::gtest_main GTest::gtest cos::localization_solver_common
+  cos::nvjpeg_decode_node cos::nvjpeg_fd_decode_node cos::thread_pool)
+add_test(NAME networktables_fields_test COMMAND networktables_fields_test)
+
 add_executable(wpilog_writer_test wpilog_writer_test.cc)
 target_link_libraries(wpilog_writer_test PRIVATE cos::wpilog_writer
   cos::control_loop GTest::gtest_main)
@@ -51,8 +57,9 @@ add_executable(test_solver_common
   solver_common_test.cc
 )
 target_link_libraries(test_solver_common PRIVATE
-  cos::localization_solver_common
   GTest::gtest_main
+  GTest::gtest
+  cos::localization_solver_common
 )
 
 add_executable(variance_calculator_node_test
