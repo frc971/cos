@@ -22,13 +22,18 @@ target_link_libraries(full_gamepiece_pipeline_test PRIVATE
 add_executable(full_robot_gamepiece_pipeline_test
   full_robot_gamepiece_pipeline_test.cc)
 target_link_libraries(full_robot_gamepiece_pipeline_test PRIVATE
+  # OpenCV's JPEG writer needs the system libjpeg ABI. Put it before the
+  # NVIDIA multimedia library, which exports overlapping JPEG symbols via
+  # the AprilTag detector's FD input support.
+  "-Wl,--push-state,--no-as-needed"
+  JPEG::JPEG
+  "-Wl,--pop-state"
   gamepiece
   cos::uvc_disk_camera_node
   cos::get_earliest_timestamp
   cos::rio_clock
   cos::stop
-  cos::cpu_decode_node
-  cos::cpu_apriltag_detector_node
+  cos::nvidia_apriltag_detector_node
   cos::unambiguous_solver_node
   cos::camera_config
   absl::flags_parse
