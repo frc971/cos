@@ -1,4 +1,4 @@
-#include "gamepiece/yolo.h"
+#include "gamepiece/yolo_node.h"
 
 #include <NvInfer.h>
 #include <cuda_runtime_api.h>
@@ -7,6 +7,7 @@
 #include <cmath>
 #include <fstream>
 #include <iterator>
+#include <memory>
 #include <stdexcept>
 #include <utility>
 
@@ -17,6 +18,7 @@
 
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "camera/nvjpeg_decode_node.h"
 
 namespace gamepiece {
 namespace {
@@ -44,9 +46,17 @@ auto GetOutputSize(nvinfer1::ICudaEngine* engine) -> size_t {
 }
 }  // namespace
 
-Yolo::Yolo(const std::string& model_path,
-           const std::vector<std::string>& class_names)
-    : class_names_(class_names) {
+YoloNode::YoloNode(std::string_view input_path, std::string_view output_path,
+                   const std::string& model_path,
+                   const std::vector<std::string>& class_names,
+                   control_loop::ThreadPool& thread_pool)
+    : input_path_(input_path),
+      output_path_(output_path),
+      thread_pool_(thread_pool),
+      dependencies_({{input_path_, typeid(camera::DecodedJpegBuffer)}}),
+      publications_({control_loop::MessageDescriptor::Publication<
+          std::vector<labeled_bounding_box_t>>(output_path_)}),
+      class_names_(class_names) {
   const std::vector<char> engine_data = LoadEngineFile(model_path);
 
   runtime_ = nvinfer1::createInferRuntime(*this);
@@ -74,7 +84,7 @@ Yolo::Yolo(const std::string& model_path,
   CHECK_EQ(cudaStreamCreate(&inference_cuda_stream_), cudaSuccess);
 }
 
-Yolo::~Yolo() {
+YoloNode::~YoloNode() {
   delete context_;
   delete engine_;
   delete runtime_;
@@ -89,19 +99,71 @@ Yolo::~Yolo() {
   }
 }
 
-void Yolo::log(Severity severity, const char* message) noexcept {
+void YoloNode::log(Severity severity, const char* message) noexcept {
   if (severity <= Severity::kWARNING) {
     LOG(WARNING) << "TensorRT: " << message;
   }
 }
 
-auto Yolo::Detect(const cv::cuda::GpuMat& image)
-    -> std::vector<LabeledBoundingBox> {
+auto YoloNode::CreateCallback()
+    -> std::function<void(const control_loop::Context&)> {
+  return [this](const control_loop::Context& context) -> void {
+    const auto* frame =
+        context->GetMessage<camera::DecodedJpegBuffer>(input_path_);
+    if (frame == nullptr || frame->destination.channel[0] == nullptr ||
+        frame->width <= 0 || frame->height <= 0) {
+      context->SetMessage(output_path_, nullptr);
+      for (const auto& callback : callbacks_) {
+        callback(context);
+      }
+      return;
+    }
+    thread_pool_.Submit(
+        [this, context, frame]() -> void {
+          CHECK_EQ(frame->output_format, NVJPEG_OUTPUT_Y);
+          CHECK_GE(frame->stride, static_cast<size_t>(frame->width));
+          const cv::cuda::GpuMat image(frame->height, frame->width, CV_8UC1,
+                                       frame->destination.channel[0],
+                                       frame->stride);
+          bounding_box_detections_t detections;
+          {
+            std::scoped_lock lock(detection_mutex_);
+            detections = Detect(image);
+          }
+          context->SetMessage(output_path_,
+                              std::make_shared<control_loop::ValueMessage<
+                                  bounding_box_detections_t>>(
+                                  std::move(detections)));
+          for (const auto& callback : callbacks_) {
+            callback(context);
+          }
+        },
+        context->id);
+  };
+}
+
+void YoloNode::RegisterCallback(
+    const std::function<void(const control_loop::Context&)>& callback) {
+  callbacks_.emplace_back(callback);
+}
+
+auto YoloNode::GetDependencies() const
+    -> const std::vector<control_loop::MessageDescriptor>& {
+  return dependencies_;
+}
+
+auto YoloNode::GetPublications() const
+    -> const std::vector<control_loop::MessageDescriptor>& {
+  return publications_;
+}
+
+auto YoloNode::Detect(const cv::cuda::GpuMat& image)
+    -> std::vector<labeled_bounding_box_t> {
   const std::vector<float> results = Run(image);
   return Postprocess(image.rows, image.cols, results);
 }
 
-auto Yolo::Run(const cv::cuda::GpuMat& image) -> std::vector<float> {
+auto YoloNode::Run(const cv::cuda::GpuMat& image) -> std::vector<float> {
   Preprocess(image);
   context_->setTensorAddress(engine_->getIOTensorName(0), input_buffer_);
   context_->setTensorAddress(engine_->getIOTensorName(1), output_buffer_);
@@ -115,9 +177,9 @@ auto Yolo::Run(const cv::cuda::GpuMat& image) -> std::vector<float> {
   return output;
 }
 
-auto Yolo::Postprocess(int original_height, int original_width,
-                       const std::vector<float>& results) const
-    -> std::vector<LabeledBoundingBox> {
+auto YoloNode::Postprocess(int original_height, int original_width,
+                           const std::vector<float>& results) const
+    -> std::vector<labeled_bounding_box_t> {
   const float scale =
       std::min(kTargetSize / static_cast<float>(original_height),
                kTargetSize / static_cast<float>(original_width));
@@ -126,7 +188,7 @@ auto Yolo::Postprocess(int original_height, int original_width,
   const float pad_left = (kTargetSize - new_width) / 2.0F;
   const float pad_top = (kTargetSize - new_height) / 2.0F;
 
-  std::vector<LabeledBoundingBox> detections;
+  std::vector<labeled_bounding_box_t> detections;
   const size_t count =
       std::min(kMaxDetections, results.size() / kNmsOutputSize);
   detections.reserve(count);
@@ -142,19 +204,17 @@ auto Yolo::Postprocess(int original_height, int original_width,
     y2 = std::clamp(y2, 0.0F, static_cast<float>(original_height));
 
     cv::Rect bounds(static_cast<int>(x1), static_cast<int>(y1),
-                    static_cast<int>(x2 - x1),
-                    static_cast<int>(y2 - y1));
+                    static_cast<int>(x2 - x1), static_cast<int>(y2 - y1));
     if (bounds.empty()) {
       break;
     }
 
-    const int class_id =
-        static_cast<int>(results[i * kNmsOutputSize + 5]);
+    const int class_id = static_cast<int>(results[i * kNmsOutputSize + 5]);
     const std::string label =
         class_id >= 0 && static_cast<size_t>(class_id) < class_names_.size()
             ? class_names_[class_id]
             : std::string{};
-    detections.push_back(LabeledBoundingBox{
+    detections.push_back(labeled_bounding_box_t{
         .bounds = bounds,
         .label = label,
         .class_id = class_id,
@@ -164,7 +224,7 @@ auto Yolo::Postprocess(int original_height, int original_width,
   return detections;
 }
 
-void Yolo::Preprocess(const cv::cuda::GpuMat& image) {
+void YoloNode::Preprocess(const cv::cuda::GpuMat& image) {
   CHECK(!image.empty());
 
   cv::cuda::GpuMat grayscale;
@@ -182,11 +242,9 @@ void Yolo::Preprocess(const cv::cuda::GpuMat& image) {
   const int width_padding = kTargetSize - new_width;
   const int height_padding = kTargetSize - new_height;
   const int top = static_cast<int>(std::round(height_padding / 2.0 - 0.1));
-  const int bottom =
-      static_cast<int>(std::round(height_padding / 2.0 + 0.1));
+  const int bottom = static_cast<int>(std::round(height_padding / 2.0 + 0.1));
   const int left = static_cast<int>(std::round(width_padding / 2.0 - 0.1));
-  const int right =
-      static_cast<int>(std::round(width_padding / 2.0 + 0.1));
+  const int right = static_cast<int>(std::round(width_padding / 2.0 + 0.1));
 
   cv::cuda::GpuMat resized;
   cv::cuda::resize(grayscale, resized, cv::Size(new_width, new_height), 0, 0,

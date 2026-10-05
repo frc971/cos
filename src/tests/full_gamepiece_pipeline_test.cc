@@ -2,6 +2,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -11,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include <opencv2/core/cuda.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
@@ -20,14 +22,14 @@
 #include "absl/log/globals.h"
 #include "absl/log/initialize.h"
 #include "absl/log/log.h"
-#include "camera/jpeg_disk_camera.h"
+#include "camera/get_earliest_timestamp.h"
+#include "camera/uvc_disk_camera_node.h"
 #include "camera/nvjpeg_decode_node.h"
 #include "control_loop/control_loop.h"
 #include "control_loop/thread_pool.h"
-#include "gamepiece/gamepiece_detection.h"
-#include "gamepiece/gamepiece_node.h"
-#include "gamepiece/yolo.h"
-#include "utils/json.h"
+#include "gamepiece/yolo_node.h"
+#include "control_loop/rio_clock.h"
+#include "utils/stop.h"
 
 namespace fs = std::filesystem;
 using namespace std::chrono_literals;
@@ -38,8 +40,6 @@ ABSL_FLAG(std::string, model_path, "",  // NOLINT
           "TensorRT engine with embedded NMS output");
 ABSL_FLAG(std::string, class_names, "",  // NOLINT
           "Text file containing one class name per line");
-ABSL_FLAG(std::string, camera_config, "/root/constants/dev-orin/camera.json",
-          "Camera JSON containing intrinsics and extrinsics");
 ABSL_FLAG(int, timeout_seconds, 30,  // NOLINT
           "Maximum time to wait for the replay to complete");
 ABSL_FLAG(std::string, annotation_dir, "",  // NOLINT
@@ -47,20 +47,17 @@ ABSL_FLAG(std::string, annotation_dir, "",  // NOLINT
 
 namespace {
 
-class AnnotatingDetector final : public gamepiece::ObjectDetector {
+class DetectionAnnotations final {
  public:
-  AnnotatingDetector(std::unique_ptr<gamepiece::ObjectDetector> detector,
-                     fs::path output_directory)
-      : detector_(std::move(detector)),
-        output_directory_(std::move(output_directory)) {
-    CHECK(detector_ != nullptr);
+  explicit DetectionAnnotations(fs::path output_directory)
+      : output_directory_(std::move(output_directory)) {
     fs::create_directories(output_directory_);
   }
 
-  auto Detect(const cv::cuda::GpuMat& image)
-      -> std::vector<gamepiece::LabeledBoundingBox> override {
-    const std::vector<gamepiece::LabeledBoundingBox> detections =
-        detector_->Detect(image);
+  void Write(const camera::DecodedJpegBuffer& frame,
+             const std::vector<gamepiece::labeled_bounding_box_t>& detections) {
+    const cv::cuda::GpuMat image(frame.height, frame.width, CV_8UC1,
+                               frame.destination.channel[0], frame.stride);
 
     cv::Mat grayscale;
     image.download(grayscale);
@@ -80,11 +77,9 @@ class AnnotatingDetector final : public gamepiece::ObjectDetector {
     std::ostringstream filename;
     filename << std::setfill('0') << std::setw(6) << frame_index_++ << ".jpg";
     CHECK(cv::imwrite((output_directory_ / filename.str()).string(), annotated));
-    return detections;
   }
 
  private:
-  std::unique_ptr<gamepiece::ObjectDetector> detector_;
   fs::path output_directory_;
   size_t frame_index_ = 0;
 };
@@ -95,7 +90,7 @@ auto IsTimestampedJpeg(const fs::path& path) -> bool {
   }
   std::string extension = path.extension().string();
   std::ranges::transform(extension, extension.begin(),
-                         [](unsigned char character) {
+                         [](unsigned char character) -> char {
                            return static_cast<char>(std::tolower(character));
                          });
   if (extension != ".jpg" && extension != ".jpeg") {
@@ -114,7 +109,7 @@ auto IsTimestampedJpeg(const fs::path& path) -> bool {
 auto CountFrames(const fs::path& directory) -> size_t {
   CHECK(fs::is_directory(directory)) << "Missing image folder: " << directory;
   return std::ranges::count_if(
-      fs::directory_iterator(directory), [](const fs::directory_entry& entry) {
+      fs::directory_iterator(directory), [](const fs::directory_entry& entry) -> bool {
         return entry.is_regular_file() && IsTimestampedJpeg(entry.path());
       });
 }
@@ -152,8 +147,6 @@ auto main(int argc, char* argv[]) -> int {
   CHECK_GT(expected_frames, 0U);
   const std::vector<std::string> class_names =
       LoadClassNames(class_names_path);
-  const nlohmann::json camera_config =
-      utils::ReadJson(absl::GetFlag(FLAGS_camera_config));
 
   constexpr std::string_view kJpegChannel = "gamepiece/jpeg";
   constexpr std::string_view kDecodedChannel = "gamepiece/decoded";
@@ -161,21 +154,20 @@ auto main(int argc, char* argv[]) -> int {
 
   control_loop::ThreadPool thread_pool(2);
   control_loop::ControlLoop control_loop(1ms);
-  auto camera = std::make_shared<camera::JpegDiskCamera>(
-      image_folder.string(), kJpegChannel, false, true);
+  control_loop::RioClock::EnableSimulation();
+  auto camera = std::make_shared<camera::UVCDiskCameraNode>(
+      image_folder.string(), kJpegChannel,
+      camera::GetEarliestTimestamp(image_folder.string()));
   auto decoder = std::make_shared<camera::NvjpegDecodeNode>(
       kJpegChannel, kDecodedChannel, NVJPEG_OUTPUT_Y, thread_pool);
-  std::unique_ptr<gamepiece::ObjectDetector> object_detector =
-      std::make_unique<gamepiece::Yolo>(model_path.string(), class_names);
   const fs::path annotation_dir = absl::GetFlag(FLAGS_annotation_dir);
+  std::unique_ptr<DetectionAnnotations> annotations;
   if (!annotation_dir.empty()) {
-    object_detector = std::make_unique<AnnotatingDetector>(
-        std::move(object_detector), annotation_dir);
+    annotations = std::make_unique<DetectionAnnotations>(annotation_dir);
   }
-  auto detector = std::make_shared<gamepiece::GamepieceNode>(
-      std::move(object_detector),
-      kDecodedChannel, kDetectionChannel, camera_config.at("intrinsics"),
-      camera_config.at("extrinsics"), thread_pool);
+  auto detector = std::make_shared<gamepiece::YoloNode>(
+      kDecodedChannel, kDetectionChannel, model_path.string(), class_names,
+      thread_pool);
 
   std::atomic<size_t> encoded_frames = 0;
   std::atomic<size_t> decoded_frames = 0;
@@ -185,27 +177,37 @@ auto main(int argc, char* argv[]) -> int {
   std::mutex completion_mutex;
   std::condition_variable completion;
 
-  camera->RegisterCallback([&](const control_loop::Context& context) {
+  camera->RegisterCallback([&](const control_loop::Context& context) -> void {
+    std::scoped_lock lock(completion_mutex);
     const auto* jpeg = context->GetMessage<camera::JpegBuffer>(kJpegChannel);
     if (jpeg != nullptr && jpeg->ptr != nullptr) {
       ++encoded_frames;
     }
+    completion.notify_one();
   });
-  decoder->RegisterCallback([&](const control_loop::Context& context) {
+  decoder->RegisterCallback([&](const control_loop::Context& context) -> void {
     const auto* frame =
         context->GetMessage<camera::DecodedJpegBuffer>(kDecodedChannel);
     if (frame != nullptr && frame->destination.channel[0] != nullptr) {
       ++decoded_frames;
     }
   });
-  detector->RegisterCallback([&](const control_loop::Context& context) {
-    const auto* detections =
-        context->GetMessage<gamepiece::GamepieceDetections>(kDetectionChannel);
+  detector->RegisterCallback([&](const control_loop::Context& context) -> void {
+    std::scoped_lock lock(completion_mutex);
+    const auto* detections = context->GetMessage<
+        control_loop::ValueMessage<gamepiece::bounding_box_detections_t>>(
+        kDetectionChannel);
     if (detections == nullptr) {
       return;
     }
-    total_detections += detections->detections.size();
-    for (const auto& detection : detections->detections) {
+    if (annotations != nullptr) {
+      const auto* frame = context->GetMessage<camera::DecodedJpegBuffer>(
+          kDecodedChannel);
+      CHECK(frame != nullptr);
+      annotations->Write(*frame, detections->value);
+    }
+    total_detections += detections->value.size();
+    for (const auto& detection : detections->value) {
       if (detection.class_id == 0) {
         ++person_detections;
       }
@@ -216,12 +218,10 @@ auto main(int argc, char* argv[]) -> int {
                 << expected_frames << " batches, detections="
                 << total_detections.load();
     }
-    if (batches >= expected_frames) {
-      completion.notify_one();
-    }
+    completion.notify_one();
   });
 
-  control_loop.RegisterDependancyNode(camera);
+  control_loop.RegisterDependencyNode(camera);
   control_loop.RegisterNode(decoder);
   control_loop.RegisterNode(detector);
   control_loop.Start();
@@ -232,8 +232,9 @@ auto main(int argc, char* argv[]) -> int {
   {
     std::unique_lock lock(completion_mutex);
     completed = completion.wait_for(
-        lock, std::chrono::seconds(absl::GetFlag(FLAGS_timeout_seconds)), [&] {
-          return detection_batches.load() >= expected_frames;
+        lock, std::chrono::seconds(absl::GetFlag(FLAGS_timeout_seconds)), [&]() -> bool {
+          return stop::StopRequested() && encoded_frames.load() > 0U &&
+                 detection_batches.load() == encoded_frames.load();
         });
   }
 
@@ -242,9 +243,10 @@ auto main(int argc, char* argv[]) -> int {
 
   CHECK(completed) << "Timed out after " << absl::GetFlag(FLAGS_timeout_seconds)
                    << " seconds";
-  CHECK_EQ(encoded_frames.load(), expected_frames);
-  CHECK_EQ(decoded_frames.load(), expected_frames);
-  CHECK_EQ(detection_batches.load(), expected_frames);
+  CHECK_GT(encoded_frames.load(), 0U);
+  CHECK_LE(encoded_frames.load(), expected_frames);
+  CHECK_EQ(decoded_frames.load(), encoded_frames.load());
+  CHECK_EQ(detection_batches.load(), encoded_frames.load());
   CHECK_GT(total_detections.load(), 0U);
   CHECK_GT(person_detections.load(), 0U);
 

@@ -36,9 +36,7 @@
 #include "control_loop/control_loop.h"
 #include "control_loop/rio_clock.h"
 #include "control_loop/thread_pool.h"
-#include "gamepiece/gamepiece_detection.h"
-#include "gamepiece/gamepiece_node.h"
-#include "gamepiece/yolo.h"
+#include "gamepiece/yolo_node.h"
 #include "localization/unambiguous_solver_node.h"
 #include "utils/stop.h"
 
@@ -148,13 +146,10 @@ class TemporaryCalibration final {
   fs::path detector_config_path_;
 };
 
-class AnnotatingDetector final : public gamepiece::ObjectDetector {
+class DetectionAnnotations final {
  public:
-  AnnotatingDetector(std::unique_ptr<gamepiece::ObjectDetector> detector,
-                     fs::path output_directory)
-      : detector_(std::move(detector)),
-        output_directory_(std::move(output_directory)) {
-    CHECK(detector_ != nullptr);
+  explicit DetectionAnnotations(fs::path output_directory)
+      : output_directory_(std::move(output_directory)) {
     CHECK(!fs::exists(output_directory_) || fs::is_empty(output_directory_))
         << "Annotation directory must be new or empty: " << output_directory_;
     fs::create_directories(output_directory_);
@@ -162,10 +157,10 @@ class AnnotatingDetector final : public gamepiece::ObjectDetector {
     CHECK(detections_log_.is_open());
   }
 
-  auto Detect(const cv::cuda::GpuMat& image)
-      -> std::vector<gamepiece::LabeledBoundingBox> override {
-    const std::vector<gamepiece::LabeledBoundingBox> detections =
-        detector_->Detect(image);
+  void Write(const camera::DecodedJpegBuffer& frame,
+             const std::vector<gamepiece::labeled_bounding_box_t>& detections) {
+    const cv::cuda::GpuMat image(frame.height, frame.width, CV_8UC1,
+                               frame.destination.channel[0], frame.stride);
     for (const auto& detection : detections) {
       CHECK_GE(detection.class_id, 0);
       CHECK(std::isfinite(detection.confidence));
@@ -205,11 +200,9 @@ class AnnotatingDetector final : public gamepiece::ObjectDetector {
     filename << std::setfill('0') << std::setw(6) << frame_index_++ << ".jpg";
     CHECK(cv::imwrite((output_directory_ / filename.str()).string(),
                       annotated));
-    return detections;
   }
 
  private:
-  std::unique_ptr<gamepiece::ObjectDetector> detector_;
   fs::path output_directory_;
   std::ofstream detections_log_;
   std::mutex output_mutex_;
@@ -265,13 +258,10 @@ auto main(int argc, char* argv[]) -> int {
                     camera::Extrinsics{calibration.DetectorConfigPath()},
                     localization_loop);
 
-  auto yolo = std::make_unique<gamepiece::Yolo>(model_path.string(),
-                                                std::vector<std::string>{});
-  auto annotating_detector = std::make_unique<AnnotatingDetector>(
-      std::move(yolo), annotation_dir);
-  auto gamepiece_node = std::make_shared<gamepiece::GamepieceNode>(
-      std::move(annotating_detector), kDecodedChannel, kDetectionChannel,
-      DummyIntrinsics(), DummyExtrinsics(), thread_pool);
+  DetectionAnnotations annotations(annotation_dir);
+  auto gamepiece_node = std::make_shared<gamepiece::YoloNode>(
+      kDecodedChannel, kDetectionChannel, model_path.string(),
+      std::vector<std::string>{}, thread_pool);
 
   std::atomic<size_t> encoded_frames = 0;
   std::atomic<size_t> decoded_frames = 0;
@@ -325,9 +315,9 @@ auto main(int argc, char* argv[]) -> int {
   });
   gamepiece_node->RegisterCallback(
       [&](const control_loop::Context& context) -> void {
-        const auto* detections =
-            context->GetMessage<gamepiece::GamepieceDetections>(
-                kDetectionChannel);
+        const auto* detections = context->GetMessage<
+            control_loop::ValueMessage<gamepiece::bounding_box_detections_t>>(
+            kDetectionChannel);
         if (detections == nullptr) {
           return;
         }
@@ -341,12 +331,8 @@ auto main(int argc, char* argv[]) -> int {
         if (context->Exists(std::string(kPositionChannel))) {
           ++unexpected_position_messages;
         }
-        total_detections += detections->detections.size();
-        for (const auto& detection : detections->detections) {
-          CHECK(std::isfinite(detection.pose.X().value()));
-          CHECK(std::isfinite(detection.pose.Y().value()));
-          CHECK(std::isfinite(detection.pose.Z().value()));
-        }
+        total_detections += detections->value.size();
+        annotations.Write(*frame, detections->value);
         std::scoped_lock lock(completion_mutex);
         if (frame->timestamp <= last_gamepiece_timestamp) {
           ++nonmonotonic_frames;
