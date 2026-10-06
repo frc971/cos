@@ -105,6 +105,7 @@ TEST(LogFieldsTest, NetworkTablesMatchesEveryWPILogSampleAndTimestamp) {
     std::unordered_map<std::string, nt::GenericSubscriber> subscribers;
     for (auto topic : network.instance.GetTopics()) {
       const auto name = topic.GetName();
+      EXPECT_TRUE(name.starts_with("/COS/") || name.starts_with("/.schema/")) << name;
       if (name.starts_with("/.schema/")) continue;
       subscribers.emplace(name, topic.GenericSubscribe(
           {.pollStorage = 10, .sendAll = true, .keepDuplicates = true}));
@@ -115,7 +116,7 @@ TEST(LogFieldsTest, NetworkTablesMatchesEveryWPILogSampleAndTimestamp) {
       }
     }
     ASSERT_EQ(subscribers.size(), 37);
-    EXPECT_FALSE(subscribers.contains("composite/ignored"));
+    EXPECT_FALSE(subscribers.contains("/COS/composite/ignored"));
 
     // Two identical samples must survive, and an absent optional must reset
     // its nested fields. The same type on another channel remains independent.
@@ -150,8 +151,11 @@ TEST(LogFieldsTest, NetworkTablesMatchesEveryWPILogSampleAndTimestamp) {
       ASSERT_EQ(samples.at(name).size(), 3) << name;
     }
     std::unordered_map<std::string, std::size_t> counts;
-    wpilog_test::VisitLogValues(path, [&](const auto& name, const auto& record) -> void {
-      if (name.starts_with("/.schema/")) return;
+    wpilog_test::VisitLogValues(path, [&](const auto& published_name,
+        const auto& record) -> void {
+      if (published_name.starts_with("/.schema/")) return;
+      ASSERT_TRUE(published_name.starts_with("/COS/")) << published_name;
+      const auto& name = published_name;
       ASSERT_TRUE(samples.contains(name)) << name;
       const auto index = counts[name]++;
       ASSERT_LT(index, samples.at(name).size()) << name;
@@ -209,10 +213,10 @@ TEST(LogFieldsTest, NetworkTablesMatchesEveryWPILogSampleAndTimestamp) {
     });
     EXPECT_EQ(counts.size(), subscribers.size());
     for (const auto& [name, count] : counts) EXPECT_EQ(count, 3) << name;
-    EXPECT_DOUBLE_EQ(samples.at("first/real")[0].GetDouble(), 2.5);
-    EXPECT_DOUBLE_EQ(samples.at("second/real")[0].GetDouble(), 12.5);
-    EXPECT_DOUBLE_EQ(samples.at("composite/optional/x")[2].GetDouble(), 0);
-    EXPECT_FALSE(samples.at("composite/optional_present")[2].GetBoolean());
+    EXPECT_DOUBLE_EQ(samples.at("/COS/first/real")[0].GetDouble(), 2.5);
+    EXPECT_DOUBLE_EQ(samples.at("/COS/second/real")[0].GetDouble(), 12.5);
+    EXPECT_DOUBLE_EQ(samples.at("/COS/composite/optional/x")[2].GetDouble(), 0);
+    EXPECT_FALSE(samples.at("/COS/composite/optional_present")[2].GetBoolean());
   }
   std::filesystem::remove(path);
 }
@@ -241,7 +245,11 @@ TEST(LogFieldsTest, WritesNativeArraysAndOptionalPrimitivesAndPose3d) {
   }
 
   int pose_arrays = 0;
-  wpilog_test::VisitLogValues(path, [&](const auto& name, const auto& record) -> void {
+  wpilog_test::VisitLogValues(path, [&](const auto& published_name,
+      const auto& record) -> void {
+    if (published_name.starts_with("/.schema/")) return;
+    ASSERT_TRUE(published_name.starts_with("/COS/")) << published_name;
+    const auto name = published_name.substr(5);
     EXPECT_FALSE(name.starts_with("sample/ignored"));
     if (name != "sample/poses")
       return;
@@ -279,8 +287,11 @@ TEST(LogFieldsTest, WritesNativeArraysAndOptionalPrimitivesAndPose3d) {
       }
     }
     int flags = 0, values = 0;
-    wpilog_test::VisitLogValues(path, [&](const auto& name,
-                                          const auto& record) -> void {
+    wpilog_test::VisitLogValues(path, [&](const auto& published_name,
+        const auto& record) -> void {
+      if (published_name.starts_with("/.schema/")) return;
+      ASSERT_TRUE(published_name.starts_with("/COS/")) << published_name;
+      const auto name = published_name.substr(5);
       if (name == "sample/value_present") {
         bool present = false;
         ASSERT_TRUE(record.GetBoolean(&present));
@@ -361,7 +372,11 @@ TEST(LogFieldsTest, WritesNativeArraysAndOptionalPrimitivesAndPose3d) {
     }
   }
   std::unordered_map<std::string, int> counts;
-  wpilog_test::VisitLogValues(path, [&](const auto& name, const auto& record) -> void {
+  wpilog_test::VisitLogValues(path, [&](const auto& published_name,
+      const auto& record) -> void {
+    if (published_name.starts_with("/.schema/")) return;
+    ASSERT_TRUE(published_name.starts_with("/COS/")) << published_name;
+    const auto name = published_name.substr(5);
     const std::string field_name =
         name.starts_with("batch/") ? name.substr(6) : name;
     if (!field_name.starts_with("estimate/"))
@@ -433,7 +448,11 @@ TEST(LogFieldsTest, SameTypeInTwoSubchannelsUsesSeparateEntries) {
   }
 
   std::unordered_set<std::string> written;
-  wpilog_test::VisitLogValues(path, [&](const auto& name, const auto& record) -> void {
+  wpilog_test::VisitLogValues(path, [&](const auto& published_name,
+      const auto& record) -> void {
+    if (published_name.starts_with("/.schema/")) return;
+    ASSERT_TRUE(published_name.starts_with("/COS/")) << published_name;
+    const auto name = published_name.substr(5);
     // Pose3d registration also writes WPILib struct schemas.
     if (!name.starts_with(first + "/") && !name.starts_with(second + "/")) {
       return;
@@ -510,7 +529,11 @@ TEST(LogFieldsTest, ContextDestructionWritesProductionMessagesToRealLog) {
   writer.reset();  // Close the file before reading it back.
 
   std::unordered_set<std::string> written;
-  wpilog_test::VisitLogValues(path, [&](const auto& name, const auto& record) -> void {
+  wpilog_test::VisitLogValues(path, [&](const auto& published_name,
+      const auto& record) -> void {
+    if (published_name.starts_with("/.schema/")) return;
+    ASSERT_TRUE(published_name.starts_with("/COS/")) << published_name;
+    const auto name = published_name.substr(5);
     if (!name.starts_with(first + "/") && !name.starts_with(second + "/") &&
         name != latency + "/latency") {
       return;  // WPILib also stores Pose3d schema records.
@@ -545,9 +568,9 @@ TEST(LogFieldsTest, ContextDestructionWritesProductionMessagesToRealLog) {
   ASSERT_EQ(written,
             (std::unordered_set<std::string>{
                 first + "/tag_ids", first + "/num_tags", first + "/pose",
-                first + "/distances", first + "/variance", second + "/tag_ids",
+                first + "/distances", first + "/variance", first + "/timestamp", second + "/tag_ids",
                 second + "/num_tags", second + "/pose", second + "/distances",
-                second + "/variance", latency + "/latency"}));
+                second + "/variance", second + "/timestamp", latency + "/latency"}));
   // An explicit destination lets a device run retain the verified file.
   if (const char* proof_path = std::getenv("COS_WPILOG_PROOF_PATH")) {
     ASSERT_TRUE(std::filesystem::copy_file(

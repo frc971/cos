@@ -37,6 +37,17 @@
 
 namespace logging {
 
+// Use the same absolute path in NT and WPILog, including for callers that
+// already supply the COS namespace. Context channel names stay unchanged.
+inline auto MakeLogPath(std::string_view channel) -> std::string {
+  while (channel.starts_with('/')) channel.remove_prefix(1);
+  if (channel.starts_with("COS/")) channel.remove_prefix(4);
+  if (channel.empty() || channel == "COS") {
+    throw std::invalid_argument("Logging channel must name a value below COS");
+  }
+  return "/COS/" + std::string(channel);
+}
+
 namespace detail {
 template <typename T>
 struct LogFieldTypes;
@@ -192,7 +203,7 @@ auto RegisterFields(wpi::log::DataLogWriter& log,
     else return message.value;
   };
   std::vector<std::move_only_function<void(const Message&)>> appenders;
-  detail::RegisterValue<Message>(log, instance, std::string(channel), root,
+  detail::RegisterValue<Message>(log, instance, MakeLogPath(channel), root,
                                  paths, appenders);
   return [appenders = std::move(appenders)](
              const control_loop::IMessage& message) mutable -> bool {

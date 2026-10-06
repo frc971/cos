@@ -11,15 +11,12 @@
 #include "control_loop/connect_to_rio.h"
 #include "control_loop/control_loop.h"
 #include "control_loop/thread_pool.h"
-#include "localization/position_estimate_sender_node.h"
 #include "localization/unambiguous_solver_node.h"
 #include "localization/variance_calculator_node.h"
 #include "logging/jpeg_buffer_log_node.h"
 #include "logging/wpilog_writer.h"
-#include "networktables/NetworkTableInstance.h"
 #include "simulation/simulation_position_sender_node.h"
 #include "streamer/jpeg_buffer_streamer_node.h"
-#include "streamer/position_estimate_rio_streamer_node.h"
 #include "utils/stop.h"
 
 using namespace std::chrono_literals;
@@ -42,8 +39,6 @@ void AddCameraPipeline(
     control_loop::ControlLoop& control_loop,
     control_loop::ThreadPool& thread_pool,
     localization::UnambiguousSolverNode& solver_node,
-    const std::shared_ptr<streamer::PositionEstimateRioStreamerNode>&
-        rio_sender_node,
     bool pva_detection, const std::string& log_path) {
   const camera::UVCCameraConfig config{config_path};
   const std::string jpeg_channel = "jpeg_buffer:" + config.name;
@@ -55,7 +50,6 @@ void AddCameraPipeline(
       jpeg_channel, camera::UVCCameraConfig{config_path});
   uvc_camera_node->Start();
   control_loop.RegisterDependencyNode(uvc_camera_node);
-  rio_sender_node->AddCamera(*uvc_camera_node);
 
   auto jpeg_buffer_streamer_node =
       std::make_shared<streamer::JpegBufferStreamerNode>(
@@ -85,6 +79,7 @@ void AddCameraPipeline(
   hardware_apriltag_detector_node->EnableTiming(
       "hardware_apriltag_detections:latency:" + config.name);
 
+  solver_node.AddCameraTimestamp(jpeg_channel);
   solver_node.AddCamera(detections_channel, camera::Intrinsics{config_path},
                         camera::Extrinsics{config_path}, control_loop);
 }
@@ -112,41 +107,30 @@ auto main(int argc, char** argv) -> int {
   solver_node->SetRejectFarTags(false);
   control_loop.RegisterNode(solver_node);
 
-  auto rio_sender_node =
-      std::make_shared<streamer::PositionEstimateRioStreamerNode>(
-          "pose_with_variance", "/COS");
-  control_loop.RegisterNode(rio_sender_node);
-
   int port = 4971;
   const bool pva_detection = absl::GetFlag(FLAGS_pva_detection);
   const std::string image_log_path =
       absl::GetFlag(FLAGS_log_images) ? control_loop::GetLogPath() : "";
   for (const auto& path : paths) {
     AddCameraPipeline(path, port++, control_loop, thread_pool, *solver_node,
-                      rio_sender_node, pva_detection, image_log_path);
+                      pva_detection, image_log_path);
   }
 
-  auto networktables_instance = nt::NetworkTableInstance::Create();
-  networktables_instance.StartServer();
   auto variance_calculator_node =
       std::make_shared<localization::VarianceCalculatorNode>(
           "pose", "pose_with_variance");
   control_loop.RegisterNode(variance_calculator_node);
-  auto position_estimate_sender_node =
-      std::make_shared<localization::PositionEstimateSenderNode>(
-          "pose_with_variance", "Orin/localization", networktables_instance);
-  position_estimate_sender_node->SetLogEstimates(true);
-  control_loop.RegisterNode(position_estimate_sender_node);
-
   auto simulation_position_sender_node =
-      std::make_shared<simulation::SimulationPositionSenderNode>("pose");
+      std::make_shared<simulation::SimulationPositionSenderNode>(
+          "pose_with_variance");
   control_loop.RegisterNode(simulation_position_sender_node);
   if (absl::GetFlag(FLAGS_latency_log)) {
     control_loop.EnableLatencyLog();
   }
 
   auto wpilog_writer = std::make_shared<logging::WPILogWriter>(
-      "/root/vision_bot.wpilog", control_loop.GetLogPublications());
+      (std::filesystem::path(control_loop::GetLogPath()) / "cos.wpilog").string(),
+      control_loop.GetLogPublications());
   control_loop.EnableWPILog(wpilog_writer);
   control_loop.Start();
 
@@ -154,6 +138,4 @@ auto main(int argc, char** argv) -> int {
 
   control_loop.Stop();
   thread_pool.Shutdown();
-  networktables_instance.StopServer();
-  nt::NetworkTableInstance::Destroy(networktables_instance);
 }

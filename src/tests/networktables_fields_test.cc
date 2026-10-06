@@ -29,6 +29,7 @@
 #include "localization/position.h"
 #include "localization/solver_common.h"
 #include "logging/wpilog_writer.h"
+#include "wpilog_test_utils.h"
 
 namespace {
 
@@ -108,10 +109,11 @@ class NetworkTablesFieldsTest : public ::testing::Test {
     // Subscribe to an independent list, rather than discovering the topics
     // created by the writer. A missing publication must fail the test.
     for (const auto& [name, topic] : expected) {
-      subscribers_.emplace(name, instance_.GetTopic(name).GenericSubscribe(
-                                     topic.type, {.pollStorage = 10,
-                                                  .sendAll = true,
-                                                  .keepDuplicates = true}));
+      subscribers_.emplace(
+          name, instance_.GetTopic("/COS/" + name).GenericSubscribe(
+                    topic.type, {.pollStorage = 10,
+                                 .sendAll = true,
+                                 .keepDuplicates = true}));
       // This ntcore version queues an unassigned current value when the
       // publisher exists but has not sent a sample yet.
       for (const auto& initial : subscribers_.at(name).ReadQueue()) {
@@ -123,14 +125,15 @@ class NetworkTablesFieldsTest : public ::testing::Test {
   void CheckTopics(const ExpectedTopics& expected) {
     std::unordered_set<std::string> names;
     for (auto topic : instance_.GetTopics()) {
-      if (!topic.GetName().starts_with("/.schema/"))
-        names.insert(topic.GetName());
+      if (topic.GetName().starts_with("/.schema/")) continue;
+      ASSERT_TRUE(topic.GetName().starts_with("/COS/")) << topic.GetName();
+      names.insert(topic.GetName().substr(5));
     }
     std::unordered_set<std::string> expected_names;
     for (const auto& [name, topic] : expected) {
       SCOPED_TRACE(name);
       expected_names.insert(name);
-      EXPECT_EQ(instance_.GetTopic(name).GetTypeString(), topic.type);
+      EXPECT_EQ(instance_.GetTopic("/COS/" + name).GetTypeString(), topic.type);
     }
     EXPECT_EQ(names, expected_names);
   }
@@ -207,19 +210,19 @@ TEST_F(NetworkTablesFieldsTest,
     writer.Log(context);
     CheckValues(expected);  // Identical samples must remain retrievable.
   }
-  EXPECT_EQ(instance_.GetStructTopic<frc::Pose2d>("native/pose2d")
+  EXPECT_EQ(instance_.GetStructTopic<frc::Pose2d>("/COS/native/pose2d")
                 .Subscribe({})
                 .Get(),
             sample.pose2d);
-  EXPECT_EQ(instance_.GetStructTopic<frc::Pose3d>("native/pose3d")
+  EXPECT_EQ(instance_.GetStructTopic<frc::Pose3d>("/COS/native/pose3d")
                 .Subscribe({})
                 .Get(),
             sample.pose3d);
-  EXPECT_EQ(instance_.GetStructArrayTopic<frc::Pose2d>("native/poses2d")
+  EXPECT_EQ(instance_.GetStructArrayTopic<frc::Pose2d>("/COS/native/poses2d")
                 .Subscribe({})
                 .Get(),
             sample.poses2d);
-  EXPECT_EQ(instance_.GetStructArrayTopic<frc::Pose3d>("native/poses3d")
+  EXPECT_EQ(instance_.GetStructArrayTopic<frc::Pose3d>("/COS/native/poses3d")
                 .Subscribe({})
                 .Get(),
             sample.poses3d);
@@ -231,6 +234,72 @@ TEST_F(NetworkTablesFieldsTest,
                    std::make_unique<control_loop::ValueMessage<int>>(7));
   EXPECT_THROW(writer.Log(empty), std::runtime_error);
   CheckNoNewValues();
+}
+
+TEST_F(NetworkTablesFieldsTest,
+       FinalPoseUsesOneCanonicalRepresentationForNTAndWPILog) {
+  const frc::Pose3d pose{units::meter_t{1}, units::meter_t{2},
+                         units::meter_t{3}, frc::Rotation3d{}};
+  const ExpectedTopics expected{
+      {"pose_with_variance/pose",
+       {.type = "struct:Pose3d", .value = StructValue(pose)}},
+      {"pose_with_variance/variance",
+       {.type = "double", .value = nt::Value::MakeDouble(0.25)}},
+      {"pose_with_variance/timestamp",
+       {.type = "double", .value = nt::Value::MakeDouble(12.5)}},
+      {"pose_with_variance/tag_ids",
+       {.type = "int[]", .value = nt::Value::MakeIntegerArray({7})}},
+      {"pose_with_variance/num_tags",
+       {.type = "int", .value = nt::Value::MakeInteger(1)}},
+      {"pose_with_variance/distances",
+       {.type = "double[]", .value = nt::Value::MakeDoubleArray({4})}}};
+  // Already-prefixed and absolute channels must not create COS/COS aliases.
+  for (const std::string channel :
+       {"pose_with_variance", "/pose_with_variance", "COS/pose_with_variance",
+        "/COS/pose_with_variance"}) {
+    SCOPED_TRACE(channel);
+    subscribers_.clear();
+    const std::vector publications{
+        control_loop::MessageDescriptor::Publication<
+            localization::PositionEstimateMessage>(channel)};
+    logging::WPILogWriter writer(path_.string(), publications, instance_);
+    Subscribe(expected);
+    CheckTopics(expected);
+    {
+      control_loop::ContextInternal context(std::chrono::steady_clock::now(),
+                                            nullptr, std::stop_token{}, 1);
+      auto estimate = std::make_unique<localization::PositionEstimateMessage>();
+      estimate->pose = pose;
+      estimate->variance = 0.25;
+      estimate->timestamp = 12.5;
+      estimate->tag_ids = {7};
+      estimate->num_tags = 1;
+      estimate->distances = {4};
+      context.SetMessage(channel, std::move(estimate));
+      writer.Log(context);
+    }
+    CheckValues(expected);
+    writer.Flush();
+    std::unordered_set<std::string> written;
+    wpilog_test::VisitLogValues(path_, [&](const auto& name,
+                                           const auto& record) -> void {
+      if (name.starts_with("/.schema/")) return;
+      ASSERT_TRUE(name.starts_with("/COS/")) << name;
+      ASSERT_TRUE(expected.contains(name.substr(5))) << name;
+      EXPECT_TRUE(written.insert(name).second) << name;
+      const auto value = instance_.GetTopic(name).GenericSubscribe().Get();
+      EXPECT_EQ(record.GetTimestamp(), value.time());
+      if (name.ends_with("/pose")) {
+        EXPECT_EQ(wpi::UnpackStruct<frc::Pose3d>(record.GetRaw()), pose);
+      } else if (name.ends_with("/variance") || name.ends_with("/timestamp")) {
+        double sample = 0;
+        ASSERT_TRUE(record.GetDouble(&sample));
+        EXPECT_EQ(sample, value.GetDouble());
+      }
+    });
+    EXPECT_EQ(written.size(), expected.size());
+    subscribers_.clear();
+  }
 }
 
 TEST_F(NetworkTablesFieldsTest,
@@ -455,6 +524,9 @@ TEST_F(NetworkTablesFieldsTest,
           ExpectedTopic{.type = "struct:Pose3d",
                         .value = StructValue(left ? left_pose : right_pose)});
       expected.emplace(
+          channel + "/timestamp",
+          ExpectedTopic{.type = "double", .value = nt::Value::MakeDouble(12.5)});
+      expected.emplace(
           channel + "/variance",
           ExpectedTopic{.type = "double",
                         .value = nt::Value::MakeDouble(left ? 0.25 : 0.75)});
@@ -526,6 +598,7 @@ TEST_F(NetworkTablesFieldsTest,
         pose->distances = source.distances;
         pose->pose = source.pose;
         pose->variance = source.variance;
+        pose->timestamp = 12.5;
         context.SetMessage(channel, std::move(pose));
       }
       context.SetMessage("decode/camera1/latency",
@@ -535,11 +608,11 @@ TEST_F(NetworkTablesFieldsTest,
     CheckValues(expected);
   }
   // Image payloads, pointers, detection vectors and corner arrays are omitted.
-  EXPECT_FALSE(instance_.GetTopic("camera/cpu/data").Exists());
-  EXPECT_FALSE(instance_.GetTopic("camera/gpu/destination").Exists());
-  EXPECT_FALSE(instance_.GetTopic("camera/jpeg/ptr").Exists());
-  EXPECT_FALSE(instance_.GetTopic("detections/tag_detections").Exists());
-  EXPECT_FALSE(instance_.GetTopic("tag/corners").Exists());
+  EXPECT_FALSE(instance_.GetTopic("/COS/camera/cpu/data").Exists());
+  EXPECT_FALSE(instance_.GetTopic("/COS/camera/gpu/destination").Exists());
+  EXPECT_FALSE(instance_.GetTopic("/COS/camera/jpeg/ptr").Exists());
+  EXPECT_FALSE(instance_.GetTopic("/COS/detections/tag_detections").Exists());
+  EXPECT_FALSE(instance_.GetTopic("/COS/tag/corners").Exists());
 }
 
 }  // namespace

@@ -15,7 +15,8 @@ namespace logging {
 
 class WPILogWriter {
  public:
-  // Each field is appended to the file and published to the same NT path.
+  // Each field is appended to the file and published to the same absolute
+  // /COS/<channel>/<field> NT path. Primitive messages use /COS/<channel>.
   WPILogWriter(std::string_view filename,
                const std::vector<control_loop::MessageDescriptor>& publications,
                const nt::NetworkTableInstance& instance =
