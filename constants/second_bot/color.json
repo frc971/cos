@@ -1,0 +1,32 @@
+{
+  "name": "dev_orin_color",
+  "camera_type": "uvc",
+  "serial_id": "gamepiece",
+  "height": 800,
+  "width": 1280,
+  "fps": 120,
+  "exposure_time_ms": 157,
+  "auto_exposure": true,
+  "max_payload_size": 1600,
+  "max_frame_size": 2048589,
+  "extrinsics": {
+    "translation_x": 0.0,
+    "translation_y": 0.0,
+    "translation_z": 0.0,
+    "rotation_x": 0.0,
+    "rotation_y": 0.0,
+    "rotation_z": 0.0
+  },
+  "intrinsics": {
+    "cx": 631.1807078641325,
+    "cy": 399.3051603994019,
+    "fx": 905.4343172084684,
+    "fy": 905.0217994058659,
+    "k1": 0.04175770867385965,
+    "k2": -0.07919120051340409,
+    "k3": 0.014128797448067021,
+    "p1": -0.0023943526206403067,
+    "p2": -0.003217715458550516,
+    "calibrated": false
+  }
+}
