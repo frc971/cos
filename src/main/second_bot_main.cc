@@ -29,7 +29,7 @@ ABSL_FLAG(uint, max_context, 1,                                   // NOLINT
 ABSL_FLAG(bool, latency_log, false,                               // NOLINT
           "Log control-loop latency and loops per second");       // NOLINT
 ABSL_FLAG(                                                        // NOLINT
-    bool, log_images, false,                                      // NOLINT
+    bool, log_images, true,                                       // NOLINT
     "Log timestamped JPEG frames to the run's log directory in "  // NOLINT
     "per-camera subfolders");                                     // NOLINT
 
@@ -104,7 +104,8 @@ auto main(int argc, char** argv) -> int {
   const std::vector<std::string> paths{
       "/root/constants/second_bot/front_camera.json",
       "/root/constants/second_bot/left_camera.json",
-      "/root/constants/second_bot/right_camera.json"};
+      "/root/constants/second_bot/right_camera.json",
+      "/root/constants/second_bot/color.json"};
 
   auto solver_node =
       std::make_shared<localization::UnambiguousSolverNode>("pose");

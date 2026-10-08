@@ -2,12 +2,14 @@ add_library(cos.control_loop)
 add_library(cos::control_loop ALIAS cos.control_loop)
 target_sources(cos.control_loop
   PRIVATE
+    context_handoff_node.cc
     control_loop.cc
   PUBLIC
     FILE_SET HEADERS
     BASE_DIRS ${PROJECT_SOURCE_DIR}/src
     FILES
       context.h
+      context_handoff_node.h
       control_loop.h
       message.h
       node.h
@@ -17,6 +19,7 @@ target_compile_options(cos.control_loop PRIVATE
   $<$<CXX_COMPILER_ID:GNU>:-Wno-array-bounds>
 )
 target_link_libraries(cos.control_loop PRIVATE
+  absl::check
   absl::log
   cos::timer
   cos::wpilog_writer
