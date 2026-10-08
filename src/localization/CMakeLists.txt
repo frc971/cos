@@ -88,23 +88,3 @@ target_sources(cos.variance_calculator_node
 target_link_libraries(cos.variance_calculator_node PUBLIC
   cos::localization_solver_common
 )
-
-add_library(cos.position_estimate_sender_node)
-add_library(cos::position_estimate_sender_node ALIAS cos.position_estimate_sender_node)
-target_sources(cos.position_estimate_sender_node
-  PRIVATE
-    position_estimate_sender_node.cc
-  PUBLIC
-    FILE_SET HEADERS
-    BASE_DIRS ${PROJECT_SOURCE_DIR}/src
-    FILES
-      position.h
-      position_estimate_sender_node.h
-)
-target_link_libraries(cos.position_estimate_sender_node
-  PUBLIC
-    wpilibc
-    ntcore
-  PRIVATE
-    absl::log
-)

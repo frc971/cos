@@ -34,9 +34,8 @@ class DecodedJpegFdBuffer final : public control_loop::IMessage {
   int height = 0;
   size_t stride = 0;
   size_t output_size = 0;
-  double timestamp = 0;
   LOG_FIELDS(DecodedJpegFdBuffer, fd, pixel_format, width, height, stride,
-             output_size, timestamp)
+             output_size)
 };
 
 class NvjpegFdDecodeNode final : public control_loop::INode,

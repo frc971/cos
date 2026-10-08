@@ -13,17 +13,17 @@ target_link_libraries(dev_orin_main PRIVATE
   cos::nvjpeg_decode_node
   JPEG::JPEG
   cos::control_loop
+  cos::wpilog_writer
   cos::thread_pool
   cos::cuda_utils
   wpilibc
   cos::nvidia_apriltag_detector_node
   cos::unambiguous_solver_node
   cos::variance_calculator_node
-  cos::position_estimate_sender_node
+  cos::position_estimate_rio_streamer_node
   cos::jpeg_buffer_log_node
   cos::simulation_position_sender_node
   cos::connect_to_rio
-  cos::position_estimate_rio_streamer_node
   ${OpenCV_LIBS}
 )
 
@@ -35,6 +35,7 @@ target_sources(second_bot_sim
 target_link_libraries(second_bot_sim PRIVATE
   cos::jpeg_buffer_streamer_node
   cos::get_earliest_timestamp
+  cos::connect_to_rio
   cos::uvc_disk_camera_node
   cos::uvc_camera_node
   cos::stop
@@ -42,13 +43,13 @@ target_link_libraries(second_bot_sim PRIVATE
   cos::nvjpeg_decode_node
   JPEG::JPEG
   cos::control_loop
+  cos::wpilog_writer
   cos::thread_pool
   cos::cuda_utils
   wpilibc
   cos::nvidia_apriltag_detector_node
   cos::unambiguous_solver_node
   cos::variance_calculator_node
-  cos::position_estimate_sender_node
   cos::jpeg_buffer_log_node
   cos::simulation_position_sender_node
   ${OpenCV_LIBS}
@@ -68,17 +69,17 @@ target_link_libraries(vision_bot_main PRIVATE
   cos::nvjpeg_decode_node
   JPEG::JPEG
   cos::control_loop
+  cos::wpilog_writer
   cos::thread_pool
   cos::cuda_utils
   wpilibc
   cos::nvidia_apriltag_detector_node
   cos::unambiguous_solver_node
   cos::variance_calculator_node
-  cos::position_estimate_sender_node
+  cos::position_estimate_rio_streamer_node
   cos::jpeg_buffer_log_node
   cos::simulation_position_sender_node
   cos::connect_to_rio
-  cos::position_estimate_rio_streamer_node
   ${OpenCV_LIBS}
 )
 
@@ -95,16 +96,16 @@ target_link_libraries(second_bot_main PRIVATE
   cos::nvjpeg_decode_node
   JPEG::JPEG
   cos::control_loop
+  cos::wpilog_writer
   cos::thread_pool
   cos::cuda_utils
   wpilibc
   cos::nvidia_apriltag_detector_node
   cos::unambiguous_solver_node
   cos::variance_calculator_node
-  cos::position_estimate_sender_node
+  cos::position_estimate_rio_streamer_node
   cos::jpeg_buffer_log_node
   cos::simulation_position_sender_node
   cos::connect_to_rio
-  cos::position_estimate_rio_streamer_node
   ${OpenCV_LIBS}
 )

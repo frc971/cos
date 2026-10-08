@@ -82,8 +82,12 @@ TEST(WPILogWriterTest, WritesRegisteredFieldsAndSkipsMissingMessages) {
   const std::unordered_set<std::string> expected_names = {
       "temperature", "pose/pose", "pose/variance", "pose/tag_ids",
       "pose/num_tags",
-      "pose/distances"};
-  wpilog_test::VisitLogValues(path, [&](const auto& name, const auto& record) -> void {
+      "pose/distances", "pose/timestamp"};
+  wpilog_test::VisitLogValues(path, [&](const auto& published_name,
+      const auto& record) -> void {
+    if (published_name.starts_with("/.schema/")) return;
+    ASSERT_TRUE(published_name.starts_with("/COS/")) << published_name;
+    const auto name = published_name.substr(5);
     if (!expected_names.contains(name)) {
       return;
     }
@@ -110,7 +114,7 @@ TEST(WPILogWriterTest, WritesRegisteredFieldsAndSkipsMissingMessages) {
       EXPECT_EQ(distances, (std::vector<double>{1.5, 2.5}));
     }
   });
-  EXPECT_EQ(value_counts.size(), 6);
+  EXPECT_EQ(value_counts.size(), 7);
   for (const auto& [name, count] : value_counts) {
     EXPECT_EQ(count, 1) << name;
   }
@@ -125,7 +129,11 @@ TEST(WPILogWriterTest, FlushesValuesWhileWriterIsActive) {
   const auto has_value = [&](std::int64_t expected) -> bool {
     bool found = false;
     try {
-      wpilog_test::VisitLogValues(path, [&](const auto& name, const auto& record) -> void {
+      wpilog_test::VisitLogValues(path, [&](const auto& published_name,
+          const auto& record) -> void {
+        if (published_name.starts_with("/.schema/")) return;
+        ASSERT_TRUE(published_name.starts_with("/COS/")) << published_name;
+        const auto name = published_name.substr(5);
         if (name != "count") return;
         std::int64_t value = 0;
         if (record.GetInteger(&value) && value == expected) found = true;
@@ -198,7 +206,11 @@ TEST(WPILogWriterTest, ControlLoopUsesExistingWriterAndRetainedContexts) {
   EXPECT_TRUE(weak_writer.expired());
 
   std::vector<std::int64_t> values;
-  wpilog_test::VisitLogValues(path, [&](const auto& name, const auto& record) -> void {
+  wpilog_test::VisitLogValues(path, [&](const auto& published_name,
+      const auto& record) -> void {
+    if (published_name.starts_with("/.schema/")) return;
+    ASSERT_TRUE(published_name.starts_with("/COS/")) << published_name;
+    const auto name = published_name.substr(5);
     if (name != "count") return;
     std::int64_t value = 0;
     ASSERT_TRUE(record.GetInteger(&value));
@@ -231,7 +243,22 @@ TEST(WPILogWriterTest, RejectsDuplicateChannelsAndPaths) {
       control_loop::MessageDescriptor::Publication<IntegerSample>("sample")};
   EXPECT_THROW(logging::WPILogWriter(path.string(), duplicate_paths),
                std::invalid_argument);
+  const std::vector namespace_aliases{
+      control_loop::MessageDescriptor::Publication<int>("sample"),
+      control_loop::MessageDescriptor::Publication<int>("/COS/sample")};
+  EXPECT_THROW(logging::WPILogWriter(path.string(), namespace_aliases),
+               std::invalid_argument);
   std::filesystem::remove(path);
+}
+
+TEST(WPILogWriterTest, RejectsChannelsWithoutANameBelowCOS) {
+  for (const std::string channel : {"", "/", "COS", "/COS/"}) {
+    const std::vector publications{
+        control_loop::MessageDescriptor::Publication<int>(channel)};
+    EXPECT_THROW(logging::WPILogWriter(LogPath().string(), publications),
+                 std::invalid_argument) << channel;
+  }
+  std::filesystem::remove(LogPath());
 }
 
 TEST(WPILogWriterTest, PrimitiveAndAnnotatedIntegersShareCheckedConversion) {
@@ -269,7 +296,11 @@ TEST(WPILogWriterTest, PrimitiveAndAnnotatedIntegersShareCheckedConversion) {
   }
 
   std::unordered_map<std::string, int> counts;
-  wpilog_test::VisitLogValues(path, [&](const auto& name, const auto& record) -> void {
+  wpilog_test::VisitLogValues(path, [&](const auto& published_name,
+      const auto& record) -> void {
+    if (published_name.starts_with("/.schema/")) return;
+    ASSERT_TRUE(published_name.starts_with("/COS/")) << published_name;
+    const auto name = published_name.substr(5);
     if (name != "primitive" && name != "annotated/value") return;
     std::int64_t value = 0;
     ASSERT_TRUE(record.GetInteger(&value));
@@ -309,7 +340,11 @@ TEST(WPILogWriterTest, WritesBuiltInTypesAndPose2d) {
   }
 
   std::unordered_set<std::string> seen;
-  wpilog_test::VisitLogValues(path, [&](const auto& name, const auto& record) -> void {
+  wpilog_test::VisitLogValues(path, [&](const auto& published_name,
+      const auto& record) -> void {
+      if (published_name.starts_with("/.schema/")) return;
+      ASSERT_TRUE(published_name.starts_with("/COS/")) << published_name;
+      const auto name = published_name.substr(5);
       if (name == "ready") {
         bool value = false;
         ASSERT_TRUE(record.GetBoolean(&value));

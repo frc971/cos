@@ -7,17 +7,17 @@
 #include "apriltag/nvidia_apriltag_detector_node.h"
 #include "camera/get_earliest_timestamp.h"
 #include "camera/nvjpeg_fd_decode_node.h"
-#include "camera/uvc_camera_node.h"
+#include "camera/uvc_camera_config.h"
 #include "camera/uvc_disk_camera_node.h"
 #include "control_loop/control_loop.h"
 #include "control_loop/rio_clock.h"
 #include "control_loop/thread_pool.h"
-#include "localization/position_estimate_sender_node.h"
 #include "localization/unambiguous_solver_node.h"
 #include "localization/variance_calculator_node.h"
-#include "networktables/NetworkTableInstance.h"
+#include "logging/wpilog_writer.h"
 #include "simulation/simulation_position_sender_node.h"
 #include "streamer/jpeg_buffer_streamer_node.h"
+#include "control_loop/connect_to_rio.h"
 #include "utils/stop.h"
 
 using namespace std::chrono_literals;
@@ -63,6 +63,7 @@ void AddCameraPipeline(const std::string& config_path,
   hardware_apriltag_detector_node->EnableTiming(
       "hardware_apriltag_detections:latency:" + config.name);
 
+  solver_node.AddCameraTimestamp(jpeg_channel);
   solver_node.AddCamera(detections_channel, camera::Intrinsics{config_path},
                         camera::Extrinsics{config_path}, control_loop);
 }
@@ -75,6 +76,7 @@ auto main(int argc, char** argv) -> int {
   absl::SetStderrThreshold(absl::LogSeverityAtLeast::kInfo);
   stop::RegisterHandler();
   control_loop::RioClock::EnableSimulation();
+  control_loop::StartNetworktablesAsHost();
 
   control_loop::ControlLoop control_loop(100ms);
   control_loop::ThreadPool thread_pool;
@@ -104,28 +106,23 @@ auto main(int argc, char** argv) -> int {
                     camera_log_paths[2], replay_offset, 5803, control_loop,
                     thread_pool, *solver_node);
 
-  auto networktables_instance = nt::NetworkTableInstance::Create();
-  networktables_instance.StartServer();
   auto variance_calculator_node =
       std::make_shared<localization::VarianceCalculatorNode>(
           "pose", "pose_with_variance");
   control_loop.RegisterNode(variance_calculator_node);
-  auto position_estimate_sender_node =
-      std::make_shared<localization::PositionEstimateSenderNode>(
-          "pose_with_variance", "Orin/localization", networktables_instance);
-  position_estimate_sender_node->SetLogEstimates(true);
-  control_loop.RegisterNode(position_estimate_sender_node);
-
   auto simulation_position_sender_node =
-      std::make_shared<simulation::SimulationPositionSenderNode>("pose");
+      std::make_shared<simulation::SimulationPositionSenderNode>(
+          "pose_with_variance");
   control_loop.RegisterNode(simulation_position_sender_node);
 
+  auto wpilog_writer = std::make_shared<logging::WPILogWriter>(
+      (std::filesystem::path(control_loop::GetLogPath()) / "cos.wpilog").string(),
+      control_loop.GetLogPublications());
+  control_loop.EnableWPILog(wpilog_writer);
   control_loop.Start();
 
   stop::WaitUntilStop();
 
   control_loop.Stop();
   thread_pool.Shutdown();
-  networktables_instance.StopServer();
-  nt::NetworkTableInstance::Destroy(networktables_instance);
 }

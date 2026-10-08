@@ -94,7 +94,7 @@ auto SimulationPositionSenderNode::CreateCallback()
       connectedClients = clients_;
     }
     for (const auto& client : connectedClients) {
-      client->send(GetPoseString(pose->pose));
+      client->send(GetPoseString(pose->pose, pose->timestamp));
     }
 
     for (const auto& callback : callbacks_) {

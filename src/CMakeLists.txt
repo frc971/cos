@@ -1,6 +1,7 @@
 include_directories(SYSTEM
   ${CMAKE_SYSROOT}/usr/include/wpimath
   ${CMAKE_SYSROOT}/usr/include/wpiutil
+  ${CMAKE_SYSROOT}/usr/include/ntcore
   ${CMAKE_SYSROOT}/usr/include/eigen3
   ${PROJECT_SOURCE_DIR}/third_party/json/include
 )

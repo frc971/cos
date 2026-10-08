@@ -1,7 +1,8 @@
 #pragma once
 #include <string>
 namespace control_loop {
-// Sets up logging and networktables. Should be called at the beggining of every robot's main
+// Sets up NetworkTables and publishes the run log directory.
+// Call at the beginning of every robot main; WPILogWriter records publications.
 void StartNetworktables(int team_number = 971);
 void StartNetworktablesAsHost();
 // Creates the log directory on first use and returns the same path thereafter.
