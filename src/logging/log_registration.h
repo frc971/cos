@@ -1,7 +1,9 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <functional>
 #include <limits>
@@ -141,7 +143,8 @@ void RegisterValue(wpi::log::DataLogWriter& log,
                    const nt::NetworkTableInstance& instance,
                    const std::string& path,
                    Getter getter, std::vector<std::string>& paths,
-                   std::vector<std::move_only_function<void(const Root&)>>& fields) {
+                   std::vector<std::move_only_function<void(
+                       const Root&, std::optional<std::int64_t>)>>& fields) {
   using Value = std::remove_cvref_t<std::invoke_result_t<Getter, const Root&>>;
   if constexpr (IsOptional<Value>::value) {
     using Element = typename Value::value_type;
@@ -181,11 +184,13 @@ void RegisterValue(wpi::log::DataLogWriter& log,
         entry = Entry(log, path),
         publisher = Topic(instance.GetTopic(path)).Publish(
             {.sendAll = true, .keepDuplicates = true}),
-        getter = std::move(getter)](const Root& message) mutable -> void {
+        getter = std::move(getter)](const Root& message,
+                                   std::optional<std::int64_t> timestamp)
+                                   mutable -> void {
       const auto value = NormalizeLogValue(getter(message));
-      const auto timestamp = nt::Now();
-      entry.Append(value, timestamp);
-      publisher.Set(value, timestamp);
+      if (!timestamp) return;
+      entry.Append(value, *timestamp);
+      publisher.Set(value, *timestamp);
     });
   }
 }
@@ -202,14 +207,33 @@ auto RegisterFields(wpi::log::DataLogWriter& log,
     if constexpr (std::is_same_v<T, Message>) return message;
     else return message.value;
   };
-  std::vector<std::move_only_function<void(const Message&)>> appenders;
+  std::vector<std::move_only_function<void(
+      const Message&, std::optional<std::int64_t>)>> appenders;
   detail::RegisterValue<Message>(log, instance, MakeLogPath(channel), root,
                                  paths, appenders);
-  return [appenders = std::move(appenders)](
-             const control_loop::IMessage& message) mutable -> bool {
+  return [appenders = std::move(appenders), instance](
+             const control_loop::IMessage& message,
+             std::optional<double> capture_time) mutable -> bool {
     const auto* typed = dynamic_cast<const Message*>(&message);
     if (typed == nullptr) return false;
-    for (auto& append : appenders) append(*typed);
+    std::optional<std::int64_t> timestamp;
+    if (capture_time) {
+      // Capture times use the server clock; NT Set() expects the local clock
+      // and applies the server offset when transmitting the sample.
+      const double local_time = *capture_time * 1'000'000.0 -
+                                instance.GetServerTimeOffset().value_or(0);
+      if (std::isfinite(local_time) && local_time >= 0 &&
+          local_time <
+              static_cast<double>(std::numeric_limits<std::int64_t>::max())) {
+        // Zero asks NT/WPILog to substitute the current time. Represent the
+        // capture at the clock origin with the nearest explicit timestamp.
+        timestamp =
+            std::max<std::int64_t>(1, static_cast<std::int64_t>(local_time));
+      }
+    } else {
+      timestamp = nt::Now();
+    }
+    for (auto& append : appenders) append(*typed, timestamp);
     return true;
   };
 }

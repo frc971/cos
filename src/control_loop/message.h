@@ -14,7 +14,8 @@ namespace wpi::log { class DataLogWriter; }
 namespace nt { class NetworkTableInstance; }
 namespace control_loop { class IMessage; }
 namespace logging {
-using LogFunction = std::move_only_function<bool(const control_loop::IMessage&)>;
+using LogFunction = std::move_only_function<bool(
+    const control_loop::IMessage&, std::optional<double>)>;
 template <typename T>
 auto RegisterFields(wpi::log::DataLogWriter&, const nt::NetworkTableInstance&,
                     std::string_view,

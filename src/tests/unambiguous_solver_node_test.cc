@@ -103,6 +103,7 @@ auto main(int argc, char** argv) -> int {
     gpu_apriltag_detector_node->EnableTiming(
         prefix + "/hardware_apriltag_detections:latency");
 
+    solver_node->AddCameraTimestamp(jpeg_channel);
     solver_node->AddCamera(detections_channel, camera::Intrinsics{config_path},
                            camera::Extrinsics{config_path}, control_loop);
   }

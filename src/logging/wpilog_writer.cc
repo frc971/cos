@@ -1,6 +1,7 @@
 #include "logging/wpilog_writer.h"
 
 #include <chrono>
+#include <cmath>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -8,6 +9,9 @@
 #include <utility>
 
 #include <wpi/raw_ostream.h>
+
+#include "camera/jpeg_buffer.h"
+#include "localization/position.h"
 
 namespace logging {
 
@@ -64,11 +68,33 @@ WPILogWriter::WPILogWriter(
 
 void WPILogWriter::Log(const control_loop::ContextInternal& context) {
   std::scoped_lock lock(mutex_);
+  double total_capture_time = 0;
+  std::size_t frame_count = 0;
+  for (const auto* frame : context.GetMessages<camera::JpegBuffer>()) {
+    if (std::isfinite(frame->timestamp) && frame->timestamp >= 0) {
+      total_capture_time += frame->timestamp;
+      ++frame_count;
+    }
+  }
+  std::optional<double> capture_time;
+  if (frame_count != 0) capture_time = total_capture_time / frame_count;
   for (auto& group : publications_) {
     const auto* message =
         context.GetMessage<control_loop::IMessage>(group.channel);
     if (message == nullptr) continue;
-    if (!group.append(*message)) {
+    auto sample_capture_time = capture_time;
+    if (const auto* frame = dynamic_cast<const camera::JpegBuffer*>(message);
+        frame != nullptr && std::isfinite(frame->timestamp) &&
+        frame->timestamp >= 0) {
+      sample_capture_time = frame->timestamp;
+    } else if (const auto* pose =
+                   dynamic_cast<const localization::PositionEstimateMessage*>(
+                       message);
+               pose != nullptr && std::isfinite(pose->timestamp) &&
+               pose->timestamp > 0) {
+      sample_capture_time = pose->timestamp;
+    }
+    if (!group.append(*message, sample_capture_time)) {
       throw std::runtime_error("WPILog message type mismatch: " +
                                group.channel);
     }

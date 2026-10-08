@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <initializer_list>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -289,6 +290,7 @@ TEST_F(NetworkTablesFieldsTest,
       EXPECT_TRUE(written.insert(name).second) << name;
       const auto value = instance_.GetTopic(name).GenericSubscribe().Get();
       EXPECT_EQ(record.GetTimestamp(), value.time());
+      EXPECT_EQ(value.time(), 12'500'000);
       if (name.ends_with("/pose")) {
         EXPECT_EQ(wpi::UnpackStruct<frc::Pose3d>(record.GetRaw()), pose);
       } else if (name.ends_with("/variance") || name.ends_with("/timestamp")) {
@@ -299,6 +301,40 @@ TEST_F(NetworkTablesFieldsTest,
     });
     EXPECT_EQ(written.size(), expected.size());
     subscribers_.clear();
+  }
+}
+
+TEST_F(NetworkTablesFieldsTest, UsesImageTimeAndFallsBackWithoutValidImages) {
+  const std::vector publications{
+      control_loop::MessageDescriptor::Publication<double>("sample")};
+  logging::WPILogWriter writer(path_.string(), publications, instance_);
+  auto subscriber = instance_.GetDoubleTopic("/COS/sample").Subscribe(0);
+  const std::vector<std::vector<double>> frame_times{
+      {0}, {12, 16}, {}, {std::numeric_limits<double>::quiet_NaN(), -1}};
+  for (std::size_t i = 0; i < frame_times.size(); ++i) {
+    control_loop::ContextInternal context(std::chrono::steady_clock::now(),
+                                        nullptr, std::stop_token{}, i);
+    for (std::size_t j = 0; j < frame_times[i].size(); ++j) {
+      context.SetMessage("jpeg/" + std::to_string(j),
+                         std::make_unique<camera::JpegBuffer>(
+                             0, frame_times[i][j]));
+    }
+    context.SetMessage("sample",
+                       std::make_unique<control_loop::ValueMessage<double>>(
+                           static_cast<double>(i + 1)));
+    const auto before = nt::Now();
+    writer.Log(context);
+    const auto after = nt::Now();
+    const auto value = subscriber.GetAtomic();
+    EXPECT_EQ(value.value, i + 1);
+    if (i == 1) {
+      EXPECT_EQ(value.time, 14'000'000);
+    } else if (i == 0) {
+      EXPECT_EQ(value.time, 1);
+    } else {
+      EXPECT_GE(value.time, before);
+      EXPECT_LE(value.time, after);
+    }
   }
 }
 
@@ -458,8 +494,6 @@ TEST_F(NetworkTablesFieldsTest,
          {.type = "int", .value = nt::Value::MakeInteger(480)}},
         {"camera/cpu/stride",
          {.type = "int", .value = nt::Value::MakeInteger(640)}},
-        {"camera/cpu/timestamp",
-         {.type = "double", .value = nt::Value::MakeDouble(12.5)}},
         {"camera/gpu/width",
          {.type = "int", .value = nt::Value::MakeInteger(640)}},
         {"camera/gpu/height",
@@ -468,8 +502,6 @@ TEST_F(NetworkTablesFieldsTest,
          {.type = "int", .value = nt::Value::MakeInteger(640)}},
         {"camera/gpu/output_size",
          {.type = "int", .value = nt::Value::MakeInteger(307200)}},
-        {"camera/gpu/timestamp",
-         {.type = "double", .value = nt::Value::MakeDouble(12.5)}},
         {"camera/gpu/output_format",
          {.type = "int", .value = nt::Value::MakeInteger(NVJPEG_OUTPUT_Y)}},
         {"camera/gpu/channel_sizes",
@@ -486,8 +518,6 @@ TEST_F(NetworkTablesFieldsTest,
          {.type = "int", .value = nt::Value::MakeInteger(640)}},
         {"camera/fd/output_size",
          {.type = "int", .value = nt::Value::MakeInteger(307200)}},
-        {"camera/fd/timestamp",
-         {.type = "double", .value = nt::Value::MakeDouble(12.5)}},
         {"tag/tag_id", {.type = "int", .value = nt::Value::MakeInteger(9)}},
         {"decode/camera1/latency/latency",
          {.type = "double", .value = nt::Value::MakeDouble(0.012)}}};
@@ -540,18 +570,23 @@ TEST_F(NetworkTablesFieldsTest,
                                             writer);
       context.SetMessage("camera/jpeg",
                          std::make_unique<camera::JpegBuffer>(4, 12.5));
+      // These frames do not need logging registrations to contribute to
+      // capture time. Invalid frame times must not affect the mean.
+      context.SetMessage("other/jpeg",
+                         std::make_unique<camera::JpegBuffer>(0, 16));
+      context.SetMessage("invalid/jpeg",
+                         std::make_unique<camera::JpegBuffer>(
+                             0, std::numeric_limits<double>::quiet_NaN()));
       auto cpu = std::make_unique<camera::DecodedImageBuffer>();
       cpu->width = 640;
       cpu->height = 480;
       cpu->stride = 640;
-      cpu->timestamp = 12.5;
       cpu->data = {1, 2, 3};
       context.SetMessage("camera/cpu", std::move(cpu));
       auto gpu = std::make_unique<camera::DecodedJpegBuffer>();
       gpu->width = 640;
       gpu->height = 480;
       gpu->stride = 640;
-      gpu->timestamp = 12.5;
       gpu->output_size = 307200;
       gpu->channel_sizes[0] = 307200;
       context.SetMessage("camera/gpu", std::move(gpu));
@@ -559,7 +594,6 @@ TEST_F(NetworkTablesFieldsTest,
       fd->width = 640;
       fd->height = 480;
       fd->stride = 640;
-      fd->timestamp = 12.5;
       fd->output_size = 307200;
       fd->pixel_format = 0x3231564e;
       context.SetMessage("camera/fd", std::move(fd));
@@ -606,6 +640,12 @@ TEST_F(NetworkTablesFieldsTest,
                              std::chrono::duration<double>(0.012)));
     }  // The destructor is the only call to writer->Log().
     CheckValues(expected);
+    for (const auto& [name, topic] : expected) {
+      const bool has_own_timestamp = name.starts_with("camera/jpeg/") ||
+                                    name.starts_with("localization/");
+      EXPECT_EQ(subscribers_.at(name).Get().time(),
+                has_own_timestamp ? 12'500'000 : 14'250'000) << name;
+    }
   }
   // Image payloads, pointers, detection vectors and corner arrays are omitted.
   EXPECT_FALSE(instance_.GetTopic("/COS/camera/cpu/data").Exists());

@@ -17,6 +17,8 @@ class WPILogWriter {
  public:
   // Each field is appended to the file and published to the same absolute
   // /COS/<channel>/<field> NT path. Primitive messages use /COS/<channel>.
+  // Samples use their JPEG/pose capture time, otherwise the context's mean
+  // JPEG capture time. Contexts without valid images fall back to NT time.
   WPILogWriter(std::string_view filename,
                const std::vector<control_loop::MessageDescriptor>& publications,
                const nt::NetworkTableInstance& instance =

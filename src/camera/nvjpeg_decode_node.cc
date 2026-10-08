@@ -96,7 +96,6 @@ DecodedJpegBuffer::DecodedJpegBuffer(DecodedJpegBuffer&& other) noexcept
       height(other.height),
       stride(other.stride),
       output_size(other.output_size),
-      timestamp(other.timestamp),
       output_format(other.output_format),
       channel_sizes(other.channel_sizes),
       destination(other.destination) {
@@ -246,7 +245,6 @@ auto NvjpegDecodeNode::DecodeJpegBuffer(const JpegBuffer* const jpeg_buffer)
   }
 
   DecodedJpegBuffer decoded_buffer{};
-  decoded_buffer.timestamp = jpeg_buffer->timestamp;
 
   ConfigureDestination(&decoded_buffer, output_format_, components, widths,
                        heights);

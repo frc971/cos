@@ -8,6 +8,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <vector>
 
 #include "control_loop/message.h"
 
@@ -53,6 +54,18 @@ struct ContextInternal {
   void SetMessage(std::string_view path, std::unique_ptr<IMessage> message) {
     std::scoped_lock lock(messages_mutex_);
     messages_.emplace(path, std::move(message));
+  }
+
+  template <typename T>
+  auto GetMessages() const -> std::vector<const T*> {
+    std::scoped_lock lock(messages_mutex_);
+    std::vector<const T*> result;
+    for (const auto& [path, message] : messages_) {
+      if (const auto* typed = dynamic_cast<const T*>(message.get())) {
+        result.push_back(typed);
+      }
+    }
+    return result;
   }
 
   auto GetSize() -> size_t {
