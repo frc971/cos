@@ -6,44 +6,12 @@
 
 #include <networktables/NetworkTableInstance.h>
 #include <networktables/StringTopic.h>
-#include <ntcore/networktables/NetworkTableInstance.h>
-#include <wpi/DataLogBackgroundWriter.h>
 #include <chrono>
 #include <filesystem>
-#include <memory>
 #include <thread>
 
 namespace control_loop {
 namespace {
-class NetworkTablesDataLogger {
- public:
-  NetworkTablesDataLogger(nt::NetworkTableInstance instance,
-                          const std::string& log_path)
-      : instance_(instance), log_(log_path, "networktables.wpilog") {
-    entry_logger_ = instance_.StartEntryDataLog(log_, "", "NT:");
-    connection_logger_ = instance_.StartConnectionDataLog(log_, "NTConnection");
-  }
-
-  ~NetworkTablesDataLogger() {
-    nt::NetworkTableInstance::StopEntryDataLog(entry_logger_);
-    nt::NetworkTableInstance::StopConnectionDataLog(connection_logger_);
-  }
-
- private:
-  nt::NetworkTableInstance instance_;
-  wpi::log::DataLogBackgroundWriter log_;
-  NT_DataLogger entry_logger_;
-  NT_ConnectionDataLogger connection_logger_;
-};
-
-void StartLogging(nt::NetworkTableInstance instance,
-                  const std::string& log_path) {
-  static std::unique_ptr<NetworkTablesDataLogger> logger;
-  if (!logger) {
-    logger = std::make_unique<NetworkTablesDataLogger>(instance, log_path);
-  }
-}
-
 // Publishes logname such as log32 to networktables so we can easily find match logs
 void PublishLogName(const std::string& path) {
   static auto log_name_publisher = nt::NetworkTableInstance::GetDefault()
@@ -68,7 +36,6 @@ void StartNetworktables(int team_number) {
   inst.StartDSClient();
   const std::string& log_path = GetLogPath();
   LOG(INFO) << "Log path: " << log_path;
-  StartLogging(inst, log_path);
 
   LOG(INFO) << "Team number: " << team_number;
   LOG(INFO) << "Waiting for connection and time synchronization";
@@ -92,7 +59,7 @@ void StartNetworktablesAsHost() {
   inst.StartServer("orin_localization");
   const std::string& log_path = GetLogPath();
   LOG(INFO) << "Log path: " << log_path;
-  StartLogging(inst, log_path);
+  PublishLogName(log_path);
 }
 
 auto GetNewLogPath(const std::string& log_dir) -> std::string {

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# An rsync remote shell, also used for ordinary Orin commands. Nothing is copied
+# Deploy the current checkout, or act as an rsync remote shell. Nothing is copied
 # to the Mac: its SSH client carries stdin/stdout to the Orin using the Mac's key.
 set -euo pipefail
 
@@ -21,11 +21,36 @@ ssh_options=(
 )
 
 if [[ ${1:-} == --help || ${1:-} == -h ]]; then
-    printf 'Usage: %s [USER@HOST [COMMAND ...]]\nDefault: root@10.9.71.11 through yasen@yasen-mbp\nOverride Mac: COS_DEPLOY_VIA=USER@HOST\n' "$0"
+    printf 'Usage: %s [--vision | USER@HOST [COMMAND ...]]\nBuild and deploy the current checkout (run from its root).\nDefault: root@10.9.71.11 through yasen@yasen-mbp\nVision: root@10.89.71.11\nExplicit SSH arguments select transport mode for commands or rsync.\nOverride Mac: COS_DEPLOY_VIA=USER@HOST\n' "$0"
     exit 0
 fi
-if (($# == 0)); then
-    set -- root@10.9.71.11
+if (($# == 0)) || [[ ${1:-} == --vision ]]; then
+    if (($# > 1)); then
+        printf 'Deployment accepts only --vision; use USER@HOST for remote commands.\n' >&2
+        exit 2
+    fi
+    if [[ ! -f CMakeLists.txt || ! -x ./scripts/build.sh ]]; then
+        printf 'Run deployment from the checkout root containing ./scripts/build.sh.\n' >&2
+        exit 2
+    fi
+
+    destination=root@10.9.71.11
+    if [[ ${1:-} == --vision ]]; then
+        destination=root@10.89.71.11
+    fi
+    transport="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/$(basename -- "${BASH_SOURCE[0]}")"
+    # rsync parses -e itself; double quotes preserve spaces in the script path.
+    rsync_shell="bash \"${transport//\"/\"\"}\""
+
+    ./scripts/build.sh
+    printf 'Deploying %s to %s through %s\n' "$PWD" "$destination" "$via"
+    "$transport" "$destination" 'mkdir -p /root'
+    for directory in tests main examples tools lib; do
+        rsync -avz --delete -e "$rsync_shell" "build/$directory/" "$destination:/root/$directory/"
+    done
+    rsync -avz --delete -e "$rsync_shell" constants/ "$destination:/root/constants/"
+    rsync -avz -e "$rsync_shell" systemd/ "$destination:/etc/systemd/system/"
+    exit 0
 fi
 
 # SSH sends its remote command through the Mac's login shell. Quote each inner

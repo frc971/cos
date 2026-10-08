@@ -33,6 +33,8 @@ class UnambiguousSolverNode final : public control_loop::INode {
 
   auto Solve(const std::vector<ambiguous_estimate_t*>& estimates,
              bool reject_far_tags = true) -> std::optional<position_estimate_t>;
+  // Register the JPEG channel used to timestamp the fused pose.
+  void AddCameraTimestamp(std::string_view jpeg_channel);
   void AddCamera(std::string_view input_channel,
                  const camera::Intrinsics& intrinsics,
                  const camera::Extrinsics& extrinsics,
@@ -53,6 +55,7 @@ class UnambiguousSolverNode final : public control_loop::INode {
       bool reject_far_tags) -> std::vector<ambiguous_estimate_t>;
 
   std::string output_channel_;
+  std::vector<std::string> camera_timestamp_channels_;
   frc::AprilTagFieldLayout layout_;
   std::vector<std::string> detection_batch_channels_;
   struct PendingDetectionBatch {
