@@ -7,4 +7,4 @@ cd "$repo_root"
 
 git submodule update --init --recursive
 ./scripts/build.sh
-cmake --build build --target dev-orin
+cmake --build build --target second-bot

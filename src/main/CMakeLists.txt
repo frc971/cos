@@ -20,6 +20,7 @@ target_link_libraries(dev_orin_main PRIVATE
   cos::nvidia_apriltag_detector_node
   cos::unambiguous_solver_node
   cos::variance_calculator_node
+  cos::position_estimate_rio_streamer_node
   cos::jpeg_buffer_log_node
   cos::simulation_position_sender_node
   cos::connect_to_rio
@@ -75,6 +76,7 @@ target_link_libraries(vision_bot_main PRIVATE
   cos::nvidia_apriltag_detector_node
   cos::unambiguous_solver_node
   cos::variance_calculator_node
+  cos::position_estimate_rio_streamer_node
   cos::jpeg_buffer_log_node
   cos::simulation_position_sender_node
   cos::connect_to_rio
@@ -101,6 +103,7 @@ target_link_libraries(second_bot_main PRIVATE
   cos::nvidia_apriltag_detector_node
   cos::unambiguous_solver_node
   cos::variance_calculator_node
+  cos::position_estimate_rio_streamer_node
   cos::jpeg_buffer_log_node
   cos::simulation_position_sender_node
   cos::connect_to_rio
