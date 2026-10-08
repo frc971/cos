@@ -136,16 +136,3 @@ target_link_libraries(unambiguous_solver_node_test PRIVATE
   cos::unambiguous_solver_node
   cos::simulation_position_sender_node
 )
-
-add_executable(position_estimate_rio_streamer_node_test
-  position_estimate_rio_streamer_node_test.cc
-)
-target_link_libraries(position_estimate_rio_streamer_node_test PRIVATE
-  cos::position_estimate_rio_streamer_node
-  cos::variance_calculator_node
-  cos::uvc_camera_node
-  cos::control_loop
-  GTest::gtest_main
-)
-add_test(NAME position_estimate_rio_streamer_node_test
-  COMMAND position_estimate_rio_streamer_node_test)

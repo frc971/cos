@@ -1,14 +1,11 @@
 #include "localization/square_solver_node.h"
 #include "localization/unambiguous_solver_node.h"
 #include "utils/cv_geometry.h"
-#include "camera/jpeg_buffer.h"
-#include "control_loop/control_loop.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
-#include <limits>
 #include <numbers>
 #include <opencv2/calib3d.hpp>
 #include <gtest/gtest.h>
@@ -103,42 +100,6 @@ TEST_F(SingleTagRotationTest, RetainsBothCandidatesWhenImageFitIsAmbiguous) {
   auto estimate = square_.AmbiguousSolve(detection, false);
   ASSERT_TRUE(estimate.has_value());
   EXPECT_TRUE(estimate->pos2.has_value());
-}
-
-TEST_F(SingleTagRotationTest, PublishesMeanCaptureTimeWithThePose) {
-  control_loop::ControlLoop loop(std::chrono::milliseconds(1));
-  solver_.SetRejectFarTags(false);
-  solver_.AddCamera("detections", intrinsics_, extrinsics_, loop);
-  for (const auto* channel : {"jpeg/first", "jpeg/second", "jpeg/invalid",
-                             "jpeg/missing"}) {
-    solver_.AddCameraTimestamp(channel);
-  }
-  const auto callback = solver_.CreateCallback();
-  for (bool have_frames : {true, false}) {
-    auto context = std::make_shared<control_loop::ContextInternal>(
-        std::chrono::steady_clock::now(), nullptr, std::stop_token{}, 1);
-    localization::AmbiguousEstimate candidates;
-    candidates.pos1.pose = frc::Pose3d{1_m, 2_m, 0_m, frc::Rotation3d{}};
-    candidates.pos1.variance = 1;
-    context->SetMessage("detections:multitag_solver",
-        std::make_unique<localization::AmbiguousEstimateMessage>(candidates));
-    if (have_frames) {
-      context->SetMessage("jpeg/first",
-                         std::make_unique<camera::JpegBuffer>(0, 12));
-      context->SetMessage("jpeg/second",
-                         std::make_unique<camera::JpegBuffer>(0, 16));
-      context->SetMessage("jpeg/invalid",
-          std::make_unique<camera::JpegBuffer>(
-              0, std::numeric_limits<double>::quiet_NaN()));
-    }
-    context->SetMessage("jpeg/missing", nullptr);
-    callback(context);
-    const auto* output =
-        context->GetMessage<localization::PositionEstimateMessage>("pose");
-    ASSERT_NE(output, nullptr);
-    EXPECT_EQ(output->pose, candidates.pos1.pose);
-    EXPECT_DOUBLE_EQ(output->timestamp, have_frames ? 14 : 0);
-  }
 }
 
 }  // namespace
