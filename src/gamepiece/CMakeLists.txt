@@ -17,6 +17,17 @@ target_include_directories(yolo_inference PUBLIC
   ${CMAKE_SOURCE_DIR}/src
 )
 
+add_library(image_utils)
+target_sources(image_utils PRIVATE
+  image_utils.cc
+)
+target_link_libraries(image_utils PUBLIC
+  ${OpenCV_LIBS}
+)
+target_include_directories(image_utils PUBLIC
+  ${CMAKE_SOURCE_DIR}/src
+)
+
 add_library(gamepiece INTERFACE)
 target_link_libraries(gamepiece INTERFACE
   yolo_inference
