@@ -1,23 +1,16 @@
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
 
+add_executable(context_handoff_node_test context_handoff_node_test.cc)
+target_link_libraries(context_handoff_node_test PRIVATE
+  cos::control_loop GTest::gtest_main)
+add_test(NAME context_handoff_node_test COMMAND context_handoff_node_test)
+
 add_executable(yolo_node_test yolo_node_test.cc)
 target_link_libraries(yolo_node_test PRIVATE
   yolo_inference
   GTest::gtest_main
 )
 add_test(NAME yolo_node_test COMMAND yolo_node_test)
-
-# Device replay test: requires a real TensorRT engine and timestamped JPEGs.
-add_executable(full_gamepiece_pipeline_test full_gamepiece_pipeline_test.cc)
-target_link_libraries(full_gamepiece_pipeline_test PRIVATE
-  gamepiece
-  cos::uvc_disk_camera_node
-  cos::get_earliest_timestamp
-  cos::rio_clock
-  cos::stop
-  absl::flags_parse
-  absl::log_initialize
-)
 
 add_executable(full_robot_gamepiece_pipeline_test
   full_robot_gamepiece_pipeline_test.cc)
