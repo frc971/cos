@@ -45,10 +45,8 @@ auto ContextHandoffNode::CreateCallback()
       state_->cv.wait(lock,
                       [this] -> bool { return state_->holds_new_message_; });
       for (std::size_t i = 0; i < publications_.size(); ++i) {
-        if (state_->messages[i]) {
-          context->SetMessage(publications_[i].GetChannel(),
-                              std::move(state_->messages[i]));
-        }
+        context->SetMessage(publications_[i].GetChannel(),
+                            std::move(state_->messages[i]));
       }
       state_->holds_new_message_ = false;
     }
