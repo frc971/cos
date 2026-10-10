@@ -9,6 +9,8 @@ struct Intrinsics {
   [[nodiscard]] auto ToMatrix() const -> cv::Mat;
   [[nodiscard]] auto ToDistortionCoefficients() const -> cv::Mat;
 
+  int width;
+  int height;
   double cx;
   double cy;
   double fx;

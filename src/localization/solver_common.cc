@@ -5,6 +5,20 @@
 
 namespace localization {
 
+auto TagCornersInsideImage(const tag_detection_t& detection, int width,
+                           int height) -> bool {
+  constexpr double kBorderMarginPixels = 8.0;
+  for (const auto& corner : detection.corners) {
+    if (!std::isfinite(corner.x) || !std::isfinite(corner.y) ||
+        corner.x < kBorderMarginPixels || corner.y < kBorderMarginPixels ||
+        corner.x > width - 1 - kBorderMarginPixels ||
+        corner.y > height - 1 - kBorderMarginPixels) {
+      return false;
+    }
+  }
+  return true;
+}
+
 auto Variance(int num_tags, double distance, double min_variance,
               double scalar) -> double {
   return distance * scalar / (num_tags * num_tags) + min_variance;

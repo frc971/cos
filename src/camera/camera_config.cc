@@ -16,6 +16,10 @@ Intrinsics::Intrinsics(const std::filesystem::path& path) {
   nlohmann::json json;
   intrinsics_file >> json;
 
+  width = json.at("width").get<int>();
+  height = json.at("height").get<int>();
+  CHECK_GT(width, 0);
+  CHECK_GT(height, 0);
   auto intrinsics_json = json.at("intrinsics");
 
   cx = intrinsics_json.at("cx").get<double>();

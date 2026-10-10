@@ -91,5 +91,9 @@ inline const frc::AprilTagFieldLayout kApriltagLayout =
 auto Variance(int num_tags, double distance, double min_variance, double scalar)
     -> double;
 auto PoseOffField(frc::Pose3d pose) -> bool;
+// Leave room for the tag's outer border: a clipped quad can decode correctly
+// while its fitted corners produce a wildly incorrect pose.
+auto TagCornersInsideImage(const tag_detection_t& detection, int width,
+                           int height) -> bool;
 
 }  // namespace localization

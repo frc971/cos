@@ -44,6 +44,8 @@ class MultiTagSolverNode final : public control_loop::INode {
 
   std::string input_channel_;
   std::string output_channel_;
+  int image_width_;
+  int image_height_;
   cv::Mat camera_matrix_;
   cv::Mat distortion_coefficients_;
   cv::Mat camera_to_robot_;

@@ -109,7 +109,7 @@ auto main(int argc, char** argv) -> int {
 
   auto solver_node =
       std::make_shared<localization::UnambiguousSolverNode>("pose");
-  solver_node->SetRejectFarTags(false);
+  solver_node->SetRejectFarTags(true);
   control_loop.RegisterNode(solver_node);
 
   auto rio_sender_node =

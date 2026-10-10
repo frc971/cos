@@ -19,6 +19,8 @@ MultiTagSolverNode::MultiTagSolverNode(
     const std::vector<cv::Point3d>& tag_corners)
     : input_channel_(input_channel),
       output_channel_(output_channel),
+      image_width_(intrinsics.width),
+      image_height_(intrinsics.height),
       camera_matrix_(intrinsics.ToMatrix()),
       distortion_coefficients_(intrinsics.ToDistortionCoefficients()),
       camera_to_robot_(utils::Transform3dToCvMat(
@@ -108,6 +110,9 @@ auto MultiTagSolverNode::AmbiguousSolve(
   double avg_distance = 0.0;
 
   for (const tag_detection_t& detection : detections) {
+    if (!TagCornersInsideImage(detection, image_width_, image_height_)) {
+      continue;
+    }
     auto tag_corners_it = tag_corners_.find(detection.tag_id);
     if (tag_corners_it == tag_corners_.end()) {
       LOG(WARNING) << "Invalid tag id: " << detection.tag_id;
@@ -204,6 +209,9 @@ auto MultiTagSolverNode::AmbiguousSolve(
     LOG(WARNING) << "SQPnP produced a physically impossible pose from tags ["
                  << tag_list << "] with reprojection RMSE " << reprojection_rmse
                  << " px: " << estimate;
+    if (reject_far_tags) {
+      return std::nullopt;
+    }
   }
 
   return ambiguous_estimate_t{.pos1 = std::move(estimate),

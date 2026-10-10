@@ -19,6 +19,8 @@ SquareSolverNode::SquareSolverNode(std::string_view input_channel,
       output_channel_(output_channel),
       layout_(std::move(layout)),
       tag_corners_(std::move(tag_corners)),
+      image_width_(intrinsics.width),
+      image_height_(intrinsics.height),
       camera_matrix_(intrinsics.ToMatrix()),
       distortion_coefficients_(intrinsics.ToDistortionCoefficients()),
       camera_to_robot_(extrinsics.ToCameraToRobot<cv::Mat>()),
@@ -79,6 +81,10 @@ auto SquareSolverNode::GetPublications() const
 auto SquareSolverNode::AmbiguousSolve(const tag_detection_t& detection,
                                       bool reject_far_tags)
     -> std::optional<ambiguous_estimate_t> {
+  if (!TagCornersInsideImage(detection, image_width_, image_height_) ||
+      !layout_.GetTagPose(detection.tag_id).has_value()) {
+    return std::nullopt;
+  }
   if (reject_far_tags &&
       utils::QuadAreaPixels(detection.corners) < kMinTagAreaPixels) {
     return std::nullopt;
@@ -118,14 +124,27 @@ auto SquareSolverNode::AmbiguousSolve(const tag_detection_t& detection,
 
   auto est1 = build_estimate(rvecs[0], tvecs[0]);
   auto est2 = build_estimate(rvecs[1], tvecs[1]);
-  if (reject_far_tags && est1.distance > kMaxTagDistance &&
-      est2.distance > kMaxTagDistance) {
+  const bool accept1 =
+      !reject_far_tags ||
+      (est1.distance <= kMaxTagDistance && !PoseOffField(est1.pose));
+  const bool accept2 =
+      !reject_far_tags ||
+      (est2.distance <= kMaxTagDistance && !PoseOffField(est2.pose));
+  if (!accept1 && !accept2) {
     return std::nullopt;
+  }
+  // Pixel error alone can prefer the mirrored, physically impossible pose.
+  // Check both candidates before deciding that the image is unambiguous.
+  if (!accept1) {
+    return ambiguous_estimate_t{.pos1 = std::move(est2),
+                                .pos2 = std::nullopt};
   }
 
   return std::optional<ambiguous_estimate_t>(
       {.pos1 = std::move(est1),
-       .pos2 = clearly_better ? std::nullopt : std::optional{std::move(est2)}});
+       .pos2 = !accept2 || clearly_better
+                   ? std::nullopt
+                   : std::optional{std::move(est2)}});
 }
 
 }  // namespace localization
