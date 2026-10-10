@@ -29,7 +29,6 @@ auto ShouldLogImages() -> bool {
   static auto enabled =
       instance.GetBooleanTopic("/AdvantageKit/DriverStation/Enabled")
           .Subscribe(false, {.sendAll = true});
-  // Camera callbacks and queued writes share the same match state.
   static std::mutex mutex;
   const std::scoped_lock lock(mutex);
   static bool was_enabled = false;
@@ -40,10 +39,9 @@ auto ShouldLogImages() -> bool {
     waiting_for_second_enable = false;
     return false;
   }
-  // Read every transition, including ones that occur between camera frames.
   for (const auto& update : enabled.ReadQueue()) {
     if (update.value && !was_enabled) {
-      // Hold through the auto-to-teleop gap; stop after teleop disables.
+      // Hold through the auto-to-teleop gap, only stop after teleop disables.
       waiting_for_second_enable = !waiting_for_second_enable;
     }
     was_enabled = update.value;
