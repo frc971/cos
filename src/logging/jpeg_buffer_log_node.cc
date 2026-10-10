@@ -7,9 +7,9 @@
 namespace logging {
 
 JpegBufferLogNode::JpegBufferLogNode(std::string_view input_channel,
-                                   std::string_view folder_path,
-                                   control_loop::ThreadPool& thread_pool,
-                                   std::function<bool()> should_log)
+                                     std::string_view folder_path,
+                                     control_loop::ThreadPool& thread_pool,
+                                     std::function<bool()> should_log)
     : input_channel_(input_channel),
       folder_path_(folder_path),
       dependencies_({{input_channel_, typeid(camera::JpegBuffer)}}),
@@ -19,26 +19,16 @@ JpegBufferLogNode::JpegBufferLogNode(std::string_view input_channel,
 auto JpegBufferLogNode::CreateCallback()
     -> std::function<void(const control_loop::Context&)> {
   return [this](const control_loop::Context& context) -> void {
-    // A skipped frame must not be recorded if logging starts while queued.
-    if (should_log_ && !should_log_()) {
-      for (const auto& callback : callbacks_) {
-        callback(context);
-      }
-      return;
-    }
     thread_pool_.Submit(
         [this, context]() -> void {
           auto jpeg_buffer =
               context->GetMessage<camera::JpegBuffer>(input_channel_);
-          // Recheck before writing in case logging stopped while queued.
-          if (jpeg_buffer != nullptr && (!should_log_ || should_log_())) {
-            std::string output_file_path =
-                folder_path_ + "/" + std::to_string(jpeg_buffer->timestamp) +
-                ".jpg";
-            std::ofstream out(output_file_path, std::ios::binary);
-            out.write(reinterpret_cast<const char*>(jpeg_buffer->ptr),
-                      jpeg_buffer->size);
-          }
+          std::string output_file_path =
+              folder_path_ + "/" + std::to_string(jpeg_buffer->timestamp) +
+              ".jpg";
+          std::ofstream out(output_file_path, std::ios::binary);
+          out.write(reinterpret_cast<const char*>(jpeg_buffer->ptr),
+                    jpeg_buffer->size);
           for (const auto& callback : callbacks_) {
             callback(context);
           }

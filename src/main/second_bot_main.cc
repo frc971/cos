@@ -31,7 +31,7 @@ ABSL_FLAG(bool, latency_log, false,                               // NOLINT
 ABSL_FLAG(                                                        // NOLINT
     bool, log_images, true,                                       // NOLINT
     "Log timestamped JPEG frames to the run's log directory in "  // NOLINT
-    "per-camera subfolders, from first enable through second disable");  // NOLINT
+    "per-camera subfolders");                                     // NOLINT
 
 namespace {
 
@@ -61,11 +61,11 @@ void AddCameraPipeline(
   control_loop.RegisterNode(jpeg_buffer_streamer_node);
 
   if (!log_path.empty()) {
-    const auto camera_log_folder = std::filesystem::path(log_path) / config.name;
+    const auto camera_log_folder =
+        std::filesystem::path(log_path) / config.name;
     std::filesystem::create_directories(camera_log_folder);
     auto jpeg_buffer_logger_node = std::make_shared<logging::JpegBufferLogNode>(
-        jpeg_channel, camera_log_folder.string(), thread_pool,
-        control_loop::ShouldLogImages);
+        jpeg_channel, camera_log_folder.string(), thread_pool);
     control_loop.RegisterNode(jpeg_buffer_logger_node);
   }
 

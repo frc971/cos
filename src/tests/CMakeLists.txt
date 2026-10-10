@@ -33,12 +33,6 @@ target_link_libraries(full_robot_gamepiece_pipeline_test PRIVATE
   absl::log_initialize
 )
 
-add_executable(jpeg_buffer_log_node_test jpeg_buffer_log_node_test.cc)
-target_link_libraries(jpeg_buffer_log_node_test PRIVATE
-  cos::jpeg_buffer_log_node cos::connect_to_rio cos::thread_pool
-  cos::control_loop ntcore wpiutil GTest::gtest_main)
-add_test(NAME jpeg_buffer_log_node_test COMMAND jpeg_buffer_log_node_test)
-
 add_executable(log_fields_test log_fields_test.cc)
 target_link_libraries(log_fields_test PRIVATE cos::wpilog_writer
   cos::control_loop GTest::gtest_main GTest::gtest cos::localization_solver_common)
