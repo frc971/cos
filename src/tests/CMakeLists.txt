@@ -1,9 +1,48 @@
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
 
+add_executable(context_handoff_node_test context_handoff_node_test.cc)
+target_link_libraries(context_handoff_node_test PRIVATE
+  cos::control_loop GTest::gtest_main)
+add_test(NAME context_handoff_node_test COMMAND context_handoff_node_test)
+
+add_executable(yolo_node_test yolo_node_test.cc)
+target_link_libraries(yolo_node_test PRIVATE
+  yolo_inference
+  GTest::gtest_main
+)
+add_test(NAME yolo_node_test COMMAND yolo_node_test)
+
+add_executable(full_robot_gamepiece_pipeline_test
+  full_robot_gamepiece_pipeline_test.cc)
+target_link_libraries(full_robot_gamepiece_pipeline_test PRIVATE
+  # OpenCV's JPEG writer needs the system libjpeg ABI. Put it before the
+  # NVIDIA multimedia library, which exports overlapping JPEG symbols via
+  # the AprilTag detector's FD input support.
+  "-Wl,--push-state,--no-as-needed"
+  JPEG::JPEG
+  "-Wl,--pop-state"
+  gamepiece
+  cos::uvc_disk_camera_node
+  cos::get_earliest_timestamp
+  cos::rio_clock
+  cos::stop
+  cos::nvidia_apriltag_detector_node
+  cos::unambiguous_solver_node
+  cos::camera_config
+  absl::flags_parse
+  absl::log_initialize
+)
+
 add_executable(log_fields_test log_fields_test.cc)
 target_link_libraries(log_fields_test PRIVATE cos::wpilog_writer
   cos::control_loop GTest::gtest_main GTest::gtest cos::localization_solver_common)
 add_test(NAME log_fields_test COMMAND log_fields_test)
+
+add_executable(networktables_fields_test networktables_fields_test.cc)
+target_link_libraries(networktables_fields_test PRIVATE cos::wpilog_writer
+  cos::control_loop GTest::gtest_main GTest::gtest cos::localization_solver_common
+  cos::nvjpeg_decode_node cos::nvjpeg_fd_decode_node cos::thread_pool)
+add_test(NAME networktables_fields_test COMMAND networktables_fields_test)
 
 add_executable(wpilog_writer_test wpilog_writer_test.cc)
 target_link_libraries(wpilog_writer_test PRIVATE cos::wpilog_writer
@@ -51,8 +90,9 @@ add_executable(test_solver_common
   solver_common_test.cc
 )
 target_link_libraries(test_solver_common PRIVATE
-  cos::localization_solver_common
   GTest::gtest_main
+  GTest::gtest
+  cos::localization_solver_common
 )
 
 add_executable(variance_calculator_node_test

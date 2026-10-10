@@ -94,9 +94,9 @@ DecodedJpegBuffer::~DecodedJpegBuffer() {
 DecodedJpegBuffer::DecodedJpegBuffer(DecodedJpegBuffer&& other) noexcept
     : width(other.width),
       height(other.height),
+      timestamp(other.timestamp),
       stride(other.stride),
       output_size(other.output_size),
-      timestamp(other.timestamp),
       output_format(other.output_format),
       channel_sizes(other.channel_sizes),
       destination(other.destination) {

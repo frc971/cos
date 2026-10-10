@@ -51,7 +51,6 @@ auto CpuJpegDecodeNode::CreateCallback()
 auto CpuJpegDecodeNode::Decode(const JpegBuffer* jpeg_buffer)
     -> DecodedImageBuffer {
   DecodedImageBuffer decoded;
-  decoded.timestamp = jpeg_buffer->timestamp;
   jpeg_decompress_struct cinfo{};
   jpeg_error_mgr error{};
   cinfo.err = jpeg_std_error(&error);

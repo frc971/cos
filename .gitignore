@@ -6,5 +6,7 @@ bos-logs/
 **/*.wpilog
 **/*.jpg
 **/*.png
+**/*.pt
+**/__pycache__/
 .cache
 .idea/
