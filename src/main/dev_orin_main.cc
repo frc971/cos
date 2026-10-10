@@ -1,4 +1,5 @@
 #include <filesystem>
+#include <string>
 
 #include "absl/flags/flag.h"
 #include "absl/flags/parse.h"
@@ -10,9 +11,12 @@
 #include "control_loop/connect_to_rio.h"
 #include "control_loop/control_loop.h"
 #include "control_loop/thread_pool.h"
+#include "localization/position_estimate_sender_node.h"
 #include "localization/unambiguous_solver_node.h"
 #include "localization/variance_calculator_node.h"
+#include "logging/jpeg_buffer_log_node.h"
 #include "logging/wpilog_writer.h"
+#include "networktables/NetworkTableInstance.h"
 #include "simulation/simulation_position_sender_node.h"
 #include "streamer/jpeg_buffer_streamer_node.h"
 #include "streamer/position_estimate_rio_streamer_node.h"
@@ -25,6 +29,11 @@ ABSL_FLAG(bool, pva_detection, true,                              // NOLINT
 ABSL_FLAG(uint, max_context, 1,                                   // NOLINT
           "Maximum number of concurrent control-loop contexts");  // NOLINT
 
+ABSL_FLAG(                                                        // NOLINT
+    bool, log_images, true,                                       // NOLINT
+    "Log timestamped JPEG frames to the run's log directory in "  // NOLINT
+    "per-camera subfolders, from first enable through second disable");  // NOLINT
+
 namespace {
 
 void AddCameraPipeline(
@@ -34,7 +43,7 @@ void AddCameraPipeline(
     localization::UnambiguousSolverNode& solver_node,
     const std::shared_ptr<streamer::PositionEstimateRioStreamerNode>&
         rio_sender_node,
-    bool pva_detection) {
+    bool pva_detection, const std::string& log_path) {
   const camera::UVCCameraConfig config{config_path};
   const std::string jpeg_channel = "jpeg_buffer:" + config.name;
   const std::string decoded_channel = "hardware_decoded_image:" + config.name;
@@ -52,6 +61,15 @@ void AddCameraPipeline(
           jpeg_channel, "/stream", stream_port);
   control_loop.RegisterNode(jpeg_buffer_streamer_node);
 
+  if (!log_path.empty()) {
+    const auto camera_log_folder = std::filesystem::path(log_path) / config.name;
+    std::filesystem::create_directories(camera_log_folder);
+    auto jpeg_buffer_logger_node = std::make_shared<logging::JpegBufferLogNode>(
+        jpeg_channel, camera_log_folder.string(), thread_pool,
+        control_loop::ShouldLogImages);
+    control_loop.RegisterNode(jpeg_buffer_logger_node);
+  }
+
   auto hardware_decode_node = std::make_shared<camera::NvjpegFdDecodeNode>(
       jpeg_channel, decoded_channel, thread_pool);
   control_loop.RegisterNode(hardware_decode_node);
@@ -66,7 +84,6 @@ void AddCameraPipeline(
   hardware_apriltag_detector_node->EnableTiming(
       "hardware_apriltag_detections:latency:" + config.name);
 
-  solver_node.AddCameraTimestamp(jpeg_channel);
   solver_node.AddCamera(detections_channel, camera::Intrinsics{config_path},
                         camera::Extrinsics{config_path}, control_loop);
 }
@@ -100,24 +117,32 @@ auto main(int argc, char** argv) -> int {
 
   int port = 5801;
   const bool pva_detection = absl::GetFlag(FLAGS_pva_detection);
+  const std::string image_log_path =
+      absl::GetFlag(FLAGS_log_images) ? control_loop::GetLogPath() : "";
   for (const auto& path : paths) {
     AddCameraPipeline(path, port++, control_loop, thread_pool, *solver_node,
-                      rio_sender_node, pva_detection);
+                      rio_sender_node, pva_detection, image_log_path);
   }
 
+  auto networktables_instance = nt::NetworkTableInstance::Create();
+  networktables_instance.StartServer();
   auto variance_calculator_node =
       std::make_shared<localization::VarianceCalculatorNode>(
           "pose", "pose_with_variance");
   control_loop.RegisterNode(variance_calculator_node);
+  auto position_estimate_sender_node =
+      std::make_shared<localization::PositionEstimateSenderNode>(
+          "pose_with_variance", "Orin/localization", networktables_instance);
+  position_estimate_sender_node->SetLogEstimates(true);
+  control_loop.RegisterNode(position_estimate_sender_node);
+
   auto simulation_position_sender_node =
-      std::make_shared<simulation::SimulationPositionSenderNode>(
-          "pose_with_variance");
+      std::make_shared<simulation::SimulationPositionSenderNode>("pose");
   control_loop.RegisterNode(simulation_position_sender_node);
   control_loop.EnableLatencyLog();
 
   auto wpilog_writer = std::make_shared<logging::WPILogWriter>(
-      (std::filesystem::path(control_loop::GetLogPath()) / "cos.wpilog").string(),
-      control_loop.GetLogPublications());
+      "/root/cos.wpilog", control_loop.GetLogPublications());
   control_loop.EnableWPILog(wpilog_writer);
   control_loop.Start();
 
@@ -125,4 +150,6 @@ auto main(int argc, char** argv) -> int {
 
   control_loop.Stop();
   thread_pool.Shutdown();
+  networktables_instance.StopServer();
+  nt::NetworkTableInstance::Destroy(networktables_instance);
 }
