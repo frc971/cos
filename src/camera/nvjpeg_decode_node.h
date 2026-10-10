@@ -30,6 +30,7 @@ class DecodedJpegBuffer final : public control_loop::IMessage {
 
   int width = 0;
   int height = 0;
+  double timestamp = 0;
   size_t stride = 0;
   size_t output_size = 0;
   nvjpegOutputFormat_t output_format = NVJPEG_OUTPUT_Y;
