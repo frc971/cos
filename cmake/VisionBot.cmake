@@ -7,13 +7,13 @@ add_custom_target(vision-bot
     
     COMMAND ssh root@10.89.71.11 "mkdir -p /root"
 
-    COMMAND rsync -avz --delete ${CMAKE_BINARY_DIR}/tests/ root@10.89.71.11:/root/tests/
-    COMMAND rsync -avz --delete ${CMAKE_BINARY_DIR}/main/ root@10.89.71.11:/root/main/
-    COMMAND rsync -avz --delete ${CMAKE_BINARY_DIR}/examples/ root@10.89.71.11:/root/examples/
-    COMMAND rsync -avz --delete ${CMAKE_BINARY_DIR}/tools/ root@10.89.71.11:/root/tools/
-    COMMAND rsync -avz --delete ${CMAKE_BINARY_DIR}/lib/ root@10.89.71.11:/root/lib/
-    COMMAND rsync -avz --delete ${CMAKE_SOURCE_DIR}/constants/ root@10.89.71.11:/root/constants/
-    COMMAND rsync -avz ${CMAKE_SOURCE_DIR}/systemd/ root@10.89.71.11:/etc/systemd/system
+    COMMAND rsync -avz --checksum --partial --delete ${CMAKE_BINARY_DIR}/tests/ root@10.89.71.11:/root/tests/
+    COMMAND rsync -avz --checksum --partial --delete ${CMAKE_BINARY_DIR}/main/ root@10.89.71.11:/root/main/
+    COMMAND rsync -avz --checksum --partial --delete ${CMAKE_BINARY_DIR}/examples/ root@10.89.71.11:/root/examples/
+    COMMAND rsync -avz --checksum --partial --delete ${CMAKE_BINARY_DIR}/tools/ root@10.89.71.11:/root/tools/
+    COMMAND rsync -avz --checksum --partial --delete ${CMAKE_BINARY_DIR}/lib/ root@10.89.71.11:/root/lib/
+    COMMAND rsync -avz --checksum --partial --delete ${CMAKE_SOURCE_DIR}/constants/ root@10.89.71.11:/root/constants/
+    COMMAND rsync -avz --checksum --partial ${CMAKE_SOURCE_DIR}/systemd/ root@10.89.71.11:/etc/systemd/system
     
     COMMENT "Uploading folders to 10.89.71.11..."
     VERBATIM
