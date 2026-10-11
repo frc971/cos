@@ -3,6 +3,7 @@
 
 #include "camera/jpeg_buffer.h"
 #include "logging/jpeg_buffer_log_node.h"
+#include <iostream>
 
 namespace logging {
 
@@ -23,12 +24,14 @@ auto JpegBufferLogNode::CreateCallback()
         [this, context]() -> void {
           auto jpeg_buffer =
               context->GetMessage<camera::JpegBuffer>(input_channel_);
-          std::string output_file_path =
-              folder_path_ + "/" + std::to_string(jpeg_buffer->timestamp) +
-              ".jpg";
-          std::ofstream out(output_file_path, std::ios::binary);
-          out.write(reinterpret_cast<const char*>(jpeg_buffer->ptr),
-                    jpeg_buffer->size);
+          if (jpeg_buffer != nullptr && should_log_()) {
+            std::string output_file_path =
+                folder_path_ + "/" + std::to_string(jpeg_buffer->timestamp) +
+                ".jpg";
+            std::ofstream out(output_file_path, std::ios::binary);
+            out.write(reinterpret_cast<const char*>(jpeg_buffer->ptr),
+                      jpeg_buffer->size);
+          }
           for (const auto& callback : callbacks_) {
             callback(context);
           }
