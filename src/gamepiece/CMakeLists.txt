@@ -42,6 +42,8 @@ target_link_libraries(hsv_projector_node PUBLIC
 )
 target_link_libraries(hsv_projector_node PRIVATE
   cos::nvjpeg_decode_node
+  image_utils
+  opencv_calib3d
   wpimath
 )
 target_include_directories(hsv_projector_node PUBLIC

@@ -15,7 +15,7 @@ class HSVProjectorNode final : public control_loop::INode {
  public:
   HSVProjectorNode(std::string_view input_path, std::string_view output_path,
                    cv::Matx33d intrinsics, cv::Matx44d extrinsics,
-                   cv::Vec4d distortion_coeffs);
+                   cv::Vec<double, 5> distortion_coeffs);
   auto CreateCallback()
       -> std::function<void(const control_loop::Context&)> override;
   void RegisterCallback(const std::function<void(const control_loop::Context&)>&
@@ -36,8 +36,8 @@ class HSVProjectorNode final : public control_loop::INode {
   std::vector<cv::Point2d> thresholded_points_;
   const cv::Matx33d intrinsics_;
   const cv::Matx44d extrinsics_;
-  const cv::Vec4d distortion_coeffs_;
-  static constexpr int min_hue = 30, max_hue = 60, min_saturation = 150;
+  const cv::Vec<double, 5> distortion_coeffs_;
+  static constexpr int min_hue = 20, max_hue = 35, min_saturation = 150;
 };
 
 }  // namespace gamepiece
