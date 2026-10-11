@@ -35,9 +35,10 @@ class HSVProjectorNode final : public control_loop::INode {
   cv::cuda::GpuMat hsv_image_, threshold_mask_;
   std::vector<cv::Point2d> thresholded_points_;
   const cv::Matx33d intrinsics_;
-  const cv::Matx44d extrinsics_;
+  cv::Matx44d extrinsics_cv_;
   const cv::Vec<double, 5> distortion_coeffs_;
   static constexpr int min_hue = 20, max_hue = 35, min_saturation = 150;
+  static constexpr double ball_height_m = 0.150114;  // 5.91 inches
 };
 
 }  // namespace gamepiece
