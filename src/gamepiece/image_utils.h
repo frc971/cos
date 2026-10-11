@@ -5,23 +5,33 @@
 
 #include <frc/geometry/Translation2d.h>
 #include <opencv2/core.hpp>
+#include <opencv2/core/cuda.hpp>
 
-namespace utils {
+namespace gamepiece {
 
 void HSVThreshold(const cv::Mat& bgr_image, int minimum_hue, int maximum_hue,
                   int minimum_saturation,
-                  std::vector<cv::Point2f>& thresholded_points,
+                  std::vector<cv::Point2d>& thresholded_points,
                   cv::Mat3b& hsv_image, cv::Mat1b& threshold_mask);
 
-[[nodiscard]] auto DistortedPinholePointOffset(
-    const cv::Point2f& point, float world_relative_vertical,
-    const cv::Matx44f& camera_extrinsics_cv,
-    const cv::Matx33f& camera_intrinsics) -> std::optional<frc::Translation2d>;
+// Enqueues conversion and thresholding on stream. Both outputs stay on the GPU.
+void HSVThreshold(const cv::cuda::GpuMat& bgr_image, int minimum_hue,
+                  int maximum_hue, int minimum_saturation,
+                  cv::cuda::GpuMat& hsv_image, cv::cuda::GpuMat& threshold_mask,
+                  cv::cuda::Stream& stream = cv::cuda::Stream::Null());
 
-// Takes in points in the focal-length-normalized format used by cv::undistortPoints. If points aren't undistorted, use DistortedPinholePointOffset instead
+// Downloads only the mask and waits for stream before returning CPU points.
+void HSVThreshold(const cv::cuda::GpuMat& bgr_image, int minimum_hue,
+                  int maximum_hue, int minimum_saturation,
+                  std::vector<cv::Point2d>& thresholded_points,
+                  cv::cuda::GpuMat& hsv_image, cv::cuda::GpuMat& threshold_mask,
+                  cv::cuda::Stream& stream = cv::cuda::Stream::Null());
+
+// Takes points in the focal-length-normalized format used by cv::undistortPoints.
+// For pixel coordinates, use DistortedPinholePointOffset instead.
 [[nodiscard]] auto UndistortedPinholePointOffset(
-    const cv::Point2f& point, float world_relative_vertical,
+    const cv::Point2d& point, float world_relative_vertical,
     const cv::Matx44f& camera_extrinsics_cv)
     -> std::optional<frc::Translation2d>;
 
-}  // namespace utils
+}  // namespace gamepiece
