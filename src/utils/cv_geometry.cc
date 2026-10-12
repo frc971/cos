@@ -4,18 +4,18 @@
 #include <map>
 #include <numbers>
 
-#include <opencv2/calib3d.hpp>
 #include <frc/apriltag/AprilTagFieldLayout.h>
 #include <frc/geometry/Rotation3d.h>
 #include <frc/geometry/Translation3d.h>
+#include <opencv2/calib3d.hpp>
 
 namespace utils {
 
-static const cv::Mat kCvToWpilib =
-    (cv::Mat_<double>(4, 4) << 0, 0, 1, 0, -1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 0,
-     1);
+static const cv::Mat kCvToWpilib = (cv::Mat_<double>(4, 4) << 0, 0, 1, 0, -1, 0,
+                                    0, 0, 0, -1, 0, 0, 0, 0, 0, 1);
 static const std::map<Basis, cv::Mat> kCvBases = {
-    {Basis::kWpiToCv, kCvToWpilib.t()}, {Basis::kCvToWpi, kCvToWpilib}};
+    {Basis::kWpiToCv, kCvToWpilib.t()},
+    {Basis::kCvToWpi, kCvToWpilib}};
 
 static auto ConvertOpencvCoordinateToWpilib(cv::Mat& vec) -> void {
   const double x = vec.ptr<double>()[2];
@@ -35,10 +35,10 @@ auto HomogenizePoint3d(cv::Point3d point) -> cv::Mat {
 }
 
 auto QuadAreaPixels(const std::array<cv::Point2d, 4>& corners) -> double {
-  return 0.5 * std::abs((corners[0].x - corners[2].x) *
-                            (corners[1].y - corners[3].y) -
-                        (corners[1].x - corners[3].x) *
-                            (corners[0].y - corners[2].y));
+  return 0.5 *
+         std::abs(
+             (corners[0].x - corners[2].x) * (corners[1].y - corners[3].y) -
+             (corners[1].x - corners[3].x) * (corners[0].y - corners[2].y));
 }
 
 auto MakeTransform(const cv::Mat& rvec, const cv::Mat& tvec) -> cv::Mat {
@@ -74,24 +74,6 @@ auto ConvertOpencvTransformationMatrixToWpilibPose(const cv::Mat& matrix)
   ConvertOpencvCoordinateToWpilib(tvec);
   ConvertOpencvCoordinateToWpilib(rvec);
   return frc::Pose3d(CvMatToEigen(MakeTransform(rvec, tvec)));
-}
-
-auto ComputeRobotPose(const cv::Mat& tvec, const cv::Mat& rvec, int tag_id,
-                      const frc::AprilTagFieldLayout& layout,
-                      const cv::Mat& camera_to_robot) -> frc::Pose3d {
-  const cv::Mat camera_to_tag = MakeTransform(rvec, tvec);
-  cv::Mat tag_to_camera = camera_to_tag.inv();
-  ChangeBasis(tag_to_camera, Basis::kCvToWpi);
-
-  cv::Mat rz_flip_wpi = (cv::Mat_<double>(3, 1) << 0, 0, std::numbers::pi);
-  cv::Mat empty_tvec = (cv::Mat_<double>(3, 1) << 0, 0, 0);
-  const cv::Mat rotate_yaw_wpilib = MakeTransform(rz_flip_wpi, empty_tvec);
-
-  const cv::Mat field_to_tag =
-      EigenToCvMat(layout.GetTagPose(tag_id).value().ToMatrix());
-  const cv::Mat field_to_robot =
-      field_to_tag * rotate_yaw_wpilib * tag_to_camera * camera_to_robot;
-  return frc::Pose3d{CvMatToEigen(field_to_robot)};
 }
 
 auto Pose3dToCvMat(frc::Pose3d pose) -> cv::Mat {

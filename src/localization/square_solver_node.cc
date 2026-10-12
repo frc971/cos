@@ -103,14 +103,32 @@ auto SquareSolverNode::AmbiguousSolve(const tag_detection_t& detection,
       second_error > 1e-9 &&
       best_error < kMaxUnambiguousErrorRatio * second_error;
 
-  auto build_estimate = [&](const cv::Mat& rvec,
-                            const cv::Mat& tvec) -> solver_estimate_t {
+  auto build_estimate =
+      [&](const cv::Mat& rvec,
+          const cv::Mat& tvec) -> std::optional<solver_estimate_t> {
     const double distance = cv::norm(tvec);
     solver_estimate_t estimate;
+    const cv::Mat camera_to_tag = utils::MakeTransform(rvec, tvec);
+    cv::Mat tag_to_camera = camera_to_tag.inv();
+    double yaw = std::atan2(tag_to_camera.at<double>(0, 2),
+                            tag_to_camera.at<double>(2, 2));
+    if (yaw < 0.0872665) {
+      return std::nullopt;
+    }
+    ChangeBasis(tag_to_camera, utils::Basis::kCvToWpi);
+
+    cv::Mat rz_flip_wpi = (cv::Mat_<double>(3, 1) << 0, 0, std::numbers::pi);
+    cv::Mat empty_tvec = (cv::Mat_<double>(3, 1) << 0, 0, 0);
+    const cv::Mat rotate_yaw_wpilib =
+        utils::MakeTransform(rz_flip_wpi, empty_tvec);
+
+    const cv::Mat field_to_tag = utils::EigenToCvMat(
+        layout_.GetTagPose(detection.tag_id).value().ToMatrix());
+    const cv::Mat field_to_robot =
+        field_to_tag * rotate_yaw_wpilib * tag_to_camera * camera_to_robot_;
     estimate.tag_ids = {detection.tag_id};
     estimate.distances = {distance};
-    estimate.pose = utils::ComputeRobotPose(tvec, rvec, detection.tag_id,
-                                            layout_, camera_to_robot_);
+    estimate.pose = frc::Pose3d{utils::CvMatToEigen(field_to_robot)},
     estimate.variance = Variance(1, distance, kVarianceMin, kVarianceScalar);
     estimate.distance = distance;
     return estimate;
@@ -118,14 +136,23 @@ auto SquareSolverNode::AmbiguousSolve(const tag_detection_t& detection,
 
   auto est1 = build_estimate(rvecs[0], tvecs[0]);
   auto est2 = build_estimate(rvecs[1], tvecs[1]);
-  if (reject_far_tags && est1.distance > kMaxTagDistance &&
-      est2.distance > kMaxTagDistance) {
+  if (!est1.has_value() && !est2.has_value()) {
+    return std::nullopt;
+  }
+  if (!est1.has_value() && est2.has_value()) {
+    est1 = std::move(est2);
+    est2 = std::nullopt;
+  }
+  if (reject_far_tags && est1->distance > kMaxTagDistance &&
+      (!est2.has_value() || est2->distance > kMaxTagDistance)) {
     return std::nullopt;
   }
 
   return std::optional<ambiguous_estimate_t>(
-      {.pos1 = std::move(est1),
-       .pos2 = clearly_better ? std::nullopt : std::optional{std::move(est2)}});
+      {.pos1 = std::move(est1.value()),
+       .pos2 = (!est2.has_value() || clearly_better)
+                   ? std::nullopt
+                   : std::optional{std::move(est2)}});
 }
 
 }  // namespace localization
