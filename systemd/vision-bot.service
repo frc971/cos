@@ -5,7 +5,7 @@ Description=vision-bot
 Type=simple
 User=root
 WorkingDirectory=/root
-ExecStart=/root/main/vision_bot_main --nopva_detection --max_context=2
+ExecStart=/root/main/vision_bot_main --nopva_detection --max_context=2 --log_images
 Restart=on-failure
 RestartSec=2
 

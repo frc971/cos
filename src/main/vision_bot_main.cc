@@ -95,7 +95,7 @@ auto main(int argc, char** argv) -> int {
   absl::InitializeLog();
   absl::SetStderrThreshold(absl::LogSeverityAtLeast::kInfo);
   stop::RegisterHandler();
-  control_loop::StartNetworktables(8971);
+  control_loop::StartNetworktables(9972);
 
   control_loop::ControlLoop control_loop(1ms);
   control_loop.SetMaxContext(absl::GetFlag(FLAGS_max_context));
