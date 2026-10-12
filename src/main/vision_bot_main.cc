@@ -123,6 +123,7 @@ auto main(int argc, char** argv) -> int {
   for (const auto& path : paths) {
     AddCameraPipeline(path, port++, control_loop, thread_pool, *solver_node,
                       rio_sender_node, pva_detection, image_log_path);
+    LOG(INFO) << "Started camera: " << path << " with port " << port;
   }
 
   auto variance_calculator_node =
