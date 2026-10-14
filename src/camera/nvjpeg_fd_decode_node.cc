@@ -27,8 +27,7 @@ DecodedJpegFdBuffer::DecodedJpegFdBuffer(DecodedJpegFdBuffer&& other) noexcept
       width(other.width),
       height(other.height),
       stride(other.stride),
-      output_size(other.output_size),
-      timestamp(other.timestamp) {}
+      output_size(other.output_size) {}
 
 NvjpegFdDecodeNode::NvjpegFdDecodeNode(std::string_view input_path,
                                        std::string_view output_path,
@@ -164,7 +163,6 @@ auto NvjpegFdDecodeNode::DecodeJpegBuffer(const JpegBuffer* jpeg_buffer)
        ++plane) {
     output.output_size += destination.planeParams.psize[plane];
   }
-  output.timestamp = jpeg_buffer->timestamp;
   return output;
 }
 

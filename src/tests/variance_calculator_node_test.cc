@@ -67,6 +67,7 @@ TEST(VarianceCalculatorNodeTest, PublishesVarianceBeforeNotifyingCallback) {
   auto input = std::make_unique<localization::PositionEstimateMessage>();
   input->tag_ids = {1, 2};
   input->distances = {2.0, 4.0};
+  input->timestamp = 12.5;
   context->SetMessage("input", std::move(input));
 
   int callback_count = 0;
@@ -80,6 +81,7 @@ TEST(VarianceCalculatorNodeTest, PublishesVarianceBeforeNotifyingCallback) {
         EXPECT_EQ(output->tag_ids, (std::vector<int>{1, 2}));
         EXPECT_EQ(output->distances, (std::vector<double>{2.0, 4.0}));
         EXPECT_DOUBLE_EQ(output->variance, 1.525);
+        EXPECT_DOUBLE_EQ(output->timestamp, 12.5);
       });
 
   node.CreateCallback()(context);

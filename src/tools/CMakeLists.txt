@@ -1,5 +1,7 @@
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tools")
 
+add_subdirectory(path_camera_sim)
+
 add_executable(uvc_logger)
 target_sources(uvc_logger
   PRIVATE
@@ -60,8 +62,41 @@ target_link_libraries(intrinsics_calibrate PRIVATE
   absl::log_initialize
   nadjieb_mjpeg_streamer::nadjieb_mjpeg_streamer
   nlohmann_json::nlohmann_json
-  ${OpenCV_LIBS}
+  opencv_core
+  opencv_imgproc
+  opencv_imgcodecs
+  opencv_objdetect
+  opencv_calib3d
 )
 target_include_directories(intrinsics_calibrate PRIVATE
+  ${OpenCV_INCLUDE_DIRS}
+)
+
+add_executable(calib_helper calib_helper.cc)
+target_link_libraries(calib_helper PRIVATE
+  cos::stop
+  absl::flags_parse
+  absl::log_initialize
+  nlohmann_json::nlohmann_json
+  opencv_core
+  opencv_imgcodecs
+  opencv_objdetect
+)
+target_include_directories(calib_helper PRIVATE
+  ${OpenCV_INCLUDE_DIRS}
+)
+
+add_executable(intrinsics_calibrate_disk intrinsics_calibrate_disk.cc)
+target_link_libraries(intrinsics_calibrate_disk PRIVATE
+  cos::stop
+  absl::check
+  absl::flags_parse
+  absl::log_initialize
+  nlohmann_json::nlohmann_json
+  opencv_core
+  opencv_objdetect
+  opencv_calib3d
+)
+target_include_directories(intrinsics_calibrate_disk PRIVATE
   ${OpenCV_INCLUDE_DIRS}
 )

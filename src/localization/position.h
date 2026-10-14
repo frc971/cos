@@ -18,6 +18,8 @@ struct PositionEstimateMessage final : public control_loop::IMessage {
   frc::Pose3d pose;
   std::vector<double> distances;
   double variance = 0.0;
+  // Mean camera capture time in seconds on the RIO clock (zero if unavailable).
+  double timestamp = 0.0;
 
   PositionEstimateMessage() = default;
   auto GetType() -> const std::type_info& override {
@@ -29,7 +31,7 @@ struct PositionEstimateMessage final : public control_loop::IMessage {
   }
 
   LOG_FIELDS(PositionEstimateMessage, tag_ids, num_tags, pose, distances,
-             variance)
+             variance, timestamp)
 
   friend auto operator<<(std::ostream& os,
                          const PositionEstimateMessage& estimate)

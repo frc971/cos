@@ -24,9 +24,8 @@ class DecodedImageBuffer final : public control_loop::IMessage {
   int width = 0;
   int height = 0;
   size_t stride = 0;
-  double timestamp = 0.0;
   std::vector<uint8_t> data;
-  LOG_FIELDS(DecodedImageBuffer, width, height, stride, timestamp)
+  LOG_FIELDS(DecodedImageBuffer, width, height, stride)
 };
 
 class CpuJpegDecodeNode final : public control_loop::INode {

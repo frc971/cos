@@ -62,7 +62,7 @@ UVCDiskCameraNode::UVCDiskCameraNode(std::string_view log_path,
       const auto size = file.tellg();
       file.seekg(0);
       auto buffer =
-          std::make_unique<JpegBuffer>(size, control_loop::RioClock::GetTime());
+          std::make_unique<JpegBuffer>(size, replay_timestamp);
       file.read(reinterpret_cast<char*>(buffer->ptr), size);
       if (!file) {
         LOG(WARNING) << "Failed to read file: " << file_paths_[index].first;

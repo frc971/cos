@@ -1,14 +1,9 @@
 #include "localization/unambiguous_solver_node.h"
 
 #include <array>
-#include <atomic>
-#include <cmath>
-#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <string>
-#include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 #include <wpi/DataLogReader.h>
@@ -28,6 +23,7 @@
 #include "control_loop/control_loop.h"
 #include "control_loop/rio_clock.h"
 #include "control_loop/thread_pool.h"
+#include "logging/wpilog_writer.h"
 #include "simulation/simulation_position_sender_node.h"
 #include "streamer/jpeg_buffer_streamer_node.h"
 #include "utils/stop.h"
@@ -36,10 +32,10 @@ using namespace std::chrono_literals;
 
 ABSL_FLAG(bool, reject_far_tags, true,                            // NOLINT
           "Reject tags and estimates that fail sanity checks.");  // NOLINT
-ABSL_FLAG(std::string, wpilog_path,
+ABSL_FLAG(std::string, wpilog_path,                     // NOLINT
           "/root/unambiguous_solver_node_test.wpilog",  // NOLINT
           "Where to save the replay's WPILOG.");        // NOLINT
-ABSL_FLAG(
+ABSL_FLAG(  // NOLINT
     std::string, log_path, "/cos-logs/second_bot/chezychamps",       // NOLINT
     "Directory containing front, left, and right camera replays.");  // NOLINT
 
@@ -52,7 +48,6 @@ auto main(int argc, char** argv) -> int {
 
   control_loop::ControlLoop control_loop(1ms);
   const std::string wpilog_path = absl::GetFlag(FLAGS_wpilog_path);
-  control_loop.EnableWPILog(wpilog_path);
   control_loop::ThreadPool thread_pool;
   control_loop.SetMaxContext(1);
   control_loop.EnableLatencyLog();
@@ -108,6 +103,7 @@ auto main(int argc, char** argv) -> int {
     gpu_apriltag_detector_node->EnableTiming(
         prefix + "/hardware_apriltag_detections:latency");
 
+    solver_node->AddCameraTimestamp(jpeg_channel);
     solver_node->AddCamera(detections_channel, camera::Intrinsics{config_path},
                            camera::Extrinsics{config_path}, control_loop);
   }
@@ -116,12 +112,16 @@ auto main(int argc, char** argv) -> int {
       std::make_shared<simulation::SimulationPositionSenderNode>("pose");
   control_loop.RegisterNode(simulation_position_sender_node);
 
+  auto wpilog_writer = std::make_shared<logging::WPILogWriter>(
+      wpilog_path, control_loop.GetLogPublications());
+  control_loop.EnableWPILog(wpilog_writer);
   control_loop.Start();
 
   stop::WaitUntilStop();
 
   control_loop.Stop();
   thread_pool.Shutdown();
+  wpilog_writer->Flush();
 
   std::fflush(nullptr);
   std::_Exit(EXIT_SUCCESS);

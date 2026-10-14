@@ -1,0 +1,8 @@
+# Workstation-only dependencies; the Orin needs its Yocto-provided trtexec.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.7.1+cpu
+torchvision==0.22.1+cpu
+ultralytics==8.3.172
+onnx==1.17.0
+onnxslim==0.1.97
+onnxruntime==1.22.1

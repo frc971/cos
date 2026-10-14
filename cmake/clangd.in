@@ -12,3 +12,5 @@ CompileFlags:
     - "@CLANGD_CXX_TARGET_INCLUDE_DIR@"
     - -isystem
     - "@CLANGD_CXX_INCLUDE_DIR@/backward"
+    - -isystem
+    - "@CLANGD_TARGET_SYSROOT@/usr/include/wpiutil"

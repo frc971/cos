@@ -9,6 +9,7 @@
 #include <frc/geometry/Rotation3d.h>
 
 #include "absl/log/log.h"
+#include "camera/jpeg_buffer.h"
 #include "control_loop/control_loop.h"
 
 namespace {
@@ -63,6 +64,10 @@ void UnambiguousSolverNode::RegisterCallback(
   callbacks_.push_back(callback);
 }
 
+void UnambiguousSolverNode::AddCameraTimestamp(std::string_view jpeg_channel) {
+  camera_timestamp_channels_.emplace_back(jpeg_channel);
+}
+
 void UnambiguousSolverNode::AddCamera(std::string_view input_channel,
                                       const camera::Intrinsics& intrinsics,
                                       const camera::Extrinsics& extrinsics,
@@ -97,6 +102,17 @@ auto UnambiguousSolverNode::CreateCallback()
     }
     auto result = Solve(estimates, reject_far_tags_);
     if (result.has_value()) {
+      // All camera frames are already in the context when their solvers finish.
+      double total_timestamp = 0;
+      std::size_t count = 0;
+      for (const auto& channel : camera_timestamp_channels_) {
+        const auto* frame = context->GetMessage<camera::JpegBuffer>(channel);
+        if (frame != nullptr && std::isfinite(frame->timestamp)) {
+          total_timestamp += frame->timestamp;
+          ++count;
+        }
+      }
+      if (count != 0) result->timestamp = total_timestamp / count;
       context->SetMessage(
           output_channel_,
           std::make_unique<PositionEstimateMessage>(result.value()));
