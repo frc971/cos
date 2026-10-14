@@ -1,5 +1,16 @@
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
 
+add_executable(ellipse_test ellipse_test.cc)
+target_link_libraries(ellipse_test PRIVATE ellipse opencv_imgproc
+  opencv_imgcodecs GTest::gtest_main)
+add_test(NAME ellipse_test COMMAND ellipse_test)
+
+add_executable(hsv_cluster_tracker_node_test hsv_cluster_tracker_node_test.cc)
+target_link_libraries(hsv_cluster_tracker_node_test PRIVATE
+  hsv_cluster_tracker_node cos::nvjpeg_decode_node opencv_imgproc
+  GTest::gtest_main)
+add_test(NAME hsv_cluster_tracker_node_test COMMAND hsv_cluster_tracker_node_test)
+
 add_executable(context_handoff_node_test context_handoff_node_test.cc)
 target_link_libraries(context_handoff_node_test PRIVATE
   cos::control_loop GTest::gtest_main)

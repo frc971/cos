@@ -1,0 +1,240 @@
+#include "gamepiece/hsv_cluster_tracker.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <exception>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <numbers>
+#include <random>
+#include <string>
+#include <string_view>
+
+#include <frc/geometry/Pose3d.h>
+#include <frc/geometry/Rotation3d.h>
+#include <frc/geometry/Transform3d.h>
+#include <nlohmann/json.hpp>
+#include <opencv2/calib3d.hpp>
+#include <opencv2/imgcodecs.hpp>
+#include <opencv2/imgproc.hpp>
+
+#include "absl/log/check.h"
+#include "utils/cv_geometry.h"
+
+namespace {
+
+constexpr std::string_view kDefaultIntrinsicsPath =
+    "constants/fake_gamepiece/intrinsics.json";
+constexpr std::string_view kDefaultExtrinsicsPath =
+    "constants/fake_gamepiece/extrinsics.json";
+constexpr std::string_view kDefaultOutputDirectory =
+    "build/fake_gamepiece-clusters";
+constexpr std::string_view kDefaultFramePath =
+    "constants/fake_gamepiece/110.600000.jpg";
+
+// Drawing helpers are adapted from BOS's hsv_cluster_visualizer.cc.
+auto RandomClusterColor(std::mt19937& random_generator) -> cv::Scalar {
+  std::uniform_int_distribution<int> hue_distribution(0, 179);
+  const cv::Mat hsv_pixel(
+      1, 1, CV_8UC3,
+      cv::Scalar{static_cast<double>(hue_distribution(random_generator)), 220.0,
+                 255.0});
+  cv::Mat bgr_pixel;
+  cv::cvtColor(hsv_pixel, bgr_pixel, cv::COLOR_HSV2BGR);
+  const cv::Vec3b color = bgr_pixel.at<cv::Vec3b>(0, 0);
+  return {static_cast<double>(color[0]), static_cast<double>(color[1]),
+          static_cast<double>(color[2])};
+}
+
+auto ClusterEllipse(const gamepiece::kmeans_cluster_t& cluster)
+    -> cv::RotatedRect {
+  cv::Mat covariance;
+  cluster.covar.convertTo(covariance, CV_64F);
+  cv::Mat eigenvalues;
+  cv::Mat eigenvectors;
+  cv::eigen(covariance, eigenvalues, eigenvectors);
+
+  constexpr double kStandardDeviationScale = 2.0;
+  constexpr double kMinimumDiameter = 2.0;
+  const auto ellipse_diameter = [kMinimumDiameter](
+                                    const double eigenvalue) -> double {
+    return std::max(
+        2.0 * kStandardDeviationScale * std::sqrt(std::max(eigenvalue, 0.0)),
+        kMinimumDiameter);
+  };
+  const double angle =
+      std::atan2(eigenvectors.at<double>(0, 1), eigenvectors.at<double>(0, 0)) *
+      180.0 / std::numbers::pi;
+  return {cluster.centroid,
+          {static_cast<float>(ellipse_diameter(eigenvalues.at<double>(0, 0))),
+           static_cast<float>(ellipse_diameter(eigenvalues.at<double>(1, 0)))},
+          static_cast<float>(angle)};
+}
+
+auto DrawClusterIndex(cv::Mat& image, const std::size_t cluster_index,
+                      const cv::Point& centroid) -> void {
+  const std::string label = std::to_string(cluster_index);
+  constexpr double kFontScale = 0.8;
+  constexpr int kTextThickness = 2;
+  int baseline = 0;
+  const cv::Size text_size = cv::getTextSize(
+      label, cv::FONT_HERSHEY_SIMPLEX, kFontScale, kTextThickness, &baseline);
+  const cv::Point text_origin{centroid.x - text_size.width / 2,
+                              centroid.y + text_size.height / 2};
+
+  cv::putText(image, label, text_origin, cv::FONT_HERSHEY_SIMPLEX, kFontScale,
+              cv::Scalar{0, 0, 0}, kTextThickness + 4, cv::LINE_AA);
+  cv::putText(image, label, text_origin, cv::FONT_HERSHEY_SIMPLEX, kFontScale,
+              cv::Scalar{255, 255, 255}, kTextThickness, cv::LINE_AA);
+}
+
+auto AnnotateFrame(const cv::Mat& frame,
+                   const std::vector<gamepiece::kmeans_cluster_t>& clusters,
+                   const cv::Mat& camera_matrix,
+                   const cv::Mat& distortion_coeffs) -> cv::Mat {
+  cv::Mat visualization;
+  cv::undistort(frame, visualization, camera_matrix, distortion_coeffs,
+                camera_matrix);
+
+  constexpr std::mt19937::result_type kClusterColorSeed = 0x4B4D4541;
+  std::mt19937 random_generator(kClusterColorSeed);
+  for (std::size_t cluster_index = 0; cluster_index < clusters.size();
+       ++cluster_index) {
+    const gamepiece::kmeans_cluster_t& cluster = clusters.at(cluster_index);
+    // The ported tracker already returns undistorted pixel coordinates.
+    const gamepiece::kmeans_cluster_t& pixel_cluster = cluster;
+    const cv::Scalar color = RandomClusterColor(random_generator);
+    const cv::Vec3b pixel_color{static_cast<uchar>(color[0]),
+                                static_cast<uchar>(color[1]),
+                                static_cast<uchar>(color[2])};
+
+    for (const cv::Point2f& point : pixel_cluster.img_points) {
+      const cv::Point pixel{static_cast<int>(std::lround(point.x)),
+                            static_cast<int>(std::lround(point.y))};
+      if (pixel.x >= 0 && pixel.x < visualization.cols && pixel.y >= 0 &&
+          pixel.y < visualization.rows) {
+        visualization.at<cv::Vec3b>(pixel) = pixel_color;
+      }
+    }
+
+    const cv::RotatedRect ellipse = ClusterEllipse(pixel_cluster);
+    cv::ellipse(visualization, ellipse, cv::Scalar{0, 0, 0}, 6, cv::LINE_AA);
+    cv::ellipse(visualization, ellipse, color, 2, cv::LINE_AA);
+
+    const cv::Point centroid{
+        static_cast<int>(std::lround(pixel_cluster.centroid.x)),
+        static_cast<int>(std::lround(pixel_cluster.centroid.y))};
+    DrawClusterIndex(visualization, cluster_index, centroid);
+
+  }
+  return visualization;
+}
+
+auto ReadJson(const std::filesystem::path& path) -> nlohmann::json {
+  std::ifstream file(path);
+  CHECK(file.is_open()) << "Cannot open calibration: " << path;
+  nlohmann::json json;
+  file >> json;
+  return json;
+}
+
+}  // namespace
+
+auto main(int argc, char** argv) -> int {
+  if (argc != 1 && argc < 5) {
+    std::cerr << "Usage: hsv_cluster_visualizer [<intrinsics.json> "
+                 "<extrinsics.json> <output-directory> <frame.jpg>...]\n"
+                 "With no arguments, runs the fake_gamepiece sample frame.\n"
+                 "Calibration uses flat BOS JSON, with rotations in radians.\n";
+    return 1;
+  }
+  try {
+    const bool use_defaults = argc == 1;
+    const auto intrinsics = ReadJson(
+        use_defaults ? std::filesystem::path{kDefaultIntrinsicsPath}
+                     : std::filesystem::path{argv[1]});
+    const auto extrinsics = ReadJson(
+        use_defaults ? std::filesystem::path{kDefaultExtrinsicsPath}
+                     : std::filesystem::path{argv[2]});
+    const cv::Matx33d camera_matrix{
+        intrinsics.at("fx").get<double>(), 0, intrinsics.at("cx").get<double>(),
+        0, intrinsics.at("fy").get<double>(), intrinsics.at("cy").get<double>(),
+        0, 0, 1};
+    const cv::Vec<double, 5> distortion{
+        intrinsics.value("k1", 0.0), intrinsics.value("k2", 0.0),
+        intrinsics.value("p1", 0.0), intrinsics.value("p2", 0.0),
+        intrinsics.value("k3", 0.0)};
+    const frc::Pose3d camera_pose(
+        units::meter_t{extrinsics.at("translation_x").get<double>()},
+        units::meter_t{extrinsics.at("translation_y").get<double>()},
+        units::meter_t{extrinsics.at("translation_z").get<double>()},
+        frc::Rotation3d(
+            units::radian_t{extrinsics.at("rotation_x").get<double>()},
+            units::radian_t{extrinsics.at("rotation_y").get<double>()},
+            units::radian_t{extrinsics.at("rotation_z").get<double>()}));
+    const frc::Transform3d camera_to_robot =
+        frc::Transform3d(frc::Pose3d{}, camera_pose).Inverse();
+    gamepiece::HSVClusterTracker tracker(
+        camera_matrix,
+        cv::Matx44d(utils::EigenToCvMat(camera_to_robot.ToMatrix())),
+        distortion);
+    const std::filesystem::path output_directory(
+        use_defaults ? std::filesystem::path{kDefaultOutputDirectory}
+                     : std::filesystem::path{argv[3]});
+    std::filesystem::create_directories(output_directory);
+    nlohmann::json frames = nlohmann::json::array();
+    const int first_frame_index = use_defaults ? 0 : 4;
+    const int frame_count = use_defaults ? 1 : argc - first_frame_index;
+    for (int frame_index = 0; frame_index < frame_count; ++frame_index) {
+      const std::filesystem::path input_path(
+          use_defaults ? std::filesystem::path{kDefaultFramePath}
+                       : std::filesystem::path{
+                             argv[first_frame_index + frame_index]});
+      const cv::Mat frame = cv::imread(input_path.string(), cv::IMREAD_COLOR);
+      CHECK(!frame.empty()) << "Cannot decode frame: " << input_path;
+      tracker.ProcessFrame(frame);
+      if (frame_count == 1) {
+        // Match BOS's single-frame visualizer by processing the frame twice.
+        tracker.ProcessFrame(frame);
+      }
+      const auto& clusters = *tracker.GetClusters();
+      const cv::Mat visualization = AnnotateFrame(
+          frame, clusters, cv::Mat(camera_matrix), cv::Mat(distortion));
+      const std::string caption = input_path.filename().string() + " | " +
+                                  std::to_string(clusters.size()) + " clusters";
+      cv::putText(visualization, caption, {20, 40}, cv::FONT_HERSHEY_SIMPLEX,
+                  0.9, cv::Scalar{0, 0, 0}, 5, cv::LINE_AA);
+      cv::putText(visualization, caption, {20, 40}, cv::FONT_HERSHEY_SIMPLEX,
+                  0.9, cv::Scalar{255, 255, 255}, 2, cv::LINE_AA);
+      const auto output_path = output_directory /
+          (input_path.stem().string() + "_clusters.png");
+      CHECK(cv::imwrite(output_path.string(), visualization));
+      nlohmann::json cluster_data = nlohmann::json::array();
+      std::size_t pixel_count = 0;
+      for (const auto& cluster : clusters) {
+        pixel_count += cluster.img_points.size();
+        cluster_data.push_back({
+            {"centroid_px", {cluster.centroid.x, cluster.centroid.y}},
+            {"pixel_count", cluster.img_points.size()},
+            {"covariance", {{cluster.covar.at<float>(0, 0),
+                             cluster.covar.at<float>(0, 1)},
+                            {cluster.covar.at<float>(1, 0),
+                             cluster.covar.at<float>(1, 1)}}}});
+      }
+      frames.push_back({{"input", input_path.string()},
+                        {"output", output_path.string()},
+                        {"clusters", cluster_data}});
+      std::cout << output_path << ": " << clusters.size() << " clusters, "
+                << pixel_count << " thresholded pixels\n";
+    }
+    std::ofstream summary(output_directory / "clusters.json");
+    CHECK(summary.is_open());
+    summary << frames.dump(2) << '\n';
+  } catch (const std::exception& error) {
+    std::cerr << error.what() << '\n';
+    return 1;
+  }
+  return 0;
+}
