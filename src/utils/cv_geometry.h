@@ -1,10 +1,9 @@
 #pragma once
 
 #include <array>
-#include <type_traits>
 
 #include <Eigen/Core>
-#include <opencv2/core/mat.hpp>
+#include <opencv2/core/matx.hpp>
 #include <opencv2/core/types.hpp>
 #include <frc/geometry/Pose3d.h>
 #include <frc/geometry/Transform3d.h>
@@ -17,35 +16,39 @@ namespace utils {
 
 enum class Basis { kWpiToCv, kCvToWpi };
 
-auto CvMatToPoint3d(const cv::Mat& mat) -> cv::Point3d;
-auto HomogenizePoint3d(cv::Point3d point) -> cv::Mat;
+auto CvMatToPoint3d(const cv::Vec4d& mat) -> cv::Point3d;
+auto HomogenizePoint3d(cv::Point3d point) -> cv::Vec4d;
 auto QuadAreaPixels(const std::array<cv::Point2d, 4>& corners) -> double;
-auto MakeTransform(const cv::Mat& rvec, const cv::Mat& tvec) -> cv::Mat;
+auto MakeTransform(const cv::Vec3d& rvec, const cv::Vec3d& tvec) -> cv::Matx44d;
 
 template <typename Derived>
-auto EigenToCvMat(const Eigen::MatrixBase<Derived>& matrix) -> cv::Mat {
-  cv::Mat converted(matrix.rows(), matrix.cols(), CV_64F);
-  Eigen::Map<
-      Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>>(
-      converted.ptr<double>(), matrix.rows(), matrix.cols()) = matrix;
+auto EigenToCvMat(const Eigen::MatrixBase<Derived>& matrix)
+    -> cv::Matx<double, Derived::RowsAtCompileTime, Derived::ColsAtCompileTime> {
+  static_assert(Derived::RowsAtCompileTime != Eigen::Dynamic &&
+                Derived::ColsAtCompileTime != Eigen::Dynamic);
+  cv::Matx<double, Derived::RowsAtCompileTime, Derived::ColsAtCompileTime>
+      converted;
+  for (int row = 0; row < matrix.rows(); ++row) {
+    for (int col = 0; col < matrix.cols(); ++col) {
+      converted(row, col) = matrix(row, col);
+    }
+  }
   return converted;
 }
 
-template <typename Matrix = Eigen::Matrix4d>
-auto CvMatToEigen(const cv::Mat& matrix) -> Matrix {
-  static_assert(std::is_same_v<typename Matrix::Scalar, double>);
-  CV_Assert(matrix.type() == CV_64F);
-  CV_Assert(Matrix::RowsAtCompileTime == Eigen::Dynamic ||
-            matrix.rows == Matrix::RowsAtCompileTime);
-  CV_Assert(Matrix::ColsAtCompileTime == Eigen::Dynamic ||
-            matrix.cols == Matrix::ColsAtCompileTime);
-  return Eigen::Map<
-      const Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic,
-                          Eigen::RowMajor>>(matrix.ptr<double>(), matrix.rows,
-                                            matrix.cols);
+template <int rows, int cols>
+auto CvMatToEigen(const cv::Matx<double, rows, cols>& matrix)
+    -> Eigen::Matrix<double, rows, cols> {
+  Eigen::Matrix<double, rows, cols> converted;
+  for (int row = 0; row < rows; ++row) {
+    for (int col = 0; col < cols; ++col) {
+      converted(row, col) = matrix(row, col);
+    }
+  }
+  return converted;
 }
 
-auto ChangeBasis(cv::Mat& mat, Basis basis) -> void;
+auto ChangeBasis(cv::Matx44d& mat, Basis basis) -> void;
 auto BasisMatrix(Basis basis) -> Eigen::Matrix4d;
 
 template <typename Derived>
@@ -74,12 +77,12 @@ inline auto CrossProduct(const Eigen::Vector3d& vector) -> Eigen::Matrix3d {
   return result;
 }
 
-auto ConvertOpencvTransformationMatrixToWpilibPose(const cv::Mat& matrix)
+auto ConvertOpencvTransformationMatrixToWpilibPose(const cv::Matx44d& matrix)
     -> frc::Pose3d;
-auto ComputeRobotPose(const cv::Mat& tvec, const cv::Mat& rvec, int tag_id,
+auto ComputeRobotPose(const cv::Vec3d& tvec, const cv::Vec3d& rvec, int tag_id,
                       const frc::AprilTagFieldLayout& layout,
-                      const cv::Mat& camera_to_robot) -> frc::Pose3d;
-auto Pose3dToCvMat(frc::Pose3d pose) -> cv::Mat;
-auto Transform3dToCvMat(frc::Transform3d transform) -> cv::Mat;
+                      const cv::Matx44d& camera_to_robot) -> frc::Pose3d;
+auto Pose3dToCvMat(frc::Pose3d pose) -> cv::Matx44d;
+auto Transform3dToCvMat(frc::Transform3d transform) -> cv::Matx44d;
 
 }  // namespace utils

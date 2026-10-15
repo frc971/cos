@@ -1,13 +1,13 @@
 #pragma once
 #include <frc/geometry/Transform3d.h>
 #include <filesystem>
-#include <opencv2/core/mat.hpp>
+#include <opencv2/core/matx.hpp>
 namespace camera {
 
 struct Intrinsics {
   Intrinsics(const std::filesystem::path& path);
-  [[nodiscard]] auto ToMatrix() const -> cv::Mat;
-  [[nodiscard]] auto ToDistortionCoefficients() const -> cv::Mat;
+  [[nodiscard]] auto ToMatrix() const -> cv::Matx33d;
+  [[nodiscard]] auto ToDistortionCoefficients() const -> cv::Vec<double, 5>;
 
   double cx;
   double cy;
@@ -40,7 +40,8 @@ struct Extrinsics {
 };
 
 template <>
-[[nodiscard]] auto Extrinsics::ToCameraToRobot<cv::Mat>() const -> cv::Mat;
+[[nodiscard]] auto Extrinsics::ToCameraToRobot<cv::Matx44d>() const
+    -> cv::Matx44d;
 
 template <>
 [[nodiscard]] auto Extrinsics::ToCameraToRobot<frc::Transform3d>() const

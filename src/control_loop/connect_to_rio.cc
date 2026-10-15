@@ -4,10 +4,12 @@
 
 #include "absl/log/log.h"
 
+#include <networktables/BooleanTopic.h>
 #include <networktables/NetworkTableInstance.h>
 #include <networktables/StringTopic.h>
 #include <chrono>
 #include <filesystem>
+#include <mutex>
 #include <thread>
 
 namespace control_loop {
@@ -21,6 +23,31 @@ void PublishLogName(const std::string& path) {
   log_name_publisher.Set(path);
 }
 }  // namespace
+
+auto ShouldLogImages() -> bool {
+  const auto instance = nt::NetworkTableInstance::GetDefault();
+  static auto enabled =
+      instance.GetBooleanTopic("/AdvantageKit/DriverStation/Enabled")
+          .Subscribe(false, {.sendAll = true});
+  static std::mutex mutex;
+  const std::scoped_lock lock(mutex);
+  static bool was_enabled = false;
+  static bool waiting_for_second_enable = false;
+  if (!instance.IsConnected() || !enabled.GetTopic().Exists()) {
+    enabled.ReadQueue();
+    was_enabled = false;
+    waiting_for_second_enable = false;
+    return false;
+  }
+  for (const auto& update : enabled.ReadQueue()) {
+    if (update.value && !was_enabled) {
+      // Hold through the auto-to-teleop gap, only stop after teleop disables.
+      waiting_for_second_enable = !waiting_for_second_enable;
+    }
+    was_enabled = update.value;
+  }
+  return was_enabled || waiting_for_second_enable;
+}
 
 auto GetLogPath() -> const std::string& {
   static const std::string log_path = GetNewLogPath();

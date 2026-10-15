@@ -1,18 +1,21 @@
 #include <fstream>
-#include <iostream>
+#include <utility>
 
 #include "camera/jpeg_buffer.h"
 #include "logging/jpeg_buffer_log_node.h"
+#include <iostream>
 
 namespace logging {
 
 JpegBufferLogNode::JpegBufferLogNode(std::string_view input_channel,
                                      std::string_view folder_path,
-                                     control_loop::ThreadPool& thread_pool)
+                                     control_loop::ThreadPool& thread_pool,
+                                     std::function<bool()> should_log)
     : input_channel_(input_channel),
       folder_path_(folder_path),
       dependencies_({{input_channel_, typeid(camera::JpegBuffer)}}),
-      thread_pool_(thread_pool) {}
+      thread_pool_(thread_pool),
+      should_log_(std::move(should_log)) {}
 
 auto JpegBufferLogNode::CreateCallback()
     -> std::function<void(const control_loop::Context&)> {
@@ -21,7 +24,7 @@ auto JpegBufferLogNode::CreateCallback()
         [this, context]() -> void {
           auto jpeg_buffer =
               context->GetMessage<camera::JpegBuffer>(input_channel_);
-          if (jpeg_buffer != nullptr) {
+          if (jpeg_buffer != nullptr && should_log_()) {
             std::string output_file_path =
                 folder_path_ + "/" + std::to_string(jpeg_buffer->timestamp) +
                 ".jpg";

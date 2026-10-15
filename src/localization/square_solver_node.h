@@ -44,9 +44,9 @@ class SquareSolverNode final : public control_loop::INode {
   std::string output_channel_;
   frc::AprilTagFieldLayout layout_;
   std::vector<cv::Point3d> tag_corners_;
-  cv::Mat camera_matrix_;
-  cv::Mat distortion_coefficients_;
-  cv::Mat camera_to_robot_;
+  cv::Matx33d camera_matrix_;
+  cv::Vec<double, 5> distortion_coefficients_;
+  cv::Matx44d camera_to_robot_;
   std::vector<control_loop::MessageDescriptor> dependencies_;
   std::vector<control_loop::MessageDescriptor> publications_;
   std::vector<std::function<void(const control_loop::Context&)>> callbacks_;

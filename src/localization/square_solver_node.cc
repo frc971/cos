@@ -21,7 +21,7 @@ SquareSolverNode::SquareSolverNode(std::string_view input_channel,
       tag_corners_(std::move(tag_corners)),
       camera_matrix_(intrinsics.ToMatrix()),
       distortion_coefficients_(intrinsics.ToDistortionCoefficients()),
-      camera_to_robot_(extrinsics.ToCameraToRobot<cv::Mat>()),
+      camera_to_robot_(extrinsics.ToCameraToRobot<cv::Matx44d>()),
       dependencies_({control_loop::MessageDescriptor(
           input_channel_, typeid(apriltag::TagDetections))}),
       publications_({control_loop::MessageDescriptor::Publication<
@@ -84,9 +84,9 @@ auto SquareSolverNode::AmbiguousSolve(const tag_detection_t& detection,
     return std::nullopt;
   }
 
-  std::vector<cv::Mat> rvecs;
-  std::vector<cv::Mat> tvecs;
-  cv::Mat reprojection_errors;
+  std::vector<cv::Vec3d> rvecs;
+  std::vector<cv::Vec3d> tvecs;
+  std::vector<double> reprojection_errors;
   cv::solvePnPGeneric(tag_corners_, detection.corners, camera_matrix_,
                       distortion_coefficients_, rvecs, tvecs, false,
                       cv::SOLVEPNP_IPPE_SQUARE, cv::noArray(), cv::noArray(),
@@ -97,14 +97,14 @@ auto SquareSolverNode::AmbiguousSolve(const tag_detection_t& detection,
   }
 
   constexpr double kMaxUnambiguousErrorRatio = 0.2;
-  const double best_error = reprojection_errors.at<double>(0);
-  const double second_error = reprojection_errors.at<double>(1);
+  const double best_error = reprojection_errors[0];
+  const double second_error = reprojection_errors[1];
   const bool clearly_better =
       second_error > 1e-9 &&
       best_error < kMaxUnambiguousErrorRatio * second_error;
 
-  auto build_estimate = [&](const cv::Mat& rvec,
-                            const cv::Mat& tvec) -> solver_estimate_t {
+  auto build_estimate = [&](const cv::Vec3d& rvec,
+                            const cv::Vec3d& tvec) -> solver_estimate_t {
     const double distance = cv::norm(tvec);
     solver_estimate_t estimate;
     estimate.tag_ids = {detection.tag_id};

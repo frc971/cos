@@ -9,8 +9,11 @@ target_sources(cos.jpeg_buffer_log_node
     FILES
       jpeg_buffer_log_node.h
 )
-target_link_libraries(cos.jpeg_buffer_log_node PRIVATE
-  absl::log
+target_link_libraries(cos.jpeg_buffer_log_node
+  PUBLIC
+    cos::connect_to_rio
+  PRIVATE
+    absl::log
 )
 
 add_library(cos.wpilog_writer)
