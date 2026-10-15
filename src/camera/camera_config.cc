@@ -30,19 +30,13 @@ Intrinsics::Intrinsics(const std::filesystem::path& path) {
   p2 = intrinsics_json.value("p2", 0.0);
 }
 
-auto Intrinsics::ToMatrix() const -> cv::Mat {
-  cv::Mat matrix = cv::Mat::eye(3, 3, CV_64F);
-
-  matrix.at<double>(0, 0) = fx;
-  matrix.at<double>(0, 2) = cx;
-  matrix.at<double>(1, 1) = fy;
-  matrix.at<double>(1, 2) = cy;
-
-  return matrix;
+auto Intrinsics::ToMatrix() const -> cv::Matx33d {
+  return {fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0};
 }
 
-[[nodiscard]] auto Intrinsics::ToDistortionCoefficients() const -> cv::Mat {
-  return cv::Mat_<double>(1, 5) << k1, k2, p1, p2, k3;  // NOLINT
+[[nodiscard]] auto Intrinsics::ToDistortionCoefficients() const
+    -> cv::Vec<double, 5> {
+  return {k1, k2, p1, p2, k3};
 }
 
 Extrinsics::Extrinsics(const std::filesystem::path& path) {
@@ -85,7 +79,8 @@ template <>
 }
 
 template <>
-[[nodiscard]] auto Extrinsics::ToCameraToRobot<cv::Mat>() const -> cv::Mat {
+[[nodiscard]] auto Extrinsics::ToCameraToRobot<cv::Matx44d>() const
+    -> cv::Matx44d {
   auto camera_to_robot = ToRobotToCamera<frc::Transform3d>().Inverse();
   return utils::EigenToCvMat(camera_to_robot.ToMatrix());
 }

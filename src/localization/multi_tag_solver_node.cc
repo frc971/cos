@@ -29,12 +29,12 @@ MultiTagSolverNode::MultiTagSolverNode(
           input_channel_, typeid(apriltag::TagDetections))}),
       publications_({control_loop::MessageDescriptor::Publication<
           AmbiguousEstimateMessage>(output_channel_)}) {
-  cv::Mat rvec = (cv::Mat_<double>(3, 1) << 0, std::numbers::pi, 0);
-  cv::Mat tvec = (cv::Mat_<double>(3, 1) << 0, 0, 0);
-  cv::Mat rotate_z = utils::MakeTransform(rvec, tvec);
+  const cv::Vec3d rvec{0, std::numbers::pi, 0};
+  const cv::Vec3d tvec{0, 0, 0};
+  const cv::Matx44d rotate_z = utils::MakeTransform(rvec, tvec);
 
   for (const frc::AprilTag& tag : layout.GetTags()) {
-    cv::Mat field_to_tag = utils::Pose3dToCvMat(tag.pose);
+    const cv::Matx44d field_to_tag = utils::Pose3dToCvMat(tag.pose);
     tag_corners_[tag.ID] = {
         utils::CvMatToPoint3d(field_to_tag * rotate_z *
                               utils::HomogenizePoint3d(tag_corners[0])),
@@ -118,8 +118,8 @@ auto MultiTagSolverNode::AmbiguousSolve(
       continue;
     }
 
-    cv::Mat rvec_tag = cv::Mat::zeros(3, 1, CV_64FC1);
-    cv::Mat tvec_tag = cv::Mat::zeros(3, 1, CV_64FC1);
+    cv::Vec3d rvec_tag{};
+    cv::Vec3d tvec_tag{};
     std::vector<cv::Point2d> corners(detection.corners.begin(),
                                      detection.corners.end());
     try {
@@ -158,8 +158,8 @@ auto MultiTagSolverNode::AmbiguousSolve(
   }
 
   avg_distance /= static_cast<double>(tag_ids.size());
-  cv::Mat rvec = cv::Mat::zeros(3, 1, CV_64FC1);
-  cv::Mat tvec = cv::Mat::zeros(3, 1, CV_64FC1);
+  cv::Vec3d rvec{};
+  cv::Vec3d tvec{};
 
   try {
     cv::solvePnP(object_points, image_points, camera_matrix_,
@@ -170,8 +170,8 @@ auto MultiTagSolverNode::AmbiguousSolve(
     return std::nullopt;
   }
 
-  cv::Mat field_to_camera = utils::MakeTransform(rvec, tvec).inv();
-  cv::Mat field_to_robot = field_to_camera * camera_to_robot_;
+  const cv::Matx44d field_to_camera = utils::MakeTransform(rvec, tvec).inv();
+  const cv::Matx44d field_to_robot = field_to_camera * camera_to_robot_;
   const int num_tags = static_cast<int>(tag_ids.size());
 
   solver_estimate_t estimate;

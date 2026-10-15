@@ -30,15 +30,15 @@ class SingleTagRotationTest : public ::testing::Test {
   auto Detection(double yaw_degrees) -> localization::tag_detection_t {
     // With this tag's field heading, a CV Y rotation of yaw - 90 produces
     // the requested robot yaw. Use real calibrated projection/distortion.
-    const cv::Mat yaw_rvec = (cv::Mat_<double>(3, 1) << 0,
-                              (yaw_degrees - 90) * std::numbers::pi / 180, 0);
+    const cv::Vec3d yaw_rvec{0, (yaw_degrees - 90) * std::numbers::pi / 180, 0};
     // A slight fixed pitch avoids IPPE's exactly frontoparallel singularity.
-    const cv::Mat pitch_rvec = (cv::Mat_<double>(3, 1) << 0.05, 0, 0);
-    cv::Mat yaw_rotation, pitch_rotation, rvec;
+    const cv::Vec3d pitch_rvec{0.05, 0, 0};
+    cv::Matx33d yaw_rotation, pitch_rotation;
+    cv::Vec3d rvec;
     cv::Rodrigues(yaw_rvec, yaw_rotation);
     cv::Rodrigues(pitch_rvec, pitch_rotation);
     cv::Rodrigues(pitch_rotation * yaw_rotation, rvec);
-    const cv::Mat tvec = (cv::Mat_<double>(3, 1) << 0.03, 0, 0.6);
+    const cv::Vec3d tvec{0.03, 0, 0.6};
     std::vector<cv::Point2d> corners;
     cv::projectPoints(localization::kApriltagCorners, rvec, tvec,
                       intrinsics_.ToMatrix(),
@@ -52,15 +52,16 @@ class SingleTagRotationTest : public ::testing::Test {
 
 TEST_F(SingleTagRotationTest, ClearImageEvidenceOverridesMirroredPreviousPose) {
   const auto detection = Detection(135);
-  std::vector<cv::Mat> rvecs, tvecs;
+  std::vector<cv::Vec3d> rvecs, tvecs;
   cv::solvePnPGeneric(localization::kApriltagCorners, detection.corners,
                       intrinsics_.ToMatrix(),
                       intrinsics_.ToDistortionCoefficients(), rvecs, tvecs,
                       false, cv::SOLVEPNP_IPPE_SQUARE);
   ASSERT_EQ(rvecs.size(), 2u);
   localization::ambiguous_estimate_t previous;
-  previous.pos1.pose = utils::ComputeRobotPose(
-      tvecs[1], rvecs[1], 10, layout_, extrinsics_.ToCameraToRobot<cv::Mat>());
+  previous.pos1.pose =
+      utils::ComputeRobotPose(tvecs[1], rvecs[1], 10, layout_,
+                              extrinsics_.ToCameraToRobot<cv::Matx44d>());
   previous.pos1.variance = 1;
   ASSERT_TRUE(solver_.Solve({&previous}, false).has_value());
 

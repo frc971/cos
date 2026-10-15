@@ -152,7 +152,7 @@ target_sources(cos.camera_config
       camera_config.h
 )
 target_link_libraries(cos.camera_config PUBLIC
-  ${OpenCV_LIBS}
+  opencv_core
   wpimath
   cos::cv_geometry_utils
   absl::check

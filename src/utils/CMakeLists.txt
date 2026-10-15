@@ -65,3 +65,22 @@ target_link_libraries(cos.cv_geometry_utils PUBLIC
 target_link_libraries(cos.cv_geometry_utils PRIVATE
   apriltag
 )
+
+add_library(cos.image_utils)
+add_library(cos::image_utils ALIAS cos.image_utils)
+target_sources(cos.image_utils
+  PRIVATE
+    image_utils.cc
+  PUBLIC
+    FILE_SET HEADERS
+    BASE_DIRS ${PROJECT_SOURCE_DIR}/src
+    FILES
+      image_utils.h
+)
+target_link_libraries(cos.image_utils PUBLIC
+  opencv_core
+  wpimath
+)
+target_link_libraries(cos.image_utils PRIVATE
+  opencv_imgproc
+)

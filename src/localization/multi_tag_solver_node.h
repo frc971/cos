@@ -44,9 +44,9 @@ class MultiTagSolverNode final : public control_loop::INode {
 
   std::string input_channel_;
   std::string output_channel_;
-  cv::Mat camera_matrix_;
-  cv::Mat distortion_coefficients_;
-  cv::Mat camera_to_robot_;
+  cv::Matx33d camera_matrix_;
+  cv::Vec<double, 5> distortion_coefficients_;
+  cv::Matx44d camera_to_robot_;
   std::unordered_map<int, std::array<cv::Point3d, 4>> tag_corners_;
   SquareSolverNode single_tag_solver_;
   std::vector<control_loop::MessageDescriptor> dependencies_;
