@@ -18,11 +18,14 @@ target_sources(cos.control_loop
 target_compile_options(cos.control_loop PRIVATE
   $<$<CXX_COMPILER_ID:GNU>:-Wno-array-bounds>
 )
-target_link_libraries(cos.control_loop PRIVATE
-  absl::check
-  absl::log
-  cos::timer
-  cos::wpilog_writer
+target_link_libraries(cos.control_loop
+  PUBLIC
+    cos::logging_types
+  PRIVATE
+    absl::check
+    absl::log
+    cos::timer
+    cos::wpilog_writer
 )
 
 find_package(Threads REQUIRED)

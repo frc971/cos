@@ -10,6 +10,7 @@ target_sources(cos.jpeg_buffer_streamer_node
       jpeg_buffer_streamer_node.h
 )
 target_link_libraries(cos.jpeg_buffer_streamer_node PUBLIC
+  cos::logging_types
   nadjieb_mjpeg_streamer::nadjieb_mjpeg_streamer
   absl::log
   absl::log_initialize

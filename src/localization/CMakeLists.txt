@@ -11,6 +11,7 @@ target_sources(cos.localization_solver_common
       solver_common.h
 )
 target_link_libraries(cos.localization_solver_common PUBLIC
+  cos::logging_types
   ${OpenCV_LIBS}
   wpimath
   apriltag
