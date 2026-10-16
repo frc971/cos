@@ -1,5 +1,4 @@
 include_directories(SYSTEM
-  ${CMAKE_SYSROOT}/usr/include/eigen3
   ${PROJECT_SOURCE_DIR}/third_party/json/include
 )
 
