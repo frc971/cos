@@ -13,8 +13,8 @@
 #include "control_loop/thread_pool.h"
 #include "localization/unambiguous_solver_node.h"
 #include "localization/variance_calculator_node.h"
-#include "logging/wpilog_writer.h"
 #include "logging/jpeg_buffer_log_node.h"
+#include "logging/wpilog_writer.h"
 #include "simulation/simulation_position_sender_node.h"
 #include "streamer/jpeg_buffer_streamer_node.h"
 #include "streamer/position_estimate_rio_streamer_node.h"
@@ -109,7 +109,7 @@ auto main(int argc, char** argv) -> int {
 
   auto solver_node =
       std::make_shared<localization::UnambiguousSolverNode>("pose");
-  solver_node->SetRejectFarTags(false);
+  solver_node->SetRejectFarTags(true);
   control_loop.RegisterNode(solver_node);
 
   auto rio_sender_node =
@@ -139,7 +139,8 @@ auto main(int argc, char** argv) -> int {
   }
 
   auto wpilog_writer = std::make_shared<logging::WPILogWriter>(
-      (std::filesystem::path(control_loop::GetLogPath()) / "cos.wpilog").string(),
+      (std::filesystem::path(control_loop::GetLogPath()) / "cos.wpilog")
+          .string(),
       control_loop.GetLogPublications());
   control_loop.EnableWPILog(wpilog_writer);
   control_loop.Start();
