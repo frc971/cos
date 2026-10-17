@@ -2,7 +2,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tools")
 
 add_executable(hsv_cluster_visualizer hsv_cluster_visualizer.cc)
 target_link_libraries(hsv_cluster_visualizer PRIVATE
-  hsv_cluster_tracker cos::cv_geometry_utils nlohmann_json::nlohmann_json
+  hsv_cluster_tracker_node cos::nvjpeg_decode_node cos::cv_geometry_utils nlohmann_json::nlohmann_json
   absl::check opencv_calib3d opencv_imgcodecs opencv_imgproc)
 
 add_subdirectory(path_camera_sim)

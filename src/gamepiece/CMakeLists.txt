@@ -84,15 +84,12 @@ target_include_directories(ellipse SYSTEM BEFORE PRIVATE
 # Eigen's polynomial solver fails with ARM NEON.
 target_compile_definitions(ellipse PRIVATE EIGEN_DONT_VECTORIZE)
 
-add_library(hsv_cluster_tracker hsv_cluster_tracker.cc)
-target_link_libraries(hsv_cluster_tracker PUBLIC opencv_core wpimath PRIVATE
-  ellipse image_utils cos::cv_geometry_utils opencv_imgproc opencv_calib3d)
-target_include_directories(hsv_cluster_tracker PUBLIC ${CMAKE_SOURCE_DIR}/src)
-
 add_library(hsv_cluster_tracker_node hsv_cluster_tracker_node.cc)
 target_link_libraries(hsv_cluster_tracker_node PUBLIC
-  hsv_cluster_tracker cos::control_loop PRIVATE
+  opencv_core wpimath cos::control_loop PRIVATE
+  ellipse image_utils cos::cv_geometry_utils opencv_imgproc opencv_calib3d
   cos::nvjpeg_decode_node cos::thread_pool)
+target_include_directories(hsv_cluster_tracker_node PUBLIC ${CMAKE_SOURCE_DIR}/src)
 add_library(cos::hsv_cluster_tracker_node ALIAS hsv_cluster_tracker_node)
 
 add_library(gamepiece INTERFACE)

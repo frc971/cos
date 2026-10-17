@@ -10,6 +10,7 @@
 
 #include <cuda_runtime_api.h>
 #include <gtest/gtest.h>
+#include <opencv2/calib3d.hpp>
 #include <opencv2/imgproc.hpp>
 
 #include "camera/nvjpeg_decode_node.h"
@@ -39,7 +40,8 @@ auto MakeImage() -> cv::Mat {
 }
 
 TEST(HSVClusterTrackerTest, PreservesBosThresholdsAndClearsEmptyFrames) {
-  gamepiece::HSVClusterTracker tracker(kIntrinsics, kExtrinsics, kDistortion);
+  gamepiece::HSVClusterTrackerNode tracker("decoded", "clusters", kIntrinsics,
+                                         kExtrinsics, kDistortion);
   tracker.ProcessFrame(MakeImage());
   ASSERT_FALSE(tracker.GetClusters()->empty());
   std::size_t points = 0;
@@ -50,10 +52,10 @@ TEST(HSVClusterTrackerTest, PreservesBosThresholdsAndClearsEmptyFrames) {
     EXPECT_TRUE(std::isfinite(cluster.camera_relative_translation->Y().value()));
     EXPECT_TRUE(cv::checkRange(cluster.covar));
     for (const auto& point : cluster.img_points) {
-      EXPECT_GE(point.y, 60);
-      EXPECT_LT(point.y, 80);
-      EXPECT_TRUE((point.x >= 20 && point.x < 40) ||
-                  (point.x >= 80 && point.x < 100));
+      EXPECT_GE(point.y, 0.12f);
+      EXPECT_LT(point.y, 0.32f);
+      EXPECT_TRUE((point.x >= -0.44f && point.x < -0.24f) ||
+                  (point.x >= 0.16f && point.x < 0.36f));
     }
   }
   EXPECT_EQ(points, 800U);
@@ -65,8 +67,9 @@ TEST(HSVClusterTrackerTest, PreservesBosThresholdsAndClearsEmptyFrames) {
   EXPECT_FALSE(tracker.GetClusters()->empty());
 }
 
-TEST(HSVClusterTrackerTest, ProjectsNormalizedRaysAndRetainsPixelCoordinates) {
-  gamepiece::HSVClusterTracker tracker(kIntrinsics, kExtrinsics, kDistortion);
+TEST(HSVClusterTrackerTest, StoresNormalizedCoordinatesAndProjectsGroundRays) {
+  gamepiece::HSVClusterTrackerNode tracker("decoded", "clusters", kIntrinsics,
+                                         kExtrinsics, kDistortion);
   tracker.ProcessFrame(MakeImage());
   ASSERT_FALSE(tracker.GetClusters()->empty());
   for (const auto& cluster : *tracker.GetClusters()) {
@@ -76,18 +79,49 @@ TEST(HSVClusterTrackerTest, ProjectsNormalizedRaysAndRetainsPixelCoordinates) {
         cluster.img_points, {}, &cv::Point2f::y);
     // This calibration has no rotation and a one-meter camera height. A ray
     // intersects the floor at forward distance height / normalized_y.
-    const double forward_distance =
-        kIntrinsics(1, 1) / (lowest_point->y - kIntrinsics(1, 2));
-    const double lateral_distance =
-        -(lowest_point->x - kIntrinsics(0, 2)) / kIntrinsics(0, 0) *
-        forward_distance;
+    const double forward_distance = 1.0 / lowest_point->y;
+    const double lateral_distance = -lowest_point->x * forward_distance;
     EXPECT_NEAR(cluster.camera_relative_translation->X().value(),
                 forward_distance, 1e-5);
     EXPECT_NEAR(cluster.camera_relative_translation->Y().value(),
                 lateral_distance, 1e-5);
-    EXPECT_GE(cluster.centroid.y, 60);
-    EXPECT_LT(cluster.centroid.y, 80);
+    EXPECT_GE(cluster.centroid.y, 0.12f);
+    EXPECT_LT(cluster.centroid.y, 0.32f);
   }
+}
+
+TEST(HSVClusterTrackerTest, NormalizedPointsReprojectWithDistortion) {
+  const cv::Matx33d intrinsics{140, 0, 64, 0, 90, 48, 0, 0, 1};
+  const cv::Vec<double, 5> distortion{0.1, -0.03, 0.01, -0.02, 0.005};
+  gamepiece::HSVClusterTrackerNode tracker("decoded", "clusters", intrinsics,
+                                         kExtrinsics, distortion);
+  tracker.ProcessFrame(MakeImage());
+  ASSERT_FALSE(tracker.GetClusters()->empty());
+  std::size_t point_count = 0;
+  for (const auto& cluster : *tracker.GetClusters()) {
+    std::vector<cv::Point3f> rays;
+    cv::Point2f sum{0, 0};
+    for (const auto& point : cluster.img_points) {
+      rays.emplace_back(point.x, point.y, 1.0f);
+      sum += point;
+    }
+    const cv::Point2f mean =
+        sum / static_cast<float>(cluster.img_points.size());
+    EXPECT_NEAR(cv::norm(mean - cluster.centroid), 0, 1e-6);
+    std::vector<cv::Point2f> pixels;
+    cv::projectPoints(rays, cv::Vec3d{}, cv::Vec3d{}, intrinsics, distortion,
+                      pixels);
+    for (const auto& pixel : pixels) {
+      EXPECT_NEAR(pixel.x, std::round(pixel.x), 1e-3);
+      EXPECT_NEAR(pixel.y, std::round(pixel.y), 1e-3);
+      EXPECT_GE(std::round(pixel.y), 60);
+      EXPECT_LT(std::round(pixel.y), 80);
+      EXPECT_TRUE((std::round(pixel.x) >= 20 && std::round(pixel.x) < 40) ||
+                  (std::round(pixel.x) >= 80 && std::round(pixel.x) < 100));
+    }
+    point_count += pixels.size();
+  }
+  EXPECT_EQ(point_count, 800U);
 }
 
 TEST(HSVClusterTrackerTest, RejectsHorizonPointsAndCapsClustersToUsablePoints) {
@@ -98,13 +132,14 @@ TEST(HSVClusterTrackerTest, RejectsHorizonPointsAndCapsClustersToUsablePoints) {
   hsv(70, 64) = cv::Vec3b{24, 255, 255};
   cv::Mat bgr;
   cv::cvtColor(hsv, bgr, cv::COLOR_HSV2BGR);
-  gamepiece::HSVClusterTracker tracker(kIntrinsics, kExtrinsics, kDistortion);
+  gamepiece::HSVClusterTrackerNode tracker("decoded", "clusters", kIntrinsics,
+                                         kExtrinsics, kDistortion);
   tracker.ProcessFrame(bgr);
   ASSERT_EQ(tracker.GetClusters()->size(), 1U);
   const auto& cluster = tracker.GetClusters()->front();
   ASSERT_EQ(cluster.img_points.size(), 1U);
-  EXPECT_EQ(cluster.img_points.front(), cv::Point2f(64, 70));
-  EXPECT_EQ(cluster.centroid, cv::Point2f(64, 70));
+  EXPECT_EQ(cluster.img_points.front(), cv::Point2f(0, 0.22f));
+  EXPECT_EQ(cluster.centroid, cv::Point2f(0, 0.22f));
   hsv(70, 64) = cv::Vec3b{0, 0, 0};
   cv::cvtColor(hsv, bgr, cv::COLOR_HSV2BGR);
   tracker.ProcessFrame(bgr);
@@ -112,25 +147,26 @@ TEST(HSVClusterTrackerTest, RejectsHorizonPointsAndCapsClustersToUsablePoints) {
 }
 
 TEST(HSVClusterTrackerTest, AppliesConfigurableGroundDistanceLimit) {
-  gamepiece::HSVClusterTracker tracker(kIntrinsics, kExtrinsics, kDistortion,
-                                       2.0f);
+  gamepiece::HSVClusterTrackerNode tracker("decoded", "clusters", kIntrinsics,
+                                         kExtrinsics, kDistortion, 2.0f);
   tracker.ProcessFrame(MakeImage());
   EXPECT_TRUE(tracker.GetClusters()->empty());
-  EXPECT_THROW(gamepiece::HSVClusterTracker(kIntrinsics, kExtrinsics,
-                                           kDistortion, 0.0f),
+  EXPECT_THROW(gamepiece::HSVClusterTrackerNode("decoded", "clusters",
+                                               kIntrinsics, kExtrinsics,
+                                               kDistortion, 0.0f),
                std::invalid_argument);
 }
 
 TEST(HSVClusterTrackerTest, ClusteringIsIndependentOfPixelOrigin) {
   const cv::Mat image = MakeImage();
-  const cv::Point2f shift{64, 48};
   cv::Mat3b shifted_image(144, 192, cv::Vec3b{0, 0, 0});
   image.copyTo(shifted_image(cv::Rect{64, 48, image.cols, image.rows}));
   const cv::Matx33d intrinsics{128, 0, 64, 0, 128, 48, 0, 0, 1};
   const cv::Matx33d shifted_intrinsics{128, 0, 128, 0, 128, 96, 0, 0, 1};
-  gamepiece::HSVClusterTracker tracker(intrinsics, kExtrinsics, kDistortion);
-  gamepiece::HSVClusterTracker shifted_tracker(shifted_intrinsics, kExtrinsics,
-                                               kDistortion);
+  gamepiece::HSVClusterTrackerNode tracker("decoded", "clusters", intrinsics,
+                                         kExtrinsics, kDistortion);
+  gamepiece::HSVClusterTrackerNode shifted_tracker(
+      "decoded", "clusters", shifted_intrinsics, kExtrinsics, kDistortion);
   tracker.ProcessFrame(image);
   shifted_tracker.ProcessFrame(shifted_image);
   ASSERT_FALSE(tracker.GetClusters()->empty());
@@ -140,9 +176,9 @@ TEST(HSVClusterTrackerTest, ClusteringIsIndependentOfPixelOrigin) {
     const auto& shifted = shifted_tracker.GetClusters()->at(i);
     ASSERT_EQ(original.img_points.size(), shifted.img_points.size());
     for (std::size_t point = 0; point < original.img_points.size(); ++point) {
-      EXPECT_EQ(original.img_points[point] + shift, shifted.img_points[point]);
+      EXPECT_EQ(original.img_points[point], shifted.img_points[point]);
     }
-    EXPECT_NEAR(cv::norm(original.centroid + shift - shifted.centroid), 0, 1e-3);
+    EXPECT_NEAR(cv::norm(original.centroid - shifted.centroid), 0, 1e-3);
   }
 }
 
@@ -180,7 +216,8 @@ TEST(HSVClusterTrackerNodeTest, DeclaresInputAndOutputAndPublishesNullOnce) {
 TEST(HSVClusterTrackerNodeTest, ProcessesPaddedDeviceFramesAndRetainsHistory) {
   gamepiece::HSVClusterTrackerNode node("decoded", "clusters", kIntrinsics,
                                         kExtrinsics, kDistortion);
-  gamepiece::HSVClusterTracker tracker(kIntrinsics, kExtrinsics, kDistortion);
+  gamepiece::HSVClusterTrackerNode tracker("decoded", "clusters", kIntrinsics,
+                                         kExtrinsics, kDistortion);
   int notifications = 0;
   node.RegisterCallback(
       [&](const control_loop::Context&) -> void { ++notifications; });

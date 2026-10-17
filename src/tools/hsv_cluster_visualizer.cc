@@ -1,4 +1,4 @@
-#include "gamepiece/hsv_cluster_tracker.h"
+#include "gamepiece/hsv_cluster_tracker_node.h"
 
 #include <algorithm>
 #include <cmath>
@@ -26,13 +26,13 @@
 namespace {
 
 constexpr std::string_view kDefaultIntrinsicsPath =
-    "constants/fake_gamepiece/intrinsics.json";
+    "constants/gamepiece/camera.json";
 constexpr std::string_view kDefaultExtrinsicsPath =
-    "constants/fake_gamepiece/extrinsics.json";
+    "constants/gamepiece/camera.json";
 constexpr std::string_view kDefaultOutputDirectory =
     "build/fake_gamepiece-clusters";
 constexpr std::string_view kDefaultFramePath =
-    "constants/fake_gamepiece/110.600000.jpg";
+    "/cos-logs/gamepiece/110.600000.jpg";
 
 // Drawing helpers are adapted from BOS's hsv_cluster_visualizer.cc.
 auto RandomClusterColor(std::mt19937& random_generator) -> cv::Scalar {
@@ -90,6 +90,24 @@ auto DrawClusterIndex(cv::Mat& image, const std::size_t cluster_index,
               cv::Scalar{255, 255, 255}, kTextThickness, cv::LINE_AA);
 }
 
+// Convert normalized geometry to the undistorted image's pixel coordinates.
+auto PixelCluster(const gamepiece::kmeans_cluster_t& cluster,
+                  const cv::Mat& camera_matrix) -> gamepiece::kmeans_cluster_t {
+  const cv::Matx33f intrinsics(camera_matrix);
+  const cv::Matx22f scale{intrinsics(0, 0), 0, 0, intrinsics(1, 1)};
+  const auto pixel_point = [&](const cv::Point2f& point) -> cv::Point2f {
+    return {point.x * intrinsics(0, 0) + intrinsics(0, 2),
+            point.y * intrinsics(1, 1) + intrinsics(1, 2)};
+  };
+  gamepiece::kmeans_cluster_t result = cluster;
+  result.centroid = pixel_point(cluster.centroid);
+  result.covar = cv::Mat(scale) * cluster.covar * cv::Mat(scale.t());
+  for (auto& point : result.img_points) {
+    point = pixel_point(point);
+  }
+  return result;
+}
+
 auto AnnotateFrame(const cv::Mat& frame,
                    const std::vector<gamepiece::kmeans_cluster_t>& clusters,
                    const cv::Mat& camera_matrix,
@@ -103,8 +121,7 @@ auto AnnotateFrame(const cv::Mat& frame,
   for (std::size_t cluster_index = 0; cluster_index < clusters.size();
        ++cluster_index) {
     const gamepiece::kmeans_cluster_t& cluster = clusters.at(cluster_index);
-    // The ported tracker already returns undistorted pixel coordinates.
-    const gamepiece::kmeans_cluster_t& pixel_cluster = cluster;
+    const auto pixel_cluster = PixelCluster(cluster, camera_matrix);
     const cv::Scalar color = RandomClusterColor(random_generator);
     const cv::Vec3b pixel_color{static_cast<uchar>(color[0]),
                                 static_cast<uchar>(color[1]),
@@ -146,18 +163,28 @@ auto main(int argc, char** argv) -> int {
   if (argc != 1 && argc < 5) {
     std::cerr << "Usage: hsv_cluster_visualizer [<intrinsics.json> "
                  "<extrinsics.json> <output-directory> <frame.jpg>...]\n"
-                 "With no arguments, runs the fake_gamepiece sample frame.\n"
-                 "Calibration uses flat BOS JSON, with rotations in radians.\n";
+                 "With no arguments, runs the gamepiece sample frame.\n"
+                 "Calibration uses nested camera JSON (degrees) or flat BOS JSON "
+                 "(radians).\n";
     return 1;
   }
   try {
     const bool use_defaults = argc == 1;
-    const auto intrinsics = ReadJson(
+    const auto intrinsics_json = ReadJson(
         use_defaults ? std::filesystem::path{kDefaultIntrinsicsPath}
                      : std::filesystem::path{argv[1]});
-    const auto extrinsics = ReadJson(
+    const auto extrinsics_json = ReadJson(
         use_defaults ? std::filesystem::path{kDefaultExtrinsicsPath}
                      : std::filesystem::path{argv[2]});
+    const auto& intrinsics = intrinsics_json.contains("intrinsics")
+                                 ? intrinsics_json.at("intrinsics")
+                                 : intrinsics_json;
+    const bool rotations_in_degrees = extrinsics_json.contains("extrinsics");
+    const auto& extrinsics = rotations_in_degrees
+                                 ? extrinsics_json.at("extrinsics")
+                                 : extrinsics_json;
+    const double rotation_scale =
+        rotations_in_degrees ? std::numbers::pi / 180.0 : 1.0;
     const cv::Matx33d camera_matrix{
         intrinsics.at("fx").get<double>(), 0, intrinsics.at("cx").get<double>(),
         0, intrinsics.at("fy").get<double>(), intrinsics.at("cy").get<double>(),
@@ -171,13 +198,16 @@ auto main(int argc, char** argv) -> int {
         units::meter_t{extrinsics.at("translation_y").get<double>()},
         units::meter_t{extrinsics.at("translation_z").get<double>()},
         frc::Rotation3d(
-            units::radian_t{extrinsics.at("rotation_x").get<double>()},
-            units::radian_t{extrinsics.at("rotation_y").get<double>()},
-            units::radian_t{extrinsics.at("rotation_z").get<double>()}));
+            units::radian_t{extrinsics.at("rotation_x").get<double>() *
+                            rotation_scale},
+            units::radian_t{extrinsics.at("rotation_y").get<double>() *
+                            rotation_scale},
+            units::radian_t{extrinsics.at("rotation_z").get<double>() *
+                            rotation_scale}));
     const frc::Transform3d camera_to_robot =
         frc::Transform3d(frc::Pose3d{}, camera_pose).Inverse();
-    gamepiece::HSVClusterTracker tracker(
-        camera_matrix,
+    gamepiece::HSVClusterTrackerNode tracker(
+        "decoded", "clusters", camera_matrix,
         cv::Matx44d(utils::EigenToCvMat(camera_to_robot.ToMatrix())),
         distortion);
     const std::filesystem::path output_directory(
@@ -213,7 +243,9 @@ auto main(int argc, char** argv) -> int {
       CHECK(cv::imwrite(output_path.string(), visualization));
       nlohmann::json cluster_data = nlohmann::json::array();
       std::size_t pixel_count = 0;
-      for (const auto& cluster : clusters) {
+      for (const auto& normalized_cluster : clusters) {
+        const auto cluster =
+            PixelCluster(normalized_cluster, cv::Mat(camera_matrix));
         pixel_count += cluster.img_points.size();
         cluster_data.push_back({
             {"centroid_px", {cluster.centroid.x, cluster.centroid.y}},
