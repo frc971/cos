@@ -11,20 +11,23 @@
 #include <opencv2/core.hpp>
 
 #include "control_loop/node.h"
+#include "gamepiece/ellipse.h"
 #include "utils/disjoint_set_union.h"
 
 namespace gamepiece {
 
 using kmeans_cluster_t = struct KMeansCluster {
-  // Undistorted, focal-length-normalized image coordinates (x/z, y/z).
-  cv::Point2f centroid;
-  // Covariance of img_points in normalized coordinates.
-  cv::Mat covar;
+  cv::Point2f
+      centroid;  // Undistorted, focal-length-normalized image coordinates (x/z, y/z).
+  cv::Mat covar;  // Covariance of img_points in normalized coordinates.
   std::vector<cv::Point2f> img_points;
   std::optional<frc::Translation2d> camera_relative_translation = std::nullopt;
 };
 
 using hsv_clusters_t = std::vector<kmeans_cluster_t>;
+
+// The normalized 2-sigma ellipse used for cluster overlap decisions.
+[[nodiscard]] auto ClusterEllipse(const kmeans_cluster_t& cluster) -> Ellipse;
 
 class HSVClusterTrackerNode final : public control_loop::INode {
  public:

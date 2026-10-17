@@ -65,6 +65,11 @@ HSVClusterTrackerNode::HSVClusterTrackerNode(
     throw std::invalid_argument(
         "Maximum ground distance must be finite and positive");
   }
+  if (!std::isfinite(extrinsics(2, 3)) || extrinsics(2, 3) <= 0) {
+    throw std::invalid_argument(
+        "HSV tracker extrinsics must be the camera pose in robot coordinates "
+        "with a positive camera height");
+  }
   utils::ChangeBasis(camera_extrinsics_cv_, utils::Basis::kWpiToCv);
 }
 
@@ -444,28 +449,31 @@ auto HSVClusterTrackerNode::ClusterDistance(
 auto HSVClusterTrackerNode::ClustersOverlap(
     const kmeans_cluster_t& first, const kmeans_cluster_t& second) const
     -> bool {
-  const auto make_ellipse = [](const kmeans_cluster_t& cluster) -> Ellipse {
-    const cv::Mat& covariance = cluster.covar;
-    if (covariance.rows != 2 || covariance.cols != 2) {
-      throw std::invalid_argument("KMeans covariance must be 2 by 2");
-    }
+  return ellipse_overlap_area(ClusterEllipse(first), ClusterEllipse(second)) >
+         0.0f;
+}
 
-    cv::Mat eigenvalues;
-    cv::Mat eigenvectors;
-    cv::eigen(covariance, eigenvalues, eigenvectors);
-    constexpr float kMinimumRadius = 1e-6f;
-    const float major =
-        std::sqrt(std::max(eigenvalues.at<float>(0, 0), 0.0f)) + kMinimumRadius;
-    const float minor =
-        std::sqrt(std::max(eigenvalues.at<float>(1, 0), 0.0f)) + kMinimumRadius;
-    const cv::Vec2f major_axis(eigenvectors.at<float>(0, 0),
-                               eigenvectors.at<float>(0, 1));
-    return {.center = {cluster.centroid.x, cluster.centroid.y},
-            .semi_axes = {major, minor},
-            .rotation = std::atan2(major_axis[1], major_axis[0])};
-  };
+auto ClusterEllipse(const kmeans_cluster_t& cluster) -> Ellipse {
+  const cv::Mat& covariance = cluster.covar;
+  if (covariance.rows != 2 || covariance.cols != 2) {
+    throw std::invalid_argument("KMeans covariance must be 2 by 2");
+  }
 
-  return ellipse_overlap_area(make_ellipse(first), make_ellipse(second)) > 0.0f;
+  cv::Mat eigenvalues;
+  cv::Mat eigenvectors;
+  cv::eigen(covariance, eigenvalues, eigenvectors);
+  constexpr float kMinimumRadius = 1e-6f;
+  const float major =
+      2.0 * std::sqrt(std::max(eigenvalues.at<float>(0, 0), 0.0f)) +
+      kMinimumRadius;
+  const float minor =
+      2.0 * std::sqrt(std::max(eigenvalues.at<float>(1, 0), 0.0f)) +
+      kMinimumRadius;
+  const cv::Vec2f major_axis(eigenvectors.at<float>(0, 0),
+                             eigenvectors.at<float>(0, 1));
+  return {.center = {cluster.centroid.x, cluster.centroid.y},
+          .semi_axes = {major, minor},
+          .rotation = std::atan2(major_axis[1], major_axis[0])};
 }
 
 auto HSVClusterTrackerNode::MergeOverlappingClusters(

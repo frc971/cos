@@ -14,7 +14,6 @@
 
 #include <frc/geometry/Pose3d.h>
 #include <frc/geometry/Rotation3d.h>
-#include <frc/geometry/Transform3d.h>
 #include <nlohmann/json.hpp>
 #include <opencv2/calib3d.hpp>
 #include <opencv2/imgcodecs.hpp>
@@ -48,28 +47,34 @@ auto RandomClusterColor(std::mt19937& random_generator) -> cv::Scalar {
           static_cast<double>(color[2])};
 }
 
-auto ClusterEllipse(const gamepiece::kmeans_cluster_t& cluster)
+auto PixelEllipse(const gamepiece::Ellipse& ellipse,
+                  const cv::Mat& camera_matrix)
     -> cv::RotatedRect {
-  cv::Mat covariance;
-  cluster.covar.convertTo(covariance, CV_64F);
+  // Transform the algorithm's actual ellipse, including its normalized radius
+  // padding. Unequal fx/fy can change both its axis lengths and orientation.
+  const cv::Matx33d intrinsics(camera_matrix);
+  const double cosine = std::cos(ellipse.rotation);
+  const double sine = std::sin(ellipse.rotation);
+  const cv::Matx22d axes{
+      intrinsics(0, 0) * ellipse.semi_axes.width * cosine,
+      -intrinsics(0, 0) * ellipse.semi_axes.height * sine,
+      intrinsics(1, 1) * ellipse.semi_axes.width * sine,
+      intrinsics(1, 1) * ellipse.semi_axes.height * cosine};
   cv::Mat eigenvalues;
   cv::Mat eigenvectors;
-  cv::eigen(covariance, eigenvalues, eigenvectors);
-
-  constexpr double kStandardDeviationScale = 2.0;
-  constexpr double kMinimumDiameter = 2.0;
-  const auto ellipse_diameter =
-      [kMinimumDiameter](const double eigenvalue) -> double {
-    return std::max(
-        2.0 * kStandardDeviationScale * std::sqrt(std::max(eigenvalue, 0.0)),
-        kMinimumDiameter);
-  };
+  cv::eigen(cv::Mat(axes * axes.t()), eigenvalues, eigenvectors);
   const double angle =
       std::atan2(eigenvectors.at<double>(0, 1), eigenvectors.at<double>(0, 0)) *
       180.0 / std::numbers::pi;
-  return {cluster.centroid,
-          {static_cast<float>(ellipse_diameter(eigenvalues.at<double>(0, 0))),
-           static_cast<float>(ellipse_diameter(eigenvalues.at<double>(1, 0)))},
+  const auto diameter = [](double eigenvalue) -> float {
+    return static_cast<float>(2.0 * std::sqrt(std::max(eigenvalue, 0.0)));
+  };
+  return {{static_cast<float>(ellipse.center.x * intrinsics(0, 0) +
+                              intrinsics(0, 2)),
+           static_cast<float>(ellipse.center.y * intrinsics(1, 1) +
+                              intrinsics(1, 2))},
+          {diameter(eigenvalues.at<double>(0, 0)),
+           diameter(eigenvalues.at<double>(1, 0))},
           static_cast<float>(angle)};
 }
 
@@ -99,9 +104,13 @@ auto PixelCluster(const gamepiece::kmeans_cluster_t& cluster,
     return {point.x * intrinsics(0, 0) + intrinsics(0, 2),
             point.y * intrinsics(1, 1) + intrinsics(1, 2)};
   };
+  // Evaluate into fresh storage: result initially shares cluster.covar, and
+  // assigning a MatExpr directly to it can overwrite the normalized covariance.
+  const cv::Mat pixel_covariance =
+      cv::Mat(scale) * cluster.covar * cv::Mat(scale.t());
   gamepiece::kmeans_cluster_t result = cluster;
   result.centroid = pixel_point(cluster.centroid);
-  result.covar = cv::Mat(scale) * cluster.covar * cv::Mat(scale.t());
+  result.covar = pixel_covariance;
   for (auto& point : result.img_points) {
     point = pixel_point(point);
   }
@@ -136,7 +145,8 @@ auto AnnotateFrame(const cv::Mat& frame,
       }
     }
 
-    const cv::RotatedRect ellipse = ClusterEllipse(pixel_cluster);
+    const cv::RotatedRect ellipse =
+        PixelEllipse(gamepiece::ClusterEllipse(cluster), camera_matrix);
     cv::ellipse(visualization, ellipse, cv::Scalar{0, 0, 0}, 6, cv::LINE_AA);
     cv::ellipse(visualization, ellipse, color, 2, cv::LINE_AA);
 
@@ -209,12 +219,11 @@ auto main(int argc, char** argv) -> int {
                             rotation_scale},
             units::radian_t{extrinsics.at("rotation_z").get<double>() *
                             rotation_scale}));
-    const frc::Transform3d camera_to_robot =
-        frc::Transform3d(frc::Pose3d{}, camera_pose).Inverse();
+    // The tracker rotates camera rays into robot coordinates and uses the
+    // camera's height in that frame. It needs the camera pose, not its inverse.
     gamepiece::HSVClusterTrackerNode tracker(
         "decoded", "clusters", camera_matrix,
-        cv::Matx44d(utils::EigenToCvMat(camera_to_robot.ToMatrix())),
-        distortion);
+        utils::EigenToCvMat(camera_pose.ToMatrix()), distortion);
     const std::filesystem::path output_directory(
         use_defaults ? std::filesystem::path{kDefaultOutputDirectory}
                      : std::filesystem::path{argv[3]});
@@ -251,10 +260,18 @@ auto main(int argc, char** argv) -> int {
       for (const auto& normalized_cluster : clusters) {
         const auto cluster =
             PixelCluster(normalized_cluster, cv::Mat(camera_matrix));
+        const auto ellipse = PixelEllipse(
+            gamepiece::ClusterEllipse(normalized_cluster), cv::Mat(camera_matrix));
         pixel_count += cluster.img_points.size();
         cluster_data.push_back(
             {{"centroid_px", {cluster.centroid.x, cluster.centroid.y}},
              {"pixel_count", cluster.img_points.size()},
+             {"ellipse_semi_axes_px",
+              {ellipse.size.width / 2.0f, ellipse.size.height / 2.0f}},
+             {"ellipse_angle_deg", ellipse.angle},
+             {"ground_position_m",
+              {cluster.camera_relative_translation->X().value(),
+               cluster.camera_relative_translation->Y().value()}},
              {"covariance",
               {{cluster.covar.at<float>(0, 0), cluster.covar.at<float>(0, 1)},
                {cluster.covar.at<float>(1, 0),
