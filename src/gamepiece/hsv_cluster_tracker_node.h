@@ -21,7 +21,7 @@ using kmeans_cluster_t = struct KMeansCluster {
       centroid;  // Undistorted, focal-length-normalized image coordinates (x/z, y/z).
   cv::Mat covar;  // Covariance of img_points in normalized coordinates.
   std::vector<cv::Point2f> img_points;
-  std::optional<frc::Translation2d> camera_relative_translation = std::nullopt;
+  std::optional<frc::Translation2d> robot_relative_translation = std::nullopt;
 };
 
 using hsv_clusters_t = std::vector<kmeans_cluster_t>;
@@ -40,6 +40,8 @@ class HSVClusterTrackerNode final : public control_loop::INode {
   void ProcessFrame(const cv::Mat& frame);
   [[nodiscard]] auto GetClusters() const
       -> const std::vector<kmeans_cluster_t>*;
+  [[nodiscard]] auto RobotRelativeOffset(const cv::Point2f& point) const
+      -> std::optional<frc::Translation2d>;
 
   auto CreateCallback()
       -> std::function<void(const control_loop::Context&)> override;
@@ -91,6 +93,7 @@ class HSVClusterTrackerNode final : public control_loop::INode {
   float max_ground_distance_m_;
   static constexpr float max_merge_distance_m{0.5f};
   cv::Mat frame_;
+  frc::Translation2d extrinsics_offset_;
 };
 
 }  // namespace gamepiece

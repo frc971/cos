@@ -70,6 +70,10 @@ HSVClusterTrackerNode::HSVClusterTrackerNode(
         "HSV tracker extrinsics must be the camera pose in robot coordinates "
         "with a positive camera height");
   }
+  // doing this before basis change is intentional to keep extrinsics in wpilib coords
+  extrinsics_offset_ =
+      frc::Translation2d{units::meter_t{camera_extrinsics_cv_(2, 3)},
+                         units::meter_t{-camera_extrinsics_cv_(0, 3)}};
   utils::ChangeBasis(camera_extrinsics_cv_, utils::Basis::kWpiToCv);
 }
 
@@ -132,6 +136,13 @@ auto HSVClusterTrackerNode::NormalizedPointOffset(
   return offset;
 }
 
+auto HSVClusterTrackerNode::RobotRelativeOffset(const cv::Point2f& point) const
+    -> std::optional<frc::Translation2d> {
+  const auto offset = NormalizedPointOffset(point);
+  return offset.has_value() ? std::optional{*offset + extrinsics_offset_}
+                            : std::nullopt;
+}
+
 void HSVClusterTrackerNode::ProcessFrame(const cv::Mat& frame) {
   const std::vector<kmeans_cluster_t> previous_clusters = clusters_;
   clusters_.clear();
@@ -164,7 +175,8 @@ void HSVClusterTrackerNode::ProcessFrame(const cv::Mat& frame) {
       KMeans(thresholded_points_, cluster_count, previous_clusters);
   clusters_ = MergeOverlappingClusters(unmerged_clusters);
   for (auto& cluster : clusters_) {
-    cluster.camera_relative_translation.emplace(ClusterDistance(cluster));
+    cluster.robot_relative_translation.emplace(ClusterDistance(cluster) +
+                                               CameraPosition());
   }
 }
 
