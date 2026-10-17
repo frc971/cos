@@ -32,7 +32,7 @@ constexpr std::string_view kDefaultExtrinsicsPath =
 constexpr std::string_view kDefaultOutputDirectory =
     "build/fake_gamepiece-clusters";
 constexpr std::string_view kDefaultFramePath =
-    "/cos-logs/gamepiece/110.600000.jpg";
+    "/cos-logs/downloaded_video_frames/frame_001500.jpg";
 
 // Drawing helpers are adapted from BOS's hsv_cluster_visualizer.cc.
 auto RandomClusterColor(std::mt19937& random_generator) -> cv::Scalar {
@@ -58,8 +58,8 @@ auto ClusterEllipse(const gamepiece::kmeans_cluster_t& cluster)
 
   constexpr double kStandardDeviationScale = 2.0;
   constexpr double kMinimumDiameter = 2.0;
-  const auto ellipse_diameter = [kMinimumDiameter](
-                                    const double eigenvalue) -> double {
+  const auto ellipse_diameter =
+      [kMinimumDiameter](const double eigenvalue) -> double {
     return std::max(
         2.0 * kStandardDeviationScale * std::sqrt(std::max(eigenvalue, 0.0)),
         kMinimumDiameter);
@@ -144,7 +144,6 @@ auto AnnotateFrame(const cv::Mat& frame,
         static_cast<int>(std::lround(pixel_cluster.centroid.x)),
         static_cast<int>(std::lround(pixel_cluster.centroid.y))};
     DrawClusterIndex(visualization, cluster_index, centroid);
-
   }
   return visualization;
 }
@@ -161,21 +160,22 @@ auto ReadJson(const std::filesystem::path& path) -> nlohmann::json {
 
 auto main(int argc, char** argv) -> int {
   if (argc != 1 && argc < 5) {
-    std::cerr << "Usage: hsv_cluster_visualizer [<intrinsics.json> "
-                 "<extrinsics.json> <output-directory> <frame.jpg>...]\n"
-                 "With no arguments, runs the gamepiece sample frame.\n"
-                 "Calibration uses nested camera JSON (degrees) or flat BOS JSON "
-                 "(radians).\n";
+    std::cerr
+        << "Usage: hsv_cluster_visualizer [<intrinsics.json> "
+           "<extrinsics.json> <output-directory> <frame.jpg>...]\n"
+           "With no arguments, runs the gamepiece sample frame.\n"
+           "Calibration uses nested camera JSON (degrees) or flat BOS JSON "
+           "(radians).\n";
     return 1;
   }
   try {
     const bool use_defaults = argc == 1;
-    const auto intrinsics_json = ReadJson(
-        use_defaults ? std::filesystem::path{kDefaultIntrinsicsPath}
-                     : std::filesystem::path{argv[1]});
-    const auto extrinsics_json = ReadJson(
-        use_defaults ? std::filesystem::path{kDefaultExtrinsicsPath}
-                     : std::filesystem::path{argv[2]});
+    const auto intrinsics_json =
+        ReadJson(use_defaults ? std::filesystem::path{kDefaultIntrinsicsPath}
+                              : std::filesystem::path{argv[1]});
+    const auto extrinsics_json =
+        ReadJson(use_defaults ? std::filesystem::path{kDefaultExtrinsicsPath}
+                              : std::filesystem::path{argv[2]});
     const auto& intrinsics = intrinsics_json.contains("intrinsics")
                                  ? intrinsics_json.at("intrinsics")
                                  : intrinsics_json;
@@ -185,10 +185,15 @@ auto main(int argc, char** argv) -> int {
                                  : extrinsics_json;
     const double rotation_scale =
         rotations_in_degrees ? std::numbers::pi / 180.0 : 1.0;
-    const cv::Matx33d camera_matrix{
-        intrinsics.at("fx").get<double>(), 0, intrinsics.at("cx").get<double>(),
-        0, intrinsics.at("fy").get<double>(), intrinsics.at("cy").get<double>(),
-        0, 0, 1};
+    const cv::Matx33d camera_matrix{intrinsics.at("fx").get<double>(),
+                                    0,
+                                    intrinsics.at("cx").get<double>(),
+                                    0,
+                                    intrinsics.at("fy").get<double>(),
+                                    intrinsics.at("cy").get<double>(),
+                                    0,
+                                    0,
+                                    1};
     const cv::Vec<double, 5> distortion{
         intrinsics.value("k1", 0.0), intrinsics.value("k2", 0.0),
         intrinsics.value("p1", 0.0), intrinsics.value("p2", 0.0),
@@ -219,9 +224,9 @@ auto main(int argc, char** argv) -> int {
     const int frame_count = use_defaults ? 1 : argc - first_frame_index;
     for (int frame_index = 0; frame_index < frame_count; ++frame_index) {
       const std::filesystem::path input_path(
-          use_defaults ? std::filesystem::path{kDefaultFramePath}
-                       : std::filesystem::path{
-                             argv[first_frame_index + frame_index]});
+          use_defaults
+              ? std::filesystem::path{kDefaultFramePath}
+              : std::filesystem::path{argv[first_frame_index + frame_index]});
       const cv::Mat frame = cv::imread(input_path.string(), cv::IMREAD_COLOR);
       CHECK(!frame.empty()) << "Cannot decode frame: " << input_path;
       tracker.ProcessFrame(frame);
@@ -238,8 +243,8 @@ auto main(int argc, char** argv) -> int {
                   0.9, cv::Scalar{0, 0, 0}, 5, cv::LINE_AA);
       cv::putText(visualization, caption, {20, 40}, cv::FONT_HERSHEY_SIMPLEX,
                   0.9, cv::Scalar{255, 255, 255}, 2, cv::LINE_AA);
-      const auto output_path = output_directory /
-          (input_path.stem().string() + "_clusters.png");
+      const auto output_path =
+          output_directory / (input_path.stem().string() + "_clusters.png");
       CHECK(cv::imwrite(output_path.string(), visualization));
       nlohmann::json cluster_data = nlohmann::json::array();
       std::size_t pixel_count = 0;
@@ -247,13 +252,13 @@ auto main(int argc, char** argv) -> int {
         const auto cluster =
             PixelCluster(normalized_cluster, cv::Mat(camera_matrix));
         pixel_count += cluster.img_points.size();
-        cluster_data.push_back({
-            {"centroid_px", {cluster.centroid.x, cluster.centroid.y}},
-            {"pixel_count", cluster.img_points.size()},
-            {"covariance", {{cluster.covar.at<float>(0, 0),
-                             cluster.covar.at<float>(0, 1)},
-                            {cluster.covar.at<float>(1, 0),
-                             cluster.covar.at<float>(1, 1)}}}});
+        cluster_data.push_back(
+            {{"centroid_px", {cluster.centroid.x, cluster.centroid.y}},
+             {"pixel_count", cluster.img_points.size()},
+             {"covariance",
+              {{cluster.covar.at<float>(0, 0), cluster.covar.at<float>(0, 1)},
+               {cluster.covar.at<float>(1, 0),
+                cluster.covar.at<float>(1, 1)}}}});
       }
       frames.push_back({{"input", input_path.string()},
                         {"output", output_path.string()},
