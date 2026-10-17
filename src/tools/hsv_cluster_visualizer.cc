@@ -3,14 +3,17 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdio>
 #include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <numbers>
 #include <random>
+#include <set>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <frc/geometry/Pose3d.h>
 #include <frc/geometry/Rotation3d.h>
@@ -30,6 +33,8 @@ constexpr std::string_view kDefaultExtrinsicsPath =
     "constants/gamepiece/camera.json";
 constexpr std::string_view kDefaultOutputDirectory =
     "build/fake_gamepiece-clusters";
+constexpr std::string_view kDefaultFramesDirectory =
+    "/cos-logs/downloaded_video_frames";
 constexpr std::string_view kDefaultFramePath =
     "/cos-logs/downloaded_video_frames/frame_001500.jpg";
 
@@ -169,17 +174,41 @@ auto ReadJson(const std::filesystem::path& path) -> nlohmann::json {
 }  // namespace
 
 auto main(int argc, char** argv) -> int {
-  if (argc != 1 && argc < 5) {
+  std::vector<std::string> positional;
+  std::string frames_directory(kDefaultFramesDirectory);
+  int start_frame = -1;
+  int end_frame = -1;
+  for (int i = 1; i < argc; ++i) {
+    const std::string_view arg(argv[i]);
+    if (arg.starts_with("--start=")) {
+      start_frame = std::stoi(std::string(arg.substr(8)));
+    } else if (arg.starts_with("--end=")) {
+      end_frame = std::stoi(std::string(arg.substr(6)));
+    } else if (arg.starts_with("--frames_dir=")) {
+      frames_directory = std::string(arg.substr(13));
+    } else {
+      positional.emplace_back(arg);
+    }
+  }
+  const bool use_range = start_frame >= 0 || end_frame >= 0;
+  const bool use_defaults = positional.empty();
+  if (use_range && (start_frame < 0 || end_frame < start_frame)) {
+    std::cerr << "--start and --end must both be set with start <= end\n";
+    return 1;
+  }
+  if (!use_defaults && (positional.size() < 3 ||
+                        (positional.size() == 3 && !use_range))) {
     std::cerr
-        << "Usage: hsv_cluster_visualizer [<intrinsics.json> "
-           "<extrinsics.json> <output-directory> <frame.jpg>...]\n"
-           "With no arguments, runs the gamepiece sample frame.\n"
+        << "Usage: hsv_cluster_visualizer [--start=N --end=M "
+           "[--frames_dir=DIR]] [<intrinsics.json> <extrinsics.json> "
+           "<output-directory> <frame.jpg>...]\n"
+           "With no positional arguments, uses the default calibration and "
+           "output; with no range either, runs the sample frame.\n"
            "Calibration uses nested camera JSON (degrees) or flat BOS JSON "
            "(radians).\n";
     return 1;
   }
   try {
-    const bool use_defaults = argc == 1;
     const auto intrinsics_json =
         ReadJson(use_defaults ? std::filesystem::path{kDefaultIntrinsicsPath}
                               : std::filesystem::path{argv[1]});
@@ -229,13 +258,32 @@ auto main(int argc, char** argv) -> int {
                      : std::filesystem::path{argv[3]});
     std::filesystem::create_directories(output_directory);
     nlohmann::json frames = nlohmann::json::array();
-    const int first_frame_index = use_defaults ? 0 : 4;
-    const int frame_count = use_defaults ? 1 : argc - first_frame_index;
-    for (int frame_index = 0; frame_index < frame_count; ++frame_index) {
-      const std::filesystem::path input_path(
-          use_defaults
-              ? std::filesystem::path{kDefaultFramePath}
-              : std::filesystem::path{argv[first_frame_index + frame_index]});
+    std::vector<std::filesystem::path> input_paths;
+    for (std::size_t i = 3; i < positional.size(); ++i) {
+      input_paths.emplace_back(positional[i]);
+    }
+    for (int frame_number = start_frame; use_range && frame_number <= end_frame;
+         ++frame_number) {
+      char name[32];
+      std::snprintf(name, sizeof(name), "frame_%06d.jpg", frame_number);
+      input_paths.push_back(std::filesystem::path{frames_directory} / name);
+    }
+    if (input_paths.empty()) {
+      input_paths.emplace_back(kDefaultFramePath);
+    }
+    const std::size_t frame_count = input_paths.size();
+    // Evenly spaced subset of up to 5 frames for the comparison panel.
+    const std::size_t panel_size = std::min<std::size_t>(frame_count, 5);
+    std::set<std::size_t> panel_indices;
+    for (std::size_t i = 0; i < panel_size; ++i) {
+      panel_indices.insert(panel_size == 1 ? 0
+                                           : i * (frame_count - 1) /
+                                                 (panel_size - 1));
+    }
+    std::vector<cv::Mat> panel_frames;
+    for (std::size_t frame_index = 0; frame_index < frame_count;
+         ++frame_index) {
+      const std::filesystem::path& input_path = input_paths[frame_index];
       const cv::Mat frame = cv::imread(input_path.string(), cv::IMREAD_COLOR);
       CHECK(!frame.empty()) << "Cannot decode frame: " << input_path;
       tracker.ProcessFrame(frame);
@@ -255,6 +303,11 @@ auto main(int argc, char** argv) -> int {
       const auto output_path =
           output_directory / (input_path.stem().string() + "_clusters.png");
       CHECK(cv::imwrite(output_path.string(), visualization));
+      if (use_range && panel_indices.contains(frame_index)) {
+        cv::Mat thumbnail;
+        cv::resize(visualization, thumbnail, {}, 0.5, 0.5, cv::INTER_AREA);
+        panel_frames.push_back(thumbnail);
+      }
       nlohmann::json cluster_data = nlohmann::json::array();
       std::size_t pixel_count = 0;
       for (const auto& normalized_cluster : clusters) {
@@ -282,6 +335,12 @@ auto main(int argc, char** argv) -> int {
                         {"clusters", cluster_data}});
       std::cout << output_path << ": " << clusters.size() << " clusters, "
                 << pixel_count << " thresholded pixels\n";
+    }
+    if (!panel_frames.empty()) {
+      cv::Mat panel;
+      cv::hconcat(panel_frames, panel);
+      CHECK(cv::imwrite((output_directory / "comparison_panel.png").string(),
+                        panel));
     }
     std::ofstream summary(output_directory / "clusters.json");
     CHECK(summary.is_open());
