@@ -46,9 +46,8 @@ HSVProjectorNode::HSVProjectorNode(std::string_view input_path,
     dependencies_.emplace_back(pose_path_,
                                typeid(control_loop::ValueMessage<frc::Pose2d>));
   }
-  cv::Mat camera_pose(extrinsics_cv_);
-  utils::ChangeBasis(camera_pose, utils::Basis::kWpiToCv);
-  extrinsics_cv_ = cv::Matx44d(camera_pose);
+  extrinsics_cv_ = extrinsics;
+  utils::ChangeBasis(extrinsics_cv_, utils::Basis::kWpiToCv);
 }
 
 auto HSVProjectorNode::CreateCallback()

@@ -40,6 +40,7 @@ target_include_directories(yolo_inference PUBLIC
 )
 
 add_library(image_utils)
+add_library(cos::image_utils ALIAS image_utils)
 target_sources(image_utils PRIVATE
   image_utils.cc
 )
@@ -85,7 +86,7 @@ target_compile_definitions(ellipse PRIVATE EIGEN_DONT_VECTORIZE)
 
 add_library(hsv_cluster_tracker hsv_cluster_tracker.cc)
 target_link_libraries(hsv_cluster_tracker PUBLIC opencv_core wpimath PRIVATE
-  ellipse cos::cv_geometry_utils opencv_imgproc opencv_calib3d)
+  ellipse image_utils cos::cv_geometry_utils opencv_imgproc opencv_calib3d)
 target_include_directories(hsv_cluster_tracker PUBLIC ${CMAKE_SOURCE_DIR}/src)
 
 add_library(hsv_cluster_tracker_node hsv_cluster_tracker_node.cc)

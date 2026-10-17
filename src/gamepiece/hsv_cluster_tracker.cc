@@ -50,10 +50,8 @@ HSVClusterTracker::HSVClusterTracker(
     throw std::invalid_argument(
         "Maximum ground distance must be finite and positive");
   }
-  cv::Mat camera_extrinsics_cv(extrinsics);
-  utils::ChangeBasis(camera_extrinsics_cv, utils::Basis::kWpiToCv);
-  camera_extrinsics_cv.convertTo(camera_extrinsics_cv, CV_32F);
-  camera_extrinsics_cv_ = cv::Matx44f(camera_extrinsics_cv);
+  camera_extrinsics_cv_ = cv::Matx44f(extrinsics);
+  utils::ChangeBasis(camera_extrinsics_cv_, utils::Basis::kWpiToCv);
 }
 
 auto HSVClusterTracker::UndistortedPixelPointOffset(
@@ -271,7 +269,7 @@ auto HSVClusterTracker::KMeans(
         continue;
       }
 
-      float distance_to_nearest_center = std::numeric_limits<float>::max();
+      double distance_to_nearest_center = std::numeric_limits<double>::max();
       for (const cv::Point2f& center : initial_centers) {
         distance_to_nearest_center =
             std::min(distance_to_nearest_center,
@@ -296,10 +294,10 @@ auto HSVClusterTracker::KMeans(
   for (int point_index = 0; point_index < labels.rows; ++point_index) {
     int nearest_center = 0;
     float nearest_distance =
-        SquaredDistance(scaled_points[point_index], initial_centers.front());
+        cv::norm(scaled_points[point_index] - initial_centers.front());
     for (int center_index = 1; center_index < k; ++center_index) {
-      const float distance = SquaredDistance(scaled_points[point_index],
-                                             initial_centers[center_index]);
+      const float distance =
+          cv::norm(scaled_points[point_index] - initial_centers[center_index]);
       if (distance < nearest_distance) {
         nearest_center = center_index;
         nearest_distance = distance;
@@ -321,8 +319,8 @@ auto HSVClusterTracker::KMeans(
       if (label_counts[current_cluster] <= 1) {
         continue;
       }
-      const float distance = SquaredDistance(scaled_points[point_index],
-                                             initial_centers[empty_cluster]);
+      const float distance =
+          cv::norm(scaled_points[point_index] - initial_centers[empty_cluster]);
       if (distance < closest_distance) {
         point_to_reassign = point_index;
         closest_distance = distance;
