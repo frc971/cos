@@ -4,17 +4,21 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
+#include <deque>
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <numbers>
 #include <optional>
 #include <random>
 #include <set>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <frc/apriltag/AprilTagDetector.h>
@@ -28,6 +32,7 @@
 
 #include "absl/log/check.h"
 #include "camera/camera_config.h"
+#include "control_loop/thread_pool.h"
 #include "localization/multi_tag_solver_node.h"
 #include "utils/cv_geometry.h"
 
@@ -43,6 +48,16 @@ constexpr std::string_view kDefaultFramesDirectory =
     "/cos-logs/downloaded_video_frames";
 constexpr std::string_view kDefaultFramePath =
     "/cos-logs/downloaded_video_frames/frame_001500.jpg";
+
+// Futures propagate worker exceptions and bound the number of in-flight frames.
+template <typename F>
+auto Async(control_loop::ThreadPool& pool, F task) {
+  auto work = std::make_shared<std::packaged_task<decltype(task())()>>(
+      std::move(task));
+  auto result = work->get_future();
+  pool.Submit([work] { (*work)(); });
+  return result;
+}
 
 // Drawing helpers are adapted from BOS's hsv_cluster_visualizer.cc.
 constexpr std::mt19937::result_type kClusterColorSeed = 0x4B4D4541;
@@ -263,11 +278,11 @@ auto PixelCluster(const gamepiece::kmeans_cluster_t& cluster,
 auto AnnotateFrame(const cv::Mat& frame,
                    const std::vector<gamepiece::kmeans_cluster_t>& clusters,
                    const cv::Mat& camera_matrix,
-                   const cv::Mat& distortion_coeffs, const double pitch)
+                   const cv::Mat& map_x, const cv::Mat& map_y,
+                   const double pitch)
     -> cv::Mat {
   cv::Mat visualization;
-  cv::undistort(frame, visualization, camera_matrix, distortion_coeffs,
-                camera_matrix);
+  cv::remap(frame, visualization, map_x, map_y, cv::INTER_LINEAR);
 
   std::mt19937 random_generator(kClusterColorSeed);
   for (std::size_t cluster_index = 0; cluster_index < clusters.size();
@@ -340,11 +355,14 @@ auto ReadJson(const std::filesystem::path& path) -> nlohmann::json {
 auto main(int argc, char** argv) -> int {
   std::vector<std::string> positional;
   std::string frames_directory(kDefaultFramesDirectory);
+  std::string poses_path;
   int start_frame = -1;
   int end_frame = -1;
   for (int i = 1; i < argc; ++i) {
     const std::string_view arg(argv[i]);
-    if (arg.starts_with("--start=")) {
+    if (arg.starts_with("--poses=")) {
+      poses_path = arg.substr(8);
+    } else if (arg.starts_with("--start=")) {
       start_frame = std::stoi(std::string(arg.substr(8)));
     } else if (arg.starts_with("--end=")) {
       end_frame = std::stoi(std::string(arg.substr(6)));
@@ -363,7 +381,7 @@ auto main(int argc, char** argv) -> int {
   if (!use_defaults &&
       (positional.size() < 3 || (positional.size() == 3 && !use_range))) {
     std::cerr
-        << "Usage: hsv_cluster_visualizer [--start=N --end=M "
+        << "Usage: hsv_cluster_visualizer [--poses=poses.json] [--start=N --end=M "
            "[--frames_dir=DIR]] [<intrinsics.json> <extrinsics.json> "
            "<output-directory> <frame.jpg>...]\n"
            "With no positional arguments, uses the default calibration and "
@@ -375,10 +393,10 @@ auto main(int argc, char** argv) -> int {
   try {
     const auto intrinsics_json =
         ReadJson(use_defaults ? std::filesystem::path{kDefaultIntrinsicsPath}
-                              : std::filesystem::path{argv[1]});
+                              : std::filesystem::path{positional[0]});
     const auto extrinsics_json =
         ReadJson(use_defaults ? std::filesystem::path{kDefaultExtrinsicsPath}
-                              : std::filesystem::path{argv[2]});
+                              : std::filesystem::path{positional[1]});
     const auto& intrinsics = intrinsics_json.contains("intrinsics")
                                  ? intrinsics_json.at("intrinsics")
                                  : intrinsics_json;
@@ -414,8 +432,11 @@ auto main(int argc, char** argv) -> int {
                             rotation_scale}));
     // Robot pose comes from the multi-tag solver, which needs nested camera
     // JSON; without it only the camera-view outputs are produced.
+    const auto poses = poses_path.empty() ? nlohmann::json::object()
+                                         : ReadJson(poses_path);
     std::optional<localization::MultiTagSolverNode> tag_solver;
-    if (intrinsics_json.contains("intrinsics") && rotations_in_degrees) {
+    if (poses_path.empty() && intrinsics_json.contains("intrinsics") &&
+        rotations_in_degrees) {
       tag_solver.emplace(
           "tags", "pose",
           camera::Intrinsics{use_defaults
@@ -425,15 +446,18 @@ auto main(int argc, char** argv) -> int {
                                  ? std::filesystem::path{kDefaultExtrinsicsPath}
                                  : std::filesystem::path{positional[1]}});
     }
-    frc::AprilTagDetector tag_detector;
-    CHECK(tag_detector.AddFamily("tag36h11"));
-    frc::AprilTagDetector::Config detector_config;
-    detector_config.quadDecimate = 1.0F;
-    tag_detector.SetConfig(detector_config);
+    std::optional<frc::AprilTagDetector> tag_detector;
+    if (tag_solver) {
+      tag_detector.emplace();
+      CHECK(tag_detector->AddFamily("tag36h11"));
+      frc::AprilTagDetector::Config config;
+      config.quadDecimate = 1.0F;
+      tag_detector->SetConfig(config);
+    }
     std::optional<frc::Pose2d> robot_pose;  // Held across frames without tags.
     const std::filesystem::path output_directory(
         use_defaults ? std::filesystem::path{kDefaultOutputDirectory}
-                     : std::filesystem::path{argv[3]});
+                     : std::filesystem::path{positional[2]});
     std::filesystem::create_directories(output_directory);
     nlohmann::json frames = nlohmann::json::array();
     std::vector<std::filesystem::path> input_paths;
@@ -458,6 +482,13 @@ auto main(int argc, char** argv) -> int {
         utils::EigenToCvMat(camera_pose.ToMatrix()), distortion,
         first_frame.total());
     const std::size_t frame_count = input_paths.size();
+    cv::Mat map_x, map_y;
+    cv::initUndistortRectifyMap(camera_matrix, distortion, cv::Mat(),
+                               camera_matrix, first_frame.size(), CV_16SC2,
+                               map_x, map_y);
+    const std::size_t workers = std::min<std::size_t>(6, frame_count);
+    control_loop::ThreadPool pool(workers);
+    std::deque<std::future<cv::Mat>> pending;
     // Evenly spaced subset of up to 5 frames for the comparison panel.
     const std::size_t panel_size = std::min<std::size_t>(frame_count, 5);
     std::set<std::size_t> panel_indices;
@@ -468,50 +499,77 @@ auto main(int argc, char** argv) -> int {
     std::vector<cv::Mat> panel_frames;
     const cv::Mat field_base = MakeFieldCanvas();
     cv::Mat field_overlay = field_base.clone();
+    auto next_frame = Async(pool, [first_frame] { return first_frame; });
     for (std::size_t frame_index = 0; frame_index < frame_count;
          ++frame_index) {
       const std::filesystem::path& input_path = input_paths[frame_index];
-      const cv::Mat frame =
-          frame_index == 0 ? first_frame
-                           : cv::imread(input_path.string(), cv::IMREAD_COLOR);
+      const cv::Mat frame = next_frame.get();
+      if (frame_index + 1 < frame_count) {
+        next_frame = Async(pool, [path = input_paths[frame_index + 1]] {
+          return cv::imread(path.string(), cv::IMREAD_COLOR);
+        });
+      }
       CHECK(!frame.empty()) << "Cannot decode frame: " << input_path;
+      CHECK(frame.size() == first_frame.size())
+          << "Frame dimensions changed: " << input_path;
       tracker.ProcessFrame(frame);
       if (frame_count == 1) {
         // Match BOS's single-frame visualizer by processing the frame twice.
         tracker.ProcessFrame(frame);
       }
       const auto& clusters = *tracker.GetClusters();
-      const cv::Mat visualization = AnnotateFrame(
-          frame, clusters, cv::Mat(camera_matrix), cv::Mat(distortion),
-          camera_pose.Rotation().Y().value());
-      const std::string caption = input_path.filename().string() + " | " +
-                                  std::to_string(clusters.size()) + " clusters";
-      cv::putText(visualization, caption, {20, 40}, cv::FONT_HERSHEY_SIMPLEX,
-                  0.9, cv::Scalar{0, 0, 0}, 5, cv::LINE_AA);
-      cv::putText(visualization, caption, {20, 40}, cv::FONT_HERSHEY_SIMPLEX,
-                  0.9, cv::Scalar{255, 255, 255}, 2, cv::LINE_AA);
       const auto output_path =
           output_directory / (input_path.stem().string() + "_clusters.png");
-      CHECK(cv::imwrite(output_path.string(), visualization));
-      cv::Mat gray;
-      cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
-      std::vector<localization::tag_detection_t> detections;
-      for (const auto* result : tag_detector.Detect(
-               gray.cols, gray.rows, static_cast<int>(gray.step), gray.data)) {
-        localization::tag_detection_t detection{.tag_id = result->GetId()};
-        for (int corner = 0; corner < 4; ++corner) {
-          detection.corners[corner] = {result->GetCorner(corner).x,
-                                       result->GetCorner(corner).y};
+      pending.push_back(Async(pool, [frame, clusters, camera_matrix, map_x, map_y,
+                                    pitch = camera_pose.Rotation().Y().value(),
+                                    input_path, output_path,
+                                    panel = use_range &&
+                                            panel_indices.contains(frame_index)] {
+        const cv::Mat visualization = AnnotateFrame(
+            frame, clusters, cv::Mat(camera_matrix), map_x, map_y, pitch);
+        const std::string caption = input_path.filename().string() + " | " +
+                                    std::to_string(clusters.size()) + " clusters";
+        cv::putText(visualization, caption, {20, 40}, cv::FONT_HERSHEY_SIMPLEX,
+                    0.9, cv::Scalar{0, 0, 0}, 5, cv::LINE_AA);
+        cv::putText(visualization, caption, {20, 40}, cv::FONT_HERSHEY_SIMPLEX,
+                    0.9, cv::Scalar{255, 255, 255}, 2, cv::LINE_AA);
+        CHECK(cv::imwrite(output_path.string(), visualization));
+        cv::Mat thumbnail;
+        if (panel) {
+          cv::resize(visualization, thumbnail, {}, 0.5, 0.5, cv::INTER_AREA);
         }
-        detections.push_back(detection);
-      }
+        return thumbnail;
+      }));
       std::size_t pose_tag_count = 0;
-      if (tag_solver.has_value()) {
+      std::vector<localization::tag_detection_t> detections;
+      bool pose_updated = false;
+      if (!poses_path.empty()) {
+        // Missing entries are errors; null means no estimate, so hold the pose.
+        const auto& pose = poses.at(input_path.filename().string());
+        if (!pose.is_null()) {
+          robot_pose.emplace(units::meter_t{pose.at("x").get<double>()},
+                             units::meter_t{pose.at("y").get<double>()},
+                             frc::Rotation2d{units::radian_t{
+                                 pose.at("yaw").get<double>()}});
+          pose_updated = true;
+        }
+      } else if (tag_solver) {
+        cv::Mat gray;
+        cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
+        for (const auto* result : tag_detector->Detect(
+                 gray.cols, gray.rows, static_cast<int>(gray.step), gray.data)) {
+          localization::tag_detection_t detection{
+              .tag_id = result->GetId(), .corners = {}};
+          for (int corner = 0; corner < 4; ++corner) {
+            detection.corners[corner] = {result->GetCorner(corner).x,
+                                         result->GetCorner(corner).y};
+          }
+          detections.push_back(detection);
+        }
         if (const auto estimate = tag_solver->AmbiguousSolve(detections)) {
-          std::cout << "z: " << estimate->pos1.pose.Translation().Z().value()
-                    << std::endl;
           robot_pose = estimate->pos1.pose.ToPose2d();
           pose_tag_count = estimate->pos1.tag_ids.size();
+          pose_updated = true;
         }
       }
       // Per-frame field view uses the camera view's cluster colors; the
@@ -548,18 +606,20 @@ auto main(int argc, char** argv) -> int {
         const std::string field_caption =
             input_path.filename().string() + " | " +
             (pose_tag_count > 0 ? std::to_string(pose_tag_count) + " tags"
-                                : "no tags, pose held");
+                               : pose_updated ? "cached pose"
+                                              : "no tags, pose held");
         cv::putText(field, field_caption, {20, 30}, cv::FONT_HERSHEY_SIMPLEX,
                     0.8, cv::Scalar{255, 255, 255}, 2, cv::LINE_AA);
-        CHECK(cv::imwrite(
-            (output_directory / (input_path.stem().string() + "_field.png"))
-                .string(),
-            field));
+        pending.push_back(Async(pool, [field, path = output_directory /
+                                          (input_path.stem().string() + "_field.png")] {
+          CHECK(cv::imwrite(path.string(), field));
+          return cv::Mat{};
+        }));
       }
-      if (use_range && panel_indices.contains(frame_index)) {
-        cv::Mat thumbnail;
-        cv::resize(visualization, thumbnail, {}, 0.5, 0.5, cv::INTER_AREA);
-        panel_frames.push_back(thumbnail);
+      while (pending.size() >= workers) {
+        auto thumbnail = pending.front().get();
+        if (!thumbnail.empty()) panel_frames.push_back(std::move(thumbnail));
+        pending.pop_front();
       }
       nlohmann::json cluster_data = nlohmann::json::array();
       std::size_t pixel_count = 0;
@@ -589,6 +649,10 @@ auto main(int argc, char** argv) -> int {
       std::cout << output_path << ": " << clusters.size() << " clusters, "
                 << pixel_count << " thresholded pixels, " << detections.size()
                 << " tags detected, " << pose_tag_count << " used for pose\n";
+    }
+    for (auto& result : pending) {
+      auto thumbnail = result.get();
+      if (!thumbnail.empty()) panel_frames.push_back(std::move(thumbnail));
     }
     if (robot_pose.has_value()) {
       CHECK(cv::imwrite((output_directory / "field_overlay.png").string(),
