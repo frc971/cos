@@ -33,7 +33,7 @@ using kmeans_cluster_t = struct KMeansCluster {
 
 using hsv_clusters_t = std::vector<kmeans_cluster_t>;
 
-// The normalized 2-sigma ellipse used for cluster overlap decisions.
+// The normalized 2-sigma ellipse for image annotation.
 [[nodiscard]] auto ClusterEllipse(const kmeans_cluster_t& cluster) -> Ellipse;
 
 class HSVClusterTrackerNode final : public control_loop::INode {
@@ -43,7 +43,7 @@ class HSVClusterTrackerNode final : public control_loop::INode {
       cv::Matx33d intrinsics, cv::Matx44d extrinsics,
       const cv::Vec<double, 5>& distortion_coeffs,
       std::size_t image_size,  // Total pixels (width * height).
-      float max_ground_distance_m = 20.0f);
+      float max_ground_distance_m = 20.0f, std::string_view pose_path = "");
   // Processes a CPU BGR frame; callers must serialize access with callbacks.
   void ProcessFrame(const cv::Mat& frame,
                     std::optional<frc::Pose2d> robot_pose = std::nullopt);
@@ -72,6 +72,7 @@ class HSVClusterTrackerNode final : public control_loop::INode {
 
   std::string input_path_;
   std::string output_path_;
+  std::string pose_path_;
   std::vector<std::function<void(const control_loop::Context&)>> callbacks_;
   std::vector<control_loop::MessageDescriptor> dependencies_;
   std::vector<control_loop::MessageDescriptor> publications_;
@@ -79,11 +80,13 @@ class HSVClusterTrackerNode final : public control_loop::INode {
   std::vector<cv::Point2f> thresholded_points_;
   std::vector<cv::Point2f> ground_points_;
   std::vector<float> ground_weights_;
+  std::vector<float> refined_weights_;
   std::optional<frc::Pose2d> robot_pose_;
   std::vector<kmeans_cluster_t> clusters_;
   // Indexed by ID; field positions when a robot pose is provided.
   // Retain positions through empty frames for re-entry matching.
   std::vector<frc::Translation2d> canonical_positions_;
+  std::vector<cv::Matx22f> canonical_covariances_;
 
   cv::Mat3b hsv_image_;
   cv::Mat1b hsv_masked_;

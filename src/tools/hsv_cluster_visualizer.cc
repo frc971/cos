@@ -162,7 +162,7 @@ auto PointHeatmap(const cv::Mat& base, const cv::Mat1f& counts,
   cv::putText(heatmap, caption, {20, 30}, cv::FONT_HERSHEY_SIMPLEX, 0.7,
               cv::Scalar{255, 255, 255}, 2, cv::LINE_AA);
   cv::putText(heatmap,
-              cv::format("%.0f projected pixels on field | 5 cm smoothing",
+              cv::format("%.1f visible Fuel support | 5 cm smoothing",
                          cv::sum(counts)[0]),
               {20, 58}, cv::FONT_HERSHEY_SIMPLEX, 0.6,
               cv::Scalar{255, 255, 255}, 1, cv::LINE_AA);
@@ -172,15 +172,14 @@ auto PointHeatmap(const cv::Mat& base, const cv::Mat1f& counts,
   cv::applyColorMap(ramp, legend, cv::COLORMAP_TURBO);
   legend.copyTo(heatmap(cv::Rect{20, heatmap.rows - 42, ramp.cols, ramp.rows}));
   cv::putText(heatmap,
-              cv::format("0 to %.2f pixels/cell (log scale, per-image peak)", peak),
+              cv::format("0 to %.3f Fuel/cell (log scale, per-image peak)", peak),
               {20, heatmap.rows - 52}, cv::FONT_HERSHEY_SIMPLEX, 0.55,
               cv::Scalar{255, 255, 255}, 1, cv::LINE_AA);
   return heatmap;
 }
 
-// The cluster's ground-plane 2-sigma ellipse (matching ClusterEllipse's
-// padding-free diameter), centered at the projected centroid, in field-canvas
-// pixels. Robot-relative geometry is moved onto the field by `robot_pose`.
+// The weighted ground distribution's 2-sigma ellipse in field-canvas pixels.
+// Robot-relative geometry is moved onto the field by `robot_pose`.
 auto FieldEllipse(const gamepiece::kmeans_cluster_t& cluster,
                   const frc::Pose2d& robot_pose)
     -> std::optional<cv::RotatedRect> {
@@ -602,7 +601,17 @@ auto main(int argc, char** argv) -> int {
     }
     std::vector<cv::Mat> panel_frames;
     std::vector<std::filesystem::path> heatmap_panel_paths;
-    const cv::Mat field_base = MakeFieldCanvas();
+    cv::Mat field_base = MakeFieldCanvas();
+    // Display-only truth: never passed to tracking or projection.
+    if (!sim.is_null() && sim.contains("gamepieces")) {
+      for (const auto& piece : sim.at("gamepieces")) {
+        const auto& point = piece.at("translation_m");
+        cv::circle(field_base, FieldPoint(point[0].get<double>(), point[1].get<double>()),
+                   2, cv::Scalar{210, 210, 210}, cv::FILLED);
+      }
+      cv::putText(field_base, "White dots: simulated Fuel centers", {20, field_base.rows - 15},
+                  cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar{210, 210, 210}, 1);
+    }
     cv::Mat field_overlay = field_base.clone();
     std::map<std::size_t, std::vector<std::pair<cv::RotatedRect, cv::Scalar>>>
         field_ellipses;

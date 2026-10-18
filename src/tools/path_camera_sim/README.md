@@ -69,3 +69,11 @@ to generate cluster views and projected-point heatmaps using its exact poses.
 Simulator output defaults to `/root/debug-output/path-camera-sim`. Visualizer
 output defaults to `/root/debug-output/<run-name>/<layout>/clusters`.
 Pass `--output_dir=DIR` to override either output directory.
+
+For ground-truth validation, `--fuel_truth` adds `cluster_id` to generated Fuel
+entries in cluster mode and `visible_fuel_pixels` to each frame. A separate
+unlit integer-ID pass preserves opaque field/Fuel depth occlusion and applies
+the same lens remap using nearest-neighbor sampling. Transparent field meshes
+are omitted from the ID pass. These labels are not written into RGB images and
+are never input to the tracker. Counts report visibility, including partial
+silhouettes and image cropping; they are not assumed to reveal hidden balls.

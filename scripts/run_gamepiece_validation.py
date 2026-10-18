@@ -8,6 +8,7 @@ import subprocess
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--root', type=Path, default=Path('/root/cluster-validation/suite'))
+parser.add_argument('--dynamic', action='store_true')
 parser.add_argument('--noise', type=float, default=0.0)
 parser.add_argument('--seeds', default='7,23')
 args = parser.parse_args()
@@ -15,6 +16,10 @@ scenarios = json.loads(Path('/root/cluster-validation/scenarios.json').read_text
 args.root.mkdir(parents=True, exist_ok=True)
 poses = [{'translation_m': [5.3 + .5*i/12, 4 + .1*math.sin(i/12*math.pi*2)],
           'rotation_rad': -.12 + .24*i/12} for i in range(13)]
+if args.dynamic:
+    scenarios = {name: clusters for name, clusters in scenarios.items() if name in ('two', 'elongated')}
+    poses = [{'translation_m': [5.3 + .15*math.sin(i/24*math.pi), 4],
+              'rotation_rad': -.85 + 1.5*(1 - abs(i/12 - 1))} for i in range(25)]
 (args.root/'poses.json').write_text(json.dumps({'poses': poses}))
 for name, clusters in scenarios.items():
     for seed in map(int, args.seeds.split(',')):

@@ -1,0 +1,84 @@
+Running main() from /root/cos-worktrees/ellipse-gamepiece/build/_deps/googletest-src/googletest/src/gtest_main.cc
+[==========] Running 10 tests from 2 test suites.
+[----------] Global test environment set-up.
+[----------] 8 tests from HSVClusterTrackerTest
+[ RUN      ] HSVClusterTrackerTest.SphereProjectionPreservesLocationAndRejectsAllianceZone
+[       OK ] HSVClusterTrackerTest.SphereProjectionPreservesLocationAndRejectsAllianceZone (38 ms)
+[ RUN      ] HSVClusterTrackerTest.PreservesBroadPileAndFindsNewSeparatedPile
+[       OK ] HSVClusterTrackerTest.PreservesBroadPileAndFindsNewSeparatedPile (2 ms)
+[ RUN      ] HSVClusterTrackerTest.ProtectsWeakEnteringModeOutsideEstablishedFootprint
+[       OK ] HSVClusterTrackerTest.ProtectsWeakEnteringModeOutsideEstablishedFootprint (1 ms)
+[ RUN      ] HSVClusterTrackerTest.UsesOneToOneIdsAndRetainsThemAcrossEmptyFrames
+[       OK ] HSVClusterTrackerTest.UsesOneToOneIdsAndRetainsThemAcrossEmptyFrames (2 ms)
+[ RUN      ] HSVClusterTrackerTest.MatchesFieldPositionsDuringRobotMotion
+[       OK ] HSVClusterTrackerTest.MatchesFieldPositionsDuringRobotMotion (1 ms)
+[ RUN      ] HSVClusterTrackerTest.RejectsSingletonSpecksButRetainsPileSamples
+[       OK ] HSVClusterTrackerTest.RejectsSingletonSpecksButRetainsPileSamples (1 ms)
+[ RUN      ] HSVClusterTrackerTest.ProjectsOntoFuelCenterPlaneInRobotAxes
+[       OK ] HSVClusterTrackerTest.ProjectsOntoFuelCenterPlaneInRobotAxes (0 ms)
+[ RUN      ] HSVClusterTrackerTest.HandlesEmptyThresholdAndHorizonWithoutClusters
+[       OK ] HSVClusterTrackerTest.HandlesEmptyThresholdAndHorizonWithoutClusters (0 ms)
+[----------] 8 tests from HSVClusterTrackerTest (48 ms total)
+
+[----------] 2 tests from HSVClusterTrackerNodeTest
+[ RUN      ] HSVClusterTrackerNodeTest.ProcessesPaddedDeviceFrameWithPoseAndPublishesOnce
+[       OK ] HSVClusterTrackerNodeTest.ProcessesPaddedDeviceFrameWithPoseAndPublishesOnce (86 ms)
+[ RUN      ] HSVClusterTrackerNodeTest.DeclaresMessagesAndPublishesNullOnce
+[       OK ] HSVClusterTrackerNodeTest.DeclaresMessagesAndPublishesNullOnce (0 ms)
+[----------] 2 tests from HSVClusterTrackerNodeTest (86 ms total)
+
+[----------] Global test environment tear-down
+[==========] 10 tests from 2 test suites ran. (135 ms total)
+[  PASSED  ] 10 tests.
+Running main() from /root/cos-worktrees/ellipse-gamepiece/build/_deps/googletest-src/googletest/src/gtest_main.cc
+[==========] Running 9 tests from 3 test suites.
+[----------] Global test environment set-up.
+[----------] 4 tests from ImageUtilsTest/0, where TypeParam = float
+[ RUN      ] ImageUtilsTest/0.CpuThresholdConvertsIntegerPixelLocations
+[       OK ] ImageUtilsTest/0.CpuThresholdConvertsIntegerPixelLocations (0 ms)
+[ RUN      ] ImageUtilsTest/0.GpuThresholdMatchesCpuAndCompletesStream
+[       OK ] ImageUtilsTest/0.GpuThresholdMatchesCpuAndCompletesStream (67 ms)
+[ RUN      ] ImageUtilsTest/0.PinholeNormalizesUsingIntrinsics
+[       OK ] ImageUtilsTest/0.PinholeNormalizesUsingIntrinsics (0 ms)
+[ RUN      ] ImageUtilsTest/0.CullsHorizonBeforeProjection
+[       OK ] ImageUtilsTest/0.CullsHorizonBeforeProjection (0 ms)
+[----------] 4 tests from ImageUtilsTest/0 (67 ms total)
+
+[----------] 4 tests from ImageUtilsTest/1, where TypeParam = double
+[ RUN      ] ImageUtilsTest/1.CpuThresholdConvertsIntegerPixelLocations
+[       OK ] ImageUtilsTest/1.CpuThresholdConvertsIntegerPixelLocations (0 ms)
+[ RUN      ] ImageUtilsTest/1.GpuThresholdMatchesCpuAndCompletesStream
+[       OK ] ImageUtilsTest/1.GpuThresholdMatchesCpuAndCompletesStream (1 ms)
+[ RUN      ] ImageUtilsTest/1.PinholeNormalizesUsingIntrinsics
+[       OK ] ImageUtilsTest/1.PinholeNormalizesUsingIntrinsics (0 ms)
+[ RUN      ] ImageUtilsTest/1.CullsHorizonBeforeProjection
+[       OK ] ImageUtilsTest/1.CullsHorizonBeforeProjection (0 ms)
+[----------] 4 tests from ImageUtilsTest/1 (1 ms total)
+
+[----------] 1 test from ImageUtilsTest
+[ RUN      ] ImageUtilsTest.CullsPairedPixelsWithoutLosingAlignment
+[       OK ] ImageUtilsTest.CullsPairedPixelsWithoutLosingAlignment (0 ms)
+[----------] 1 test from ImageUtilsTest (0 ms total)
+
+[----------] Global test environment tear-down
+[==========] 9 tests from 3 test suites ran. (69 ms total)
+[  PASSED  ] 9 tests.
+Running main() from /root/cos-worktrees/ellipse-gamepiece/build/_deps/googletest-src/googletest/src/gtest_main.cc
+[==========] Running 5 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 5 tests from EllipseTest
+[ RUN      ] EllipseTest.FindsCircleIntersectionsAndOverlapArea
+[       OK ] EllipseTest.FindsCircleIntersectionsAndOverlapArea (0 ms)
+[ RUN      ] EllipseTest.HandlesDisjointAndContainedEllipses
+[       OK ] EllipseTest.HandlesDisjointAndContainedEllipses (0 ms)
+[ RUN      ] EllipseTest.HandlesTangencyAndFourIntersections
+[       OK ] EllipseTest.HandlesTangencyAndFourIntersections (0 ms)
+[ RUN      ] EllipseTest.RejectsInvalidRadii
+[       OK ] EllipseTest.RejectsInvalidRadii (0 ms)
+[ RUN      ] EllipseTest.VisualizesThreeCasesForEveryIntersectionCount
+[       OK ] EllipseTest.VisualizesThreeCasesForEveryIntersectionCount (91 ms)
+[----------] 5 tests from EllipseTest (92 ms total)
+
+[----------] Global test environment tear-down
+[==========] 5 tests from 1 test suite ran. (92 ms total)
+[  PASSED  ] 5 tests.
