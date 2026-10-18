@@ -2,6 +2,10 @@
 
 #include <limits>
 #include <optional>
+#include <algorithm>
+#include <cmath>
+#include <ranges>
+#include <unordered_map>
 #include <vector>
 
 #include <frc/geometry/Translation2d.h>
@@ -10,6 +14,74 @@
 #include <opencv2/imgproc.hpp>
 
 namespace gamepiece {
+
+// Finds the lowest mask point on columns spaced at 1/256 of the image width
+// (at least one pixel) and fills empty columns by linear interpolation.
+// Input x values are undistorted;
+// x_scale converts them back to approximate image pixels.
+template <typename T>
+[[nodiscard]] auto LowestPointsByColumn(const std::vector<cv::Point_<T>>& points,
+                                       int image_width,
+                                       double x_scale = 1.0)
+    -> std::vector<cv::Point_<T>> {
+  const int column_frequency = std::max(1, image_width / 256);
+  if (points.empty()) return {};
+  int min_x = std::numeric_limits<int>::max();
+  int max_x = std::numeric_limits<int>::min();
+  for (const auto& point : points) {
+    const int x = cvRound(point.x * x_scale);
+    min_x = std::min(min_x, x);
+    max_x = std::max(max_x, x);
+  }
+  std::unordered_map<int, T> lowest_by_x;
+  for (const auto& point : points) {
+    const int x = cvRound(point.x * x_scale);
+    auto [it, inserted] = lowest_by_x.emplace(x, point.y);
+    if (!inserted) it->second = std::max(it->second, point.y);
+  }
+  std::vector<cv::Point_<T>> sampled;
+  for (int x = min_x; x <= max_x; x += column_frequency) {
+    const auto it = lowest_by_x.find(x);
+    if (it != lowest_by_x.end())
+      sampled.emplace_back(static_cast<T>(x / x_scale), it->second);
+  }
+  if (sampled.empty()) {
+    const auto lowest = std::ranges::max_element(points, {}, &cv::Point_<T>::y);
+    return {*lowest};
+  }
+  std::vector<cv::Point_<T>> result;
+  for (int x = min_x; x <= max_x; x += column_frequency) {
+    const T normalized_x = static_cast<T>(x / x_scale);
+    const auto right = std::ranges::lower_bound(sampled, normalized_x, {},
+                                                &cv::Point_<T>::x);
+    if (right == sampled.begin()) {
+      result.emplace_back(normalized_x, right->y);
+    } else if (right == sampled.end()) {
+      result.emplace_back(normalized_x, sampled.back().y);
+    } else if (right->x == normalized_x) {
+      result.emplace_back(normalized_x, right->y);
+    } else {
+      const auto left = right - 1;
+      const T fraction = (normalized_x - left->x) / (right->x - left->x);
+      result.emplace_back(normalized_x,
+                          left->y + fraction * (right->y - left->y));
+    }
+  }
+  return result;
+}
+
+template <typename T>
+[[nodiscard]] auto InterpolatedLowestY(const std::vector<cv::Point_<T>>& columns,
+                                      T x) -> T {
+  const auto right = std::ranges::lower_bound(columns, x, {},
+                                              &cv::Point_<T>::x);
+  if (right == columns.begin()) return right->y;
+  if (right == columns.end()) return columns.back().y;
+  if (right->x == x) return right->y;
+  const auto left = right - 1;
+  const T fraction = (x - left->x) / (right->x - left->x);
+  return left->y + fraction * (right->y - left->y);
+}
 
 template <typename T>
 void FindThresholdedPoints(const cv::Mat1b& threshold_mask,

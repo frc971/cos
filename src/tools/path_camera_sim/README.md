@@ -12,7 +12,7 @@ cd /root
 ./tools/path_camera_sim \
   --poses=/path/to/poses.json \
   --camera_config=constants/second_bot/left_camera.json \
-  --output_dir=sim-output
+  --output_dir=/root/debug-output/path-camera-sim
 ```
 
 The pose file is a JSON array or an object containing a `poses` array:
@@ -40,3 +40,10 @@ at 0 all 456 pieces keep their staged positions; at 1 each survivor has up to
 removal chance. The placement and random sampling follow BOS's Fuel generator.
 The staged Fuel meshes are already embedded in `model.glb`, so no separate
 gamepiece asset is required.
+
+Each manifest embeds the camera calibration and lens-distortion setting.
+Feed a run directly to `tools/hsv_cluster_visualizer --sim_run=/root/debug-output/path-camera-sim/entropic`
+to generate cluster views and projected-point heatmaps using its exact poses.
+Simulator output defaults to `/root/debug-output/path-camera-sim`. Visualizer
+output defaults to `/root/debug-output/<run-name>/<layout>/clusters`.
+Pass `--output_dir=DIR` to override either output directory.

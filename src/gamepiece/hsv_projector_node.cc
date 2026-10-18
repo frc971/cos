@@ -117,26 +117,33 @@ auto HSVProjectorNode::CreateCallback()
       for (const auto& pixel : pixels) {
         thresholded_points_.emplace_back(pixel + bounds.tl());
       }
+      const auto bottom_columns =
+          LowestPointsByColumn(thresholded_points_, frame->width);
+      std::vector<cv::Point2d> lowest_points;
+      lowest_points.reserve(thresholded_points_.size());
+      for (const auto& point : thresholded_points_) {
+        lowest_points.emplace_back(
+            point.x, InterpolatedLowestY(bottom_columns, point.x));
+      }
       cv::undistortPoints(thresholded_points_, thresholded_points_, intrinsics_,
                           distortion_coeffs_);
-      const cv::Point2d bottom =
-          *std::ranges::max_element(thresholded_points_, {}, &cv::Point2d::y);
-      const auto ground =
-          UndistortedPinholePointOffset(bottom, 0, extrinsics_cv_);
-      if (!ground.has_value()) {
-        continue;
-      }
-      const cv::Vec4d robot_to_ball_top =
-          robot_to_camera *
-          cv::Vec4d{extrinsics_cv_(0, 3) - ground->Y().value(), -ball_height_m,
-                    extrinsics_cv_(2, 3) + ground->X().value(), 1};
-      const double image_height =
-          bottom.y - robot_to_ball_top[1] / robot_to_ball_top[2];
-      if (robot_to_ball_top[2] <= 0 || !std::isfinite(image_height) ||
-          image_height <= 0) {
-        continue;
-      }
-      for (const auto& point : thresholded_points_) {
+      cv::undistortPoints(lowest_points, lowest_points, intrinsics_,
+                          distortion_coeffs_);
+      for (std::size_t index = 0; index < thresholded_points_.size(); ++index) {
+        const auto& point = thresholded_points_[index];
+        const cv::Point2d& bottom = lowest_points[index];
+        const auto ground =
+            UndistortedPinholePointOffset(bottom, 0, extrinsics_cv_);
+        if (!ground.has_value()) continue;
+        const cv::Vec4d robot_to_ball_top =
+            robot_to_camera *
+            cv::Vec4d{extrinsics_cv_(0, 3) - ground->Y().value(),
+                      -ball_height_m,
+                      extrinsics_cv_(2, 3) + ground->X().value(), 1};
+        const double image_height =
+            bottom.y - robot_to_ball_top[1] / robot_to_ball_top[2];
+        if (robot_to_ball_top[2] <= 0 || !std::isfinite(image_height) ||
+            image_height <= 0) continue;
         const double height_fraction = (bottom.y - point.y) / image_height;
         if (height_fraction < 0.5) {
           continue;  // Omit the frontmost ball's lower half.

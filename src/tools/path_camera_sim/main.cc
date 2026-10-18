@@ -31,7 +31,8 @@ ABSL_FLAG(std::string, camera_config, "constants/second_bot/left_camera.json",
           "Camera configuration with intrinsics and extrinsics");
 ABSL_FLAG(std::string, field_dir, "constants/field-cad",
           "AdvantageScope field model directory");
-ABSL_FLAG(std::string, output_dir, "sim-output", "Directory for rendered PNGs");
+ABSL_FLAG(std::string, output_dir, "/root/debug-output/path-camera-sim",
+          "Directory for rendered PNGs");
 ABSL_FLAG(bool, apply_distortion, true, "Apply camera lens distortion");
 ABSL_FLAG(double, fuel_entropy, -1.0,
           "Render staged Fuel and a second layout at this entropy (0 to 1)");
@@ -162,6 +163,8 @@ void Run() {
     std::filesystem::create_directories(layout_dir);
     nlohmann::json manifest = {
       {"camera_config", camera_path},
+      {"camera_calibration", camera_json},
+      {"apply_distortion", absl::GetFlag(FLAGS_apply_distortion)},
       {"poses", poses_path},
       {"field_model", (std::filesystem::path(field_dir) / "model.glb").string()},
       {"resolution", {image_size.width, image_size.height}},

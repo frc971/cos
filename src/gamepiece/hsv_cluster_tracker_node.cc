@@ -151,6 +151,7 @@ void HSVClusterTrackerNode::ProcessFrame(const cv::Mat& frame) {
   const std::vector<kmeans_cluster_t> previous_clusters = clusters_;
   clusters_.clear();
   thresholded_points_.clear();
+  bottom_columns_.clear();
 
   if (frame.empty()) {
     return;
@@ -164,13 +165,15 @@ void HSVClusterTrackerNode::ProcessFrame(const cv::Mat& frame) {
   }
   cv::undistortPoints(thresholded_points_, thresholded_points_,
                       camera_intrinsics_, distortion_coeffs_);
-
   std::erase_if(thresholded_points_, [this](const cv::Point2f& point) {
     return !NormalizedPointOffset(point).has_value();
   });
   if (thresholded_points_.empty()) {
     return;
   }
+  bottom_columns_ = LowestPointsByColumn(
+      thresholded_points_, frame.cols,
+      static_cast<double>(camera_intrinsics_(0, 0)));
   clusters_ = AssignPersistentIds(
       MergeOverlappingClusters(KMeans(thresholded_points_, previous_clusters)));
 }
@@ -188,10 +191,19 @@ auto HSVClusterTrackerNode::ClampToHorizon(cv::Point2f point) const
   return point;
 }
 
-auto HSVClusterTrackerNode::GroundPoint(const cv::Point2f& point) const
+auto HSVClusterTrackerNode::GroundPoint(const cv::Point2f& point,
+                                        bool use_column_bottom) const
     -> cv::Point2f {
-  const auto offset =
-      UndistortedPinholePointOffset(point, 0, camera_extrinsics_cv_).value();
+  std::optional<frc::Translation2d> projected_offset;
+  if (use_column_bottom && !bottom_columns_.empty()) {
+    projected_offset = NormalizedPointOffset(
+        {point.x, InterpolatedLowestY(bottom_columns_, point.x)});
+  }
+  // Original rays are filtered frame points or horizon-clamped cluster seeds.
+  const auto offset = projected_offset.has_value()
+                          ? *projected_offset
+                          : UndistortedPinholePointOffset(
+                                point, 0, camera_extrinsics_cv_).value();
   return {static_cast<float>(offset.X().value()),
           static_cast<float>(offset.Y().value())};
 }
@@ -209,7 +221,8 @@ auto HSVClusterTrackerNode::AssignToExistingClusters(
   for (std::size_t i = 0; i < existing_clusters.size(); ++i) {
     assigned_clusters[i].centroid =
         ClampToHorizon(existing_clusters[i].centroid);
-    scaled_centroids.push_back(GroundPoint(assigned_clusters[i].centroid));
+    scaled_centroids.push_back(
+        GroundPoint(assigned_clusters[i].centroid, false));
   }
   for (const auto& point : data_points) {
     const cv::Point2f scaled_point = GroundPoint(point);

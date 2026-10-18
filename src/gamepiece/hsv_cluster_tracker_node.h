@@ -60,7 +60,9 @@ class HSVClusterTrackerNode final : public control_loop::INode {
   [[nodiscard]] auto NormalizedPointOffset(const cv::Point2f& point) const
       -> std::optional<frc::Translation2d>;
   [[nodiscard]] auto ClampToHorizon(cv::Point2f point) const -> cv::Point2f;
-  [[nodiscard]] auto GroundPoint(const cv::Point2f& point) const -> cv::Point2f;
+  [[nodiscard]] auto GroundPoint(const cv::Point2f& point,
+                                 bool use_column_bottom = true) const
+      -> cv::Point2f;
   [[nodiscard]] auto KMeans(
       const std::vector<cv::Point2f>& data_points,
       const std::vector<kmeans_cluster_t>& initial_clusters) const
@@ -89,6 +91,7 @@ class HSVClusterTrackerNode final : public control_loop::INode {
   std::vector<control_loop::MessageDescriptor> publications_;
   std::mutex processing_mutex_;
   std::vector<cv::Point2f> thresholded_points_;
+  std::vector<cv::Point2f> bottom_columns_;
   std::vector<kmeans_cluster_t> clusters_;
   // Indexed by ID; retain the last observed ground position through empty frames.
   std::vector<frc::Translation2d> canonical_positions_;

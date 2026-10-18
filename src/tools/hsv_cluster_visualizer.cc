@@ -11,11 +11,13 @@
 #include <future>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <memory>
 #include <numbers>
 #include <optional>
 #include <random>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -43,7 +45,7 @@ constexpr std::string_view kDefaultIntrinsicsPath =
 constexpr std::string_view kDefaultExtrinsicsPath =
     "constants/gamepiece/camera.json";
 constexpr std::string_view kDefaultOutputDirectory =
-    "build/fake_gamepiece-clusters";
+    "/root/debug-output/hsv-cluster-visualizer";
 constexpr std::string_view kDefaultFramesDirectory =
     "/cos-logs/downloaded_video_frames";
 constexpr std::string_view kDefaultFramePath =
@@ -72,7 +74,8 @@ auto HueColor(const int hue) -> cv::Scalar {
           static_cast<double>(color[2])};
 }
 
-auto RandomClusterColor(std::mt19937& random_generator) -> cv::Scalar {
+auto ClusterColor(std::size_t id) -> cv::Scalar {
+  std::mt19937 random_generator(kClusterColorSeed + id);
   return HueColor(std::uniform_int_distribution<int>(0, 179)(random_generator));
 }
 
@@ -120,6 +123,59 @@ auto DrawRobot(cv::Mat& canvas, const frc::Pose2d& pose,
   cv::line(canvas, FieldPoint(pose.X().value(), pose.Y().value()),
            FieldPoint(nose.X().value(), nose.Y().value()), color, 2,
            cv::LINE_AA);
+}
+
+auto ProjectedPointCounts(const gamepiece::HSVClusterTrackerNode& tracker,
+                          const gamepiece::hsv_clusters_t& clusters,
+                          const frc::Pose2d& pose, cv::Size size) -> cv::Mat1f {
+  cv::Mat1f counts(size, 0.0f);
+  for (const auto& cluster : clusters) {
+    for (const auto& point : cluster.img_points) {
+      if (const auto offset = tracker.RobotRelativeOffset(point)) {
+        const auto position = pose.Translation() + offset->RotateBy(pose.Rotation());
+        const auto pixel = FieldPoint(position.X().value(), position.Y().value());
+        if (pixel.x >= 0 && pixel.x < size.width &&
+            pixel.y >= 0 && pixel.y < size.height) {
+          counts(static_cast<int>(pixel.y), static_cast<int>(pixel.x)) += 1.0f;
+        }
+      }
+    }
+  }
+  return counts;
+}
+
+auto PointHeatmap(const cv::Mat& base, const cv::Mat1f& counts,
+                  const std::string& caption) -> cv::Mat {
+  // Smooth over 5 cm, then use log density to keep sparse projections visible.
+  cv::Mat1f density, intensity;
+  cv::GaussianBlur(counts, density, {}, 0.05 * kFieldPixelsPerMeter,
+                   0.05 * kFieldPixelsPerMeter, cv::BORDER_CONSTANT);
+  double peak = 0;
+  cv::minMaxLoc(density, nullptr, &peak);
+  cv::log(density + 1.0f, intensity);
+  cv::Mat1b levels;
+  intensity.convertTo(levels, CV_8U, peak > 0 ? 255.0 / std::log1p(peak) : 0);
+  cv::Mat colors, blended, heatmap = base.clone();
+  cv::applyColorMap(levels, colors, cv::COLORMAP_TURBO);
+  cv::addWeighted(colors, 0.85, base, 0.15, 0, blended);
+  blended.copyTo(heatmap, density > 0.001f);
+  cv::putText(heatmap, caption, {20, 30}, cv::FONT_HERSHEY_SIMPLEX, 0.7,
+              cv::Scalar{255, 255, 255}, 2, cv::LINE_AA);
+  cv::putText(heatmap,
+              cv::format("%.0f projected pixels on field | 5 cm smoothing",
+                         cv::sum(counts)[0]),
+              {20, 58}, cv::FONT_HERSHEY_SIMPLEX, 0.6,
+              cv::Scalar{255, 255, 255}, 1, cv::LINE_AA);
+  cv::Mat1b ramp(16, 256);
+  for (int x = 0; x < ramp.cols; ++x) ramp.col(x).setTo(x);
+  cv::Mat legend;
+  cv::applyColorMap(ramp, legend, cv::COLORMAP_TURBO);
+  legend.copyTo(heatmap(cv::Rect{20, heatmap.rows - 42, ramp.cols, ramp.rows}));
+  cv::putText(heatmap,
+              cv::format("0 to %.2f pixels/cell (log scale, per-image peak)", peak),
+              {20, heatmap.rows - 52}, cv::FONT_HERSHEY_SIMPLEX, 0.55,
+              cv::Scalar{255, 255, 255}, 1, cv::LINE_AA);
+  return heatmap;
 }
 
 // The cluster's ground-plane 2-sigma ellipse (matching ClusterEllipse's
@@ -284,12 +340,11 @@ auto AnnotateFrame(const cv::Mat& frame,
   cv::Mat visualization;
   cv::remap(frame, visualization, map_x, map_y, cv::INTER_LINEAR);
 
-  std::mt19937 random_generator(kClusterColorSeed);
   for (std::size_t cluster_index = 0; cluster_index < clusters.size();
        ++cluster_index) {
     const gamepiece::kmeans_cluster_t& cluster = clusters.at(cluster_index);
     const auto pixel_cluster = PixelCluster(cluster, camera_matrix);
-    const cv::Scalar color = RandomClusterColor(random_generator);
+    const cv::Scalar color = ClusterColor(cluster.id);
     const cv::Vec3b pixel_color{static_cast<uchar>(color[0]),
                                 static_cast<uchar>(color[1]),
                                 static_cast<uchar>(color[2])};
@@ -324,7 +379,7 @@ auto AnnotateFrame(const cv::Mat& frame,
     const auto center =
         PixelEllipse(gamepiece::ClusterEllipse(clusters[i]), camera_matrix)
             .center;
-    DrawClusterIndex(visualization, i,
+    DrawClusterIndex(visualization, clusters[i].id,
                      {static_cast<int>(std::lround(center.x)),
                       static_cast<int>(std::lround(center.y))},
                      NearestClusterDistance(clusters, i));
@@ -332,7 +387,7 @@ auto AnnotateFrame(const cv::Mat& frame,
       continue;
     }
     const std::string label =
-        cv::format("%zu: %.2f m", i, position->Norm().value());
+        cv::format("%zu: %.2f m", clusters[i].id, position->Norm().value());
     const cv::Point origin{20, 80 + static_cast<int>(i) * 28};
     cv::putText(visualization, label, origin, cv::FONT_HERSHEY_SIMPLEX, 0.7,
                 cv::Scalar{0, 0, 0}, 5, cv::LINE_AA);
@@ -356,11 +411,17 @@ auto main(int argc, char** argv) -> int {
   std::vector<std::string> positional;
   std::string frames_directory(kDefaultFramesDirectory);
   std::string poses_path;
+  std::string sim_run;
+  std::string output_dir;
   int start_frame = -1;
   int end_frame = -1;
   for (int i = 1; i < argc; ++i) {
     const std::string_view arg(argv[i]);
-    if (arg.starts_with("--poses=")) {
+    if (arg.starts_with("--sim_run=")) {
+      sim_run = arg.substr(10);
+    } else if (arg.starts_with("--output_dir=")) {
+      output_dir = arg.substr(13);
+    } else if (arg.starts_with("--poses=")) {
       poses_path = arg.substr(8);
     } else if (arg.starts_with("--start=")) {
       start_frame = std::stoi(std::string(arg.substr(8)));
@@ -374,6 +435,12 @@ auto main(int argc, char** argv) -> int {
   }
   const bool use_range = start_frame >= 0 || end_frame >= 0;
   const bool use_defaults = positional.empty();
+  if (!sim_run.empty() &&
+      (!positional.empty() || use_range || !poses_path.empty())) {
+    std::cerr << "--sim_run supplies frames, calibration, and poses; use only "
+                 "--output_dir with it\n";
+    return 1;
+  }
   if (use_range && (start_frame < 0 || end_frame < start_frame)) {
     std::cerr << "--start and --end must both be set with start <= end\n";
     return 1;
@@ -384,6 +451,8 @@ auto main(int argc, char** argv) -> int {
         << "Usage: hsv_cluster_visualizer [--poses=poses.json] [--start=N --end=M "
            "[--frames_dir=DIR]] [<intrinsics.json> <extrinsics.json> "
            "<output-directory> <frame.jpg>...]\n"
+           "Or: hsv_cluster_visualizer --sim_run=RUN_OR_MANIFEST "
+           "[--output_dir=DIR]\n"
            "With no positional arguments, uses the default calibration and "
            "output; with no range either, runs the sample frame.\n"
            "Calibration uses nested camera JSON (degrees) or flat BOS JSON "
@@ -391,12 +460,36 @@ auto main(int argc, char** argv) -> int {
     return 1;
   }
   try {
+    nlohmann::json sim;
+    std::filesystem::path sim_directory;
+    if (!sim_run.empty()) {
+      const auto manifest = std::filesystem::is_directory(sim_run)
+                                ? std::filesystem::path(sim_run) / "manifest.json"
+                                : std::filesystem::path(sim_run);
+      sim_directory = manifest.parent_path();
+      sim = ReadJson(manifest);
+      if (!sim.at("frames").is_array() || sim.at("frames").empty()) {
+        throw std::runtime_error("Simulation manifest must have nonempty frames");
+      }
+    }
+    const auto sim_camera = [&]() -> nlohmann::json {
+      if (sim.contains("camera_calibration")) return sim.at("camera_calibration");
+      std::filesystem::path path = sim.at("camera_config").get<std::string>();
+      if (path.is_relative() && !std::filesystem::exists(path)) {
+        path = sim_directory / path;
+      }
+      return ReadJson(path);
+    };
     const auto intrinsics_json =
-        ReadJson(use_defaults ? std::filesystem::path{kDefaultIntrinsicsPath}
-                              : std::filesystem::path{positional[0]});
+        !sim.is_null()
+            ? sim_camera()
+            : ReadJson(use_defaults ? std::filesystem::path{kDefaultIntrinsicsPath}
+                                    : std::filesystem::path{positional[0]});
     const auto extrinsics_json =
-        ReadJson(use_defaults ? std::filesystem::path{kDefaultExtrinsicsPath}
-                              : std::filesystem::path{positional[1]});
+        !sim.is_null()
+            ? intrinsics_json
+            : ReadJson(use_defaults ? std::filesystem::path{kDefaultExtrinsicsPath}
+                                    : std::filesystem::path{positional[1]});
     const auto& intrinsics = intrinsics_json.contains("intrinsics")
                                  ? intrinsics_json.at("intrinsics")
                                  : intrinsics_json;
@@ -415,10 +508,11 @@ auto main(int argc, char** argv) -> int {
                                     0,
                                     0,
                                     1};
-    const cv::Vec<double, 5> distortion{
+    cv::Vec<double, 5> distortion{
         intrinsics.value("k1", 0.0), intrinsics.value("k2", 0.0),
         intrinsics.value("p1", 0.0), intrinsics.value("p2", 0.0),
         intrinsics.value("k3", 0.0)};
+    if (!sim.is_null() && !sim.value("apply_distortion", true)) distortion = {};
     const frc::Pose3d camera_pose(
         units::meter_t{extrinsics.at("translation_x").get<double>()},
         units::meter_t{extrinsics.at("translation_y").get<double>()},
@@ -430,12 +524,28 @@ auto main(int argc, char** argv) -> int {
                             rotation_scale},
             units::radian_t{extrinsics.at("rotation_z").get<double>() *
                             rotation_scale}));
-    // Robot pose comes from the multi-tag solver, which needs nested camera
-    // JSON; without it only the camera-view outputs are produced.
-    const auto poses = poses_path.empty() ? nlohmann::json::object()
-                                         : ReadJson(poses_path);
+    // Simulation and cached poses bypass AprilTag localization.
+    auto poses = poses_path.empty() ? nlohmann::json::object()
+                                    : ReadJson(poses_path);
+    if (!sim.is_null()) {
+      for (const auto& frame : sim.at("frames")) {
+        const auto& pose = frame.at("robot_pose");
+        const auto& translation = pose.at("translation_m");
+        const auto rotation = pose.value(
+            "rotation_rpy_rad",
+            std::vector<double>{0, 0, pose.value("rotation_rad", 0.0)});
+        if (rotation.size() != 3 || rotation[0] != 0 || rotation[1] != 0 ||
+            (translation.size() == 3 && translation.at(2).get<double>() != 0)) {
+          throw std::runtime_error("Simulation heatmaps require planar robot poses");
+        }
+        const auto filename =
+            std::filesystem::path(frame.at("file").get<std::string>()).filename();
+        poses[filename.string()] =
+            {{"x", translation.at(0)}, {"y", translation.at(1)}, {"yaw", rotation[2]}};
+      }
+    }
     std::optional<localization::MultiTagSolverNode> tag_solver;
-    if (poses_path.empty() && intrinsics_json.contains("intrinsics") &&
+    if (poses.empty() && intrinsics_json.contains("intrinsics") &&
         rotations_in_degrees) {
       tag_solver.emplace(
           "tags", "pose",
@@ -456,11 +566,20 @@ auto main(int argc, char** argv) -> int {
     }
     std::optional<frc::Pose2d> robot_pose;  // Held across frames without tags.
     const std::filesystem::path output_directory(
+        !output_dir.empty() ? std::filesystem::path(output_dir) :
+        !sim.is_null() ? std::filesystem::path("/root/debug-output") /
+                            sim_directory.parent_path().filename() /
+                            sim_directory.filename() / "clusters" :
         use_defaults ? std::filesystem::path{kDefaultOutputDirectory}
                      : std::filesystem::path{positional[2]});
     std::filesystem::create_directories(output_directory);
     nlohmann::json frames = nlohmann::json::array();
     std::vector<std::filesystem::path> input_paths;
+    if (!sim.is_null()) {
+      for (const auto& frame : sim.at("frames")) {
+        input_paths.push_back(sim_directory / frame.at("file").get<std::string>());
+      }
+    }
     for (std::size_t i = 3; i < positional.size(); ++i) {
       input_paths.emplace_back(positional[i]);
     }
@@ -497,8 +616,13 @@ auto main(int argc, char** argv) -> int {
           panel_size == 1 ? 0 : i * (frame_count - 1) / (panel_size - 1));
     }
     std::vector<cv::Mat> panel_frames;
+    std::vector<std::filesystem::path> heatmap_panel_paths;
     const cv::Mat field_base = MakeFieldCanvas();
     cv::Mat field_overlay = field_base.clone();
+    std::map<std::size_t, std::vector<std::pair<cv::RotatedRect, cv::Scalar>>>
+        field_ellipses;
+    cv::Mat1f overall_point_counts(field_base.size(), 0.0f);
+    std::size_t heatmap_frames = 0;
     auto next_frame = Async(pool, [first_frame] { return first_frame; });
     for (std::size_t frame_index = 0; frame_index < frame_count;
          ++frame_index) {
@@ -523,7 +647,7 @@ auto main(int argc, char** argv) -> int {
       pending.push_back(Async(pool, [frame, clusters, camera_matrix, map_x, map_y,
                                     pitch = camera_pose.Rotation().Y().value(),
                                     input_path, output_path,
-                                    panel = use_range &&
+                                    panel = (use_range || !sim.is_null()) &&
                                             panel_indices.contains(frame_index)] {
         const cv::Mat visualization = AnnotateFrame(
             frame, clusters, cv::Mat(camera_matrix), map_x, map_y, pitch);
@@ -543,7 +667,7 @@ auto main(int argc, char** argv) -> int {
       std::size_t pose_tag_count = 0;
       std::vector<localization::tag_detection_t> detections;
       bool pose_updated = false;
-      if (!poses_path.empty()) {
+      if (!poses.empty()) {
         // Missing entries are errors; null means no estimate, so hold the pose.
         const auto& pose = poses.at(input_path.filename().string());
         if (!pose.is_null()) {
@@ -573,18 +697,17 @@ auto main(int argc, char** argv) -> int {
         }
       }
       // Per-frame field view uses the camera view's cluster colors; the
-      // all-frames overlay colors by time so motion is visible.
+      // all-frames overlay keeps one median-area ellipse per ID, colored by time.
       if (robot_pose.has_value()) {
         cv::Mat field = field_base.clone();
-        std::mt19937 field_color_generator(kClusterColorSeed);
         const cv::Scalar frame_color =
             HueColor(static_cast<int>(frame_index * 120 / frame_count));
         for (const auto& cluster : clusters) {
-          const cv::Scalar color = RandomClusterColor(field_color_generator);
+          const cv::Scalar color = ClusterColor(cluster.id);
           if (const auto ellipse =
                   FieldEllipse(tracker, cluster, *robot_pose)) {
             DrawTranslucentEllipse(field, *ellipse, color);
-            DrawTranslucentEllipse(field_overlay, *ellipse, frame_color);
+            field_ellipses[cluster.id].emplace_back(*ellipse, frame_color);
           }
         }
         DrawRobot(field, *robot_pose, cv::Scalar{255, 255, 255});
@@ -598,7 +721,7 @@ auto main(int argc, char** argv) -> int {
           const auto center = robot_pose->Translation() +
                               position->RotateBy(robot_pose->Rotation());
           const auto pixel = FieldPoint(center.X().value(), center.Y().value());
-          DrawClusterIndex(field, i,
+          DrawClusterIndex(field, clusters[i].id,
                            {static_cast<int>(std::lround(pixel.x)),
                             static_cast<int>(std::lround(pixel.y))},
                            NearestClusterDistance(clusters, i), &field_labels);
@@ -606,8 +729,25 @@ auto main(int argc, char** argv) -> int {
         const std::string field_caption =
             input_path.filename().string() + " | " +
             (pose_tag_count > 0 ? std::to_string(pose_tag_count) + " tags"
-                               : pose_updated ? "cached pose"
+                               : pose_updated ? (sim.is_null() ? "cached pose"
+                                                               : "simulated pose")
                                               : "no tags, pose held");
+        const cv::Mat1f point_counts =
+            ProjectedPointCounts(tracker, clusters, *robot_pose, field_base.size());
+        overall_point_counts += point_counts;
+        ++heatmap_frames;
+        const auto heatmap_path = output_directory /
+                                  (input_path.stem().string() + "_heatmap.png");
+        if (panel_indices.contains(frame_index)) {
+          heatmap_panel_paths.push_back(heatmap_path);
+        }
+        pending.push_back(Async(pool, [field_base, point_counts, field_caption,
+                                      pose = *robot_pose, path = heatmap_path] {
+          cv::Mat heatmap = PointHeatmap(field_base, point_counts, field_caption);
+          DrawRobot(heatmap, pose, cv::Scalar{255, 255, 255});
+          CHECK(cv::imwrite(path.string(), heatmap));
+          return cv::Mat{};
+        }));
         cv::putText(field, field_caption, {20, 30}, cv::FONT_HERSHEY_SIMPLEX,
                     0.8, cv::Scalar{255, 255, 255}, 2, cv::LINE_AA);
         pending.push_back(Async(pool, [field, path = output_directory /
@@ -631,7 +771,8 @@ auto main(int argc, char** argv) -> int {
                          cv::Mat(camera_matrix));
         pixel_count += cluster.img_points.size();
         cluster_data.push_back(
-            {{"centroid_px", {cluster.centroid.x, cluster.centroid.y}},
+            {{"id", cluster.id},
+             {"centroid_px", {cluster.centroid.x, cluster.centroid.y}},
              {"pixel_count", cluster.img_points.size()},
              {"ellipse_semi_axes_px",
               {ellipse.size.width / 2.0f, ellipse.size.height / 2.0f}},
@@ -655,13 +796,38 @@ auto main(int argc, char** argv) -> int {
       if (!thumbnail.empty()) panel_frames.push_back(std::move(thumbnail));
     }
     if (robot_pose.has_value()) {
+      for (auto& [id, ellipses] : field_ellipses) {
+        // Select an observed ellipse; even counts use the upper median.
+        const auto median = ellipses.begin() + ellipses.size() / 2;
+        std::nth_element(ellipses.begin(), median, ellipses.end(),
+                         [](const auto& a, const auto& b) {
+                           return a.first.size.area() < b.first.size.area();
+                         });
+        DrawTranslucentEllipse(field_overlay, median->first, median->second);
+      }
       CHECK(cv::imwrite((output_directory / "field_overlay.png").string(),
                         field_overlay));
+      CHECK(cv::imwrite((output_directory / "overall_heatmap.png").string(),
+                        PointHeatmap(field_base, overall_point_counts,
+                                     "Overall projected points | " +
+                                         std::to_string(heatmap_frames) + " frames")));
     }
     if (!panel_frames.empty()) {
       cv::Mat panel;
       cv::hconcat(panel_frames, panel);
       CHECK(cv::imwrite((output_directory / "comparison_panel.png").string(),
+                        panel));
+    }
+    if (!heatmap_panel_paths.empty()) {
+      std::vector<cv::Mat> thumbnails;
+      for (const auto& path : heatmap_panel_paths) {
+        cv::Mat thumbnail;
+        cv::resize(cv::imread(path.string()), thumbnail, {}, 0.5, 0.5, cv::INTER_AREA);
+        thumbnails.push_back(std::move(thumbnail));
+      }
+      cv::Mat panel;
+      cv::hconcat(thumbnails, panel);
+      CHECK(cv::imwrite((output_directory / "heatmap_comparison_panel.png").string(),
                         panel));
     }
     std::ofstream summary(output_directory / "clusters.json");

@@ -22,6 +22,9 @@ struct HSVClusterTrackerNodeTestPeer {
                   const hsv_clusters_t& seeds) {
     return tracker.KMeans(points, seeds);
   }
+  static auto Track(HSVClusterTrackerNode& tracker, hsv_clusters_t clusters) {
+    return tracker.AssignPersistentIds(std::move(clusters));
+  }
 };
 }  // namespace gamepiece
 
@@ -48,6 +51,74 @@ auto MakeImage() -> cv::Mat {
   cv::Mat bgr;
   cv::cvtColor(hsv, bgr, cv::COLOR_HSV2BGR);
   return bgr;
+}
+
+auto GroundCluster(float lateral, float forward = 2.0f)
+    -> gamepiece::kmeans_cluster_t {
+  gamepiece::kmeans_cluster_t cluster;
+  cluster.centroid = {-lateral / forward, 1.0f / forward};
+  cluster.img_points = {cluster.centroid - cv::Point2f{0.002f, 0},
+                        cluster.centroid + cv::Point2f{0.002f, 0}};
+  return cluster;
+}
+
+TEST(HSVClusterTrackerTest, PersistentIdsFollowNearestProjectedCentroids) {
+  gamepiece::HSVClusterTrackerNode tracker("decoded", "clusters", kIntrinsics,
+                                         kExtrinsics, kDistortion, kImageSize);
+  const auto track = [&](gamepiece::hsv_clusters_t clusters) {
+    return gamepiece::HSVClusterTrackerNodeTestPeer::Track(tracker,
+                                                          std::move(clusters));
+  };
+  const auto first = track({GroundCluster(0), GroundCluster(0.4f)});
+  ASSERT_EQ(first.size(), 2U);  // New clusters do not match each other.
+  EXPECT_NE(first[0].id, first[1].id);
+  auto next = track({GroundCluster(0.35f), GroundCluster(0.05f)});
+  ASSERT_EQ(next.size(), 2U);
+  EXPECT_EQ(next[0].id, first[1].id);
+  EXPECT_EQ(next[1].id, first[0].id);
+  for (float lateral : {0.75f, 1.15f}) {
+    next = track({GroundCluster(lateral)});
+    ASSERT_EQ(next.size(), 1U);
+    EXPECT_EQ(next[0].id, first[1].id);
+  }
+  tracker.ProcessFrame(cv::Mat{});
+  tracker.ProcessFrame(cv::Mat3b::zeros(96, 128));
+  next = track({GroundCluster(0.05f)});
+  ASSERT_EQ(next.size(), 1U);
+  EXPECT_EQ(next[0].id, first[0].id);
+}
+
+TEST(HSVClusterTrackerTest, IdToleranceUsesGroundMetersAndCreatesNewIds) {
+  gamepiece::HSVClusterTrackerNode tracker("decoded", "clusters", kIntrinsics,
+                                         kExtrinsics, kDistortion, kImageSize);
+  const auto track = [&](float lateral, float forward) {
+    return gamepiece::HSVClusterTrackerNodeTestPeer::Track(
+        tracker, {GroundCluster(lateral, forward)}).front().id;
+  };
+  const auto original = track(0, 10);
+  EXPECT_NE(track(0.6f, 10), original);  // Only 0.06 apart in image coordinates.
+  EXPECT_EQ(track(-0.4f, 10), original);
+  const auto fresh = track(0, 2);
+  EXPECT_NE(fresh, original);
+  EXPECT_EQ(track(0.5f, 2), fresh);  // Inclusive tolerance boundary.
+}
+
+TEST(HSVClusterTrackerTest, MergesSameIdClustersAndRecomputesGeometry) {
+  gamepiece::HSVClusterTrackerNode tracker("decoded", "clusters", kIntrinsics,
+                                         kExtrinsics, kDistortion, kImageSize);
+  const auto first = gamepiece::HSVClusterTrackerNodeTestPeer::Track(
+      tracker, {GroundCluster(0)});
+  auto right = GroundCluster(0.2f);
+  right.img_points.push_back(right.centroid);
+  const auto merged = gamepiece::HSVClusterTrackerNodeTestPeer::Track(
+      tracker, {GroundCluster(-0.4f), right});
+  ASSERT_EQ(merged.size(), 1U);
+  EXPECT_EQ(merged[0].id, first[0].id);
+  EXPECT_EQ(merged[0].img_points.size(), 5U);
+  EXPECT_NEAR(merged[0].centroid.x, 0.02f, 1e-6);
+  EXPECT_NEAR(merged[0].covar(0, 0), 0.0216032f, 1e-6);
+  ASSERT_TRUE(merged[0].robot_relative_translation.has_value());
+  EXPECT_NEAR(merged[0].robot_relative_translation->Y().value(), -0.04, 1e-6);
 }
 
 TEST(HSVClusterTrackerTest, SplitsOnlySpikingClustersAlongTheirMajorAxis) {
@@ -271,6 +342,36 @@ TEST(HSVClusterTrackerTest, AppliesConfigurableGroundDistanceLimit) {
                std::invalid_argument);
 }
 
+TEST(HSVClusterTrackerTest, ColumnBottomsKeepValidPointsAcrossTheHorizon) {
+  for (bool rolled : {false, true}) {
+    cv::Mat3b hsv(96, 128, cv::Vec3b{0, 0, 0});
+    auto extrinsics = kExtrinsics;
+    if (rolled) {
+      extrinsics = {1, 0, 0, 0, 0, 0.6, 0.8, 0,
+                    0, -0.8, 0.6, 0.1, 0, 0, 0, 1};
+      // All rays are valid, but extrapolating column 74 crosses the horizon.
+      hsv(63, 74) = cv::Vec3b{24, 255, 255};
+      hsv(cv::Rect{75, 78, 3, 1}).setTo(cv::Scalar{24, 255, 255});
+    } else {
+      // Only the noise column was sampled before filtering invalid rays.
+      hsv(30, 0) = cv::Vec3b{24, 255, 255};
+      hsv(cv::Rect{1, 70, 3, 1}).setTo(cv::Scalar{24, 255, 255});
+    }
+    cv::Mat bgr;
+    cv::cvtColor(hsv, bgr, cv::COLOR_HSV2BGR);
+    gamepiece::HSVClusterTrackerNode tracker("decoded", "clusters", kIntrinsics,
+                                           extrinsics, kDistortion, 1);
+    ASSERT_NO_THROW(tracker.ProcessFrame(bgr));
+    std::size_t count = 0;
+    for (const auto& cluster : *tracker.GetClusters()) {
+      count += cluster.img_points.size();
+      ASSERT_TRUE(cluster.robot_relative_translation.has_value());
+      EXPECT_TRUE(std::isfinite(cluster.robot_relative_translation->Norm().value()));
+    }
+    EXPECT_EQ(count, rolled ? 4U : 3U);
+  }
+}
+
 TEST(HSVClusterTrackerTest, ClusteringIsIndependentOfPixelOrigin) {
   const cv::Mat image = MakeImage();
   cv::Mat3b shifted_image(144, 192, cv::Vec3b{0, 0, 0});
@@ -370,6 +471,7 @@ TEST(HSVClusterTrackerNodeTest, ProcessesPaddedDeviceFramesAndRetainsHistory) {
     for (std::size_t i = 0; i < output->value.size(); ++i) {
       const auto& actual = output->value[i];
       const auto& expected = tracker.GetClusters()->at(i);
+      EXPECT_EQ(actual.id, expected.id);
       EXPECT_EQ(actual.centroid, expected.centroid);
       EXPECT_EQ(actual.img_points, expected.img_points);
       EXPECT_DOUBLE_EQ(cv::norm(actual.covar - expected.covar), 0);
