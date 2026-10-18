@@ -171,12 +171,8 @@ void HSVClusterTrackerNode::ProcessFrame(const cv::Mat& frame) {
   if (thresholded_points_.empty()) {
     return;
   }
-  clusters_ =
-      MergeOverlappingClusters(KMeans(thresholded_points_, previous_clusters));
-  for (auto& cluster : clusters_) {
-    cluster.robot_relative_translation.emplace(ClusterDistance(cluster) +
-                                               extrinsics_offset_);
-  }
+  clusters_ = AssignPersistentIds(
+      MergeOverlappingClusters(KMeans(thresholded_points_, previous_clusters)));
 }
 
 auto HSVClusterTrackerNode::ClampToHorizon(cv::Point2f point) const
@@ -373,6 +369,52 @@ auto HSVClusterTrackerNode::MergeOverlappingClusters(
     }
   }
 
+  return MergeClusters(unfiltered_clusters);
+}
+
+auto HSVClusterTrackerNode::AssignPersistentIds(
+    std::vector<kmeans_cluster_t> clusters)
+    -> std::vector<kmeans_cluster_t> {
+  cluster_dsu_.Clear();
+  cluster_dsu_.FillSets(clusters.size());
+  const std::size_t canonical_count = canonical_positions_.size();
+  std::vector<std::size_t> first_cluster(canonical_count + clusters.size(),
+                                        clusters.size());
+  // Match only positions from earlier frames, before updating any canonical.
+  for (std::size_t i = 0; i < clusters.size(); ++i) {
+    auto& cluster = clusters[i];
+    const auto position = ClusterDistance(cluster) + extrinsics_offset_;
+    cluster.id = canonical_positions_.size();
+    double nearest_distance = std::numeric_limits<double>::infinity();
+    for (std::size_t id = 0; id < canonical_count; ++id) {
+      const double distance = position.Distance(canonical_positions_[id]).value();
+      if (distance <= kIdMatchToleranceM && distance < nearest_distance) {
+        cluster.id = id;
+        nearest_distance = distance;
+      }
+    }
+    if (cluster.id == canonical_positions_.size()) {
+      canonical_positions_.push_back(position);
+    }
+    auto& first = first_cluster[cluster.id];
+    if (first == clusters.size()) {
+      first = i;
+    } else {
+      cluster_dsu_.Union(first, i);
+    }
+  }
+  auto merged = MergeClusters(clusters);
+  for (auto& cluster : merged) {
+    cluster.robot_relative_translation =
+        ClusterDistance(cluster) + extrinsics_offset_;
+    canonical_positions_[cluster.id] = *cluster.robot_relative_translation;
+  }
+  return merged;
+}
+
+auto HSVClusterTrackerNode::MergeClusters(
+    const std::vector<kmeans_cluster_t>& unfiltered_clusters)
+    -> std::vector<kmeans_cluster_t> {
   std::vector<kmeans_cluster_t> merged_clusters;
   merged_clusters.reserve(cluster_dsu_.ComponentCount());
   std::vector<std::size_t> component_cluster(unfiltered_clusters.size(),

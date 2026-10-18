@@ -23,6 +23,7 @@ using kmeans_cluster_t = struct KMeansCluster {
   cv::Matx22f covar{};  // Covariance of img_points in normalized coordinates.
   std::vector<cv::Point2f> img_points;
   std::optional<frc::Translation2d> robot_relative_translation = std::nullopt;
+  std::size_t id{};  // Persistent within one tracker instance.
 };
 
 using hsv_clusters_t = std::vector<kmeans_cluster_t>;
@@ -76,6 +77,10 @@ class HSVClusterTrackerNode final : public control_loop::INode {
   auto MergeOverlappingClusters(
       const std::vector<kmeans_cluster_t>& unfiltered_clusters)
       -> std::vector<kmeans_cluster_t>;
+  auto AssignPersistentIds(std::vector<kmeans_cluster_t> clusters)
+      -> std::vector<kmeans_cluster_t>;
+  auto MergeClusters(const std::vector<kmeans_cluster_t>& clusters)
+      -> std::vector<kmeans_cluster_t>;
 
   std::string input_path_;
   std::string output_path_;
@@ -85,6 +90,8 @@ class HSVClusterTrackerNode final : public control_loop::INode {
   std::mutex processing_mutex_;
   std::vector<cv::Point2f> thresholded_points_;
   std::vector<kmeans_cluster_t> clusters_;
+  // Indexed by ID; retain the last observed ground position through empty frames.
+  std::vector<frc::Translation2d> canonical_positions_;
   utils::DisjointSetUnion cluster_dsu_;
   cv::Mat3b hsv_image_;
   cv::Mat1b hsv_masked_;
@@ -94,6 +101,7 @@ class HSVClusterTrackerNode final : public control_loop::INode {
   float max_ground_distance_m_;
   std::size_t image_size_;
   static constexpr float max_merge_distance_m{0.5f};
+  static constexpr float kIdMatchToleranceM = 0.5f;
   cv::Mat frame_;
   frc::Translation2d extrinsics_offset_;
 };
