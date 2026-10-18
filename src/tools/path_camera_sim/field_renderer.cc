@@ -7,6 +7,7 @@
 #include <fstream>
 #include <functional>
 #include <iterator>
+#include <numbers>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -310,6 +311,40 @@ void FieldRenderer::SetFuelLayout(double entropy, uint32_t seed) {
     }
     fuel_positions_.push_back({fuel.model(0, 3), fuel.model(1, 3), fuel.model(2, 3)});
     active_fuel_draws_.push_back(std::move(fuel));
+  }
+}
+
+void FieldRenderer::SetFuelClusters(const std::vector<FuelCluster>& clusters,
+                                   double noise_m, uint32_t seed) {
+  if (!std::isfinite(noise_m) || noise_m < 0.0)
+    throw std::runtime_error("--fuel_noise must be finite and nonnegative");
+  active_fuel_draws_.clear();
+  fuel_positions_.clear();
+  std::mt19937 random(seed);
+  std::normal_distribution<double> normal;
+  for (const auto& cluster : clusters) {
+    const double sx = std::sqrt(cluster.covariance_m2[0]);
+    const double sy = std::sqrt(cluster.covariance_m2[1]);
+    const double count = std::round(2.0 * std::numbers::pi * cluster.density * sx * sy);
+    if (!std::isfinite(count) || count > 100000 - fuel_positions_.size())
+      throw std::runtime_error("Fuel clusters exceed the 100000-ball limit");
+    if (count > 0 && staged_fuel_draws_.empty())
+      throw std::runtime_error("Field model has no staged Fuel mesh");
+    const double c = std::cos(cluster.rotation_rad);
+    const double s = std::sin(cluster.rotation_rad);
+    for (size_t i = 0; i < static_cast<size_t>(count); ++i) {
+      const double u = sx * normal(random);
+      const double v = sy * normal(random);
+      const double x = cluster.center_m[0] + c * u - s * v + noise_m * normal(random);
+      const double y = cluster.center_m[1] + s * u + c * v + noise_m * normal(random);
+      if (x < 0.075 || x > field_length_ - 0.075 ||
+          y < 0.075 || y > field_width_ - 0.075) continue;
+      Draw fuel = staged_fuel_draws_.front();
+      fuel.model(0, 3) = x;
+      fuel.model(1, 3) = y;
+      fuel_positions_.push_back({x, y, fuel.model(2, 3)});
+      active_fuel_draws_.push_back(std::move(fuel));
+    }
   }
 }
 

@@ -43,8 +43,9 @@ class HSVClusterTrackerNode final : public control_loop::INode {
   void ProcessFrame(const cv::Mat& frame);
   [[nodiscard]] auto GetClusters() const
       -> const std::vector<kmeans_cluster_t>*;
+  // Input must be a normalized point retained by ProcessFrame.
   [[nodiscard]] auto RobotRelativeOffset(const cv::Point2f& point) const
-      -> std::optional<frc::Translation2d>;
+      -> frc::Translation2d;
 
   auto CreateCallback()
       -> std::function<void(const control_loop::Context&)> override;
@@ -58,7 +59,7 @@ class HSVClusterTrackerNode final : public control_loop::INode {
  private:
   friend struct HSVClusterTrackerNodeTestPeer;
   [[nodiscard]] auto NormalizedPointOffset(const cv::Point2f& point) const
-      -> std::optional<frc::Translation2d>;
+      -> frc::Translation2d;
   [[nodiscard]] auto ClampToHorizon(cv::Point2f point) const -> cv::Point2f;
   [[nodiscard]] auto GroundPoint(const cv::Point2f& point,
                                  bool use_column_bottom = true) const

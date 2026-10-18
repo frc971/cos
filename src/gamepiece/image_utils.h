@@ -1,9 +1,9 @@
 #pragma once
 
-#include <limits>
-#include <optional>
 #include <algorithm>
 #include <cmath>
+#include <functional>
+#include <limits>
 #include <ranges>
 #include <unordered_map>
 #include <vector>
@@ -123,18 +123,32 @@ void HSVThreshold(const cv::cuda::GpuMat& bgr_image, const int minimum_hue,
   FindThresholdedPoints(cpu_mask, thresholded_points);
 }
 
+// Culls normalized rays on or above the horizon. Projection keeps associated
+// data together when filtering (e.g. a pixel and its column-bottom point).
+template <typename T, typename MatrixT, typename Projection = std::identity>
+void CullAboveHorizon(std::vector<T>& points,
+                      const cv::Matx<MatrixT, 4, 4>& camera_extrinsics_cv,
+                      Projection projection = {}) {
+  const cv::Matx44d extrinsics(camera_extrinsics_cv);
+  std::erase_if(points, [&](const T& value) {
+    const auto& point = std::invoke(projection, value);
+    const double ray_y = extrinsics(1, 0) * point.x +
+                         extrinsics(1, 1) * point.y + extrinsics(1, 2);
+    return !std::isfinite(point.x) || !std::isfinite(point.y) ||
+           !(ray_y > std::numeric_limits<double>::epsilon());
+  });
+}
+
 // Takes focal-length-normalized points, as returned by cv::undistortPoints.
+// Callers must cull rays on or above the horizon before projecting.
 template <typename T, typename MatrixT>
 [[nodiscard]] auto UndistortedPinholePointOffset(
     const cv::Point_<T>& point, float world_relative_vertical,
     const cv::Matx<MatrixT, 4, 4>& camera_extrinsics_cv)
-    -> std::optional<frc::Translation2d> {
+    -> frc::Translation2d {
   const cv::Vec4d camera_ray =
       cv::Matx44d(camera_extrinsics_cv) * cv::Vec4d{point.x, point.y, 1.0, 0.0};
   const double ray_y = camera_ray[1];
-  if (ray_y <= std::numeric_limits<double>::epsilon()) {
-    return std::nullopt;
-  }
   const double scale =
       (world_relative_vertical - camera_extrinsics_cv(1, 3)) / ray_y;
   const cv::Vec4d floor_relative_offset =
@@ -145,12 +159,13 @@ template <typename T, typename MatrixT>
 
 // Normalizes pixel coordinates using pinhole intrinsics; does not correct lens
 // distortion. For calibrated distortion, use cv::undistortPoints first.
+// The normalized ray must be below the horizon.
 template <typename T, typename ExtrinsicsT, typename IntrinsicsT>
 [[nodiscard]] auto DistortedPinholePointOffset(
     const cv::Point_<T>& point, float world_relative_vertical,
     const cv::Matx<ExtrinsicsT, 4, 4>& camera_extrinsics_cv,
     const cv::Matx<IntrinsicsT, 3, 3>& camera_intrinsics)
-    -> std::optional<frc::Translation2d> {
+    -> frc::Translation2d {
   const cv::Point2d normalized_point{
       (point.x - camera_intrinsics(0, 2)) / camera_intrinsics(0, 0),
       (point.y - camera_intrinsics(1, 2)) / camera_intrinsics(1, 1)};

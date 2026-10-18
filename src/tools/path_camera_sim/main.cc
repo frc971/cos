@@ -36,7 +36,12 @@ ABSL_FLAG(std::string, output_dir, "/root/debug-output/path-camera-sim",
 ABSL_FLAG(bool, apply_distortion, true, "Apply camera lens distortion");
 ABSL_FLAG(double, fuel_entropy, -1.0,
           "Render staged Fuel and a second layout at this entropy (0 to 1)");
-ABSL_FLAG(uint32_t, fuel_seed, 0, "Seed for the entropic Fuel layout");
+ABSL_FLAG(uint32_t, fuel_seed, 0, "Seed for randomized Fuel layouts");
+ABSL_FLAG(std::string, fuel_clusters, "",
+          "JSON array of {center_m:[x,y], density:balls/m^2, "
+          "covariance_m2:[v1,v2], rotation_rad:angle}; replaces staged Fuel");
+ABSL_FLAG(double, fuel_noise, 0.0,
+          "Additional isotropic position noise standard deviation in meters for --fuel_clusters");
 
 namespace {
 
@@ -44,6 +49,31 @@ auto ReadJson(const std::filesystem::path& path) -> nlohmann::json {
   std::ifstream input(path);
   if (!input) throw std::runtime_error("Cannot open " + path.string());
   return nlohmann::json::parse(input);
+}
+
+auto ReadFuelClusters(const nlohmann::json& document)
+    -> std::vector<path_camera_sim::FuelCluster> {
+  if (!document.is_array()) throw std::runtime_error("--fuel_clusters must be a JSON array");
+  std::vector<path_camera_sim::FuelCluster> clusters;
+  for (const auto& item : document) {
+    for (const auto* key : {"center_m", "covariance_m2"}) {
+      if (!item.at(key).is_array() || item.at(key).size() != 2)
+        throw std::runtime_error(std::string("Fuel cluster ") + key + " must have two values");
+    }
+    path_camera_sim::FuelCluster cluster{
+        item.at("center_m").get<std::array<double, 2>>(),
+        item.at("density").get<double>(),
+        item.at("covariance_m2").get<std::array<double, 2>>(),
+        item.at("rotation_rad").get<double>()};
+    if (!std::isfinite(cluster.center_m[0]) || !std::isfinite(cluster.center_m[1]) ||
+        !std::isfinite(cluster.density) || cluster.density < 0.0 ||
+        !std::isfinite(cluster.covariance_m2[0]) || cluster.covariance_m2[0] <= 0.0 ||
+        !std::isfinite(cluster.covariance_m2[1]) || cluster.covariance_m2[1] <= 0.0 ||
+        !std::isfinite(cluster.rotation_rad))
+      throw std::runtime_error("Fuel clusters require finite values, nonnegative density, and positive covariances");
+    clusters.push_back(cluster);
+  }
+  return clusters;
 }
 
 auto ReadPose(const nlohmann::json& item) -> frc::Pose3d {
@@ -117,6 +147,15 @@ void BuildDistortionMaps(const cv::Size& size, const cv::Matx33d& intrinsics,
 }
 
 void Run() {
+  const std::string cluster_arg = absl::GetFlag(FLAGS_fuel_clusters);
+  const auto cluster_json = cluster_arg.empty() ? nlohmann::json::array()
+                                               : nlohmann::json::parse(cluster_arg);
+  const auto clusters = ReadFuelClusters(cluster_json);
+  const double noise = absl::GetFlag(FLAGS_fuel_noise);
+  if (!std::isfinite(noise) || noise < 0.0 || (cluster_arg.empty() && noise != 0.0))
+    throw std::runtime_error("--fuel_noise requires --fuel_clusters and must be finite and nonnegative");
+  if (!cluster_arg.empty() && absl::GetFlag(FLAGS_fuel_entropy) != -1.0)
+    throw std::runtime_error("--fuel_clusters cannot be combined with --fuel_entropy");
   const std::string poses_path = absl::GetFlag(FLAGS_poses);
   if (poses_path.empty()) throw std::runtime_error("--poses is required");
   const auto camera_path = absl::GetFlag(FLAGS_camera_config);
@@ -156,6 +195,9 @@ void Run() {
     layouts.emplace_back("entropic", entropy);
   }
   for (const auto& [name, layout_entropy] : layouts) {
+    if (!cluster_arg.empty()) {
+      renderer.SetFuelClusters(clusters, noise, absl::GetFlag(FLAGS_fuel_seed));
+    }
     if (layout_entropy >= 0.0) {
       renderer.SetFuelLayout(layout_entropy, absl::GetFlag(FLAGS_fuel_seed));
     }
@@ -169,8 +211,12 @@ void Run() {
       {"field_model", (std::filesystem::path(field_dir) / "model.glb").string()},
       {"resolution", {image_size.width, image_size.height}},
       {"frames", nlohmann::json::array()}};
-    if (layout_entropy >= 0.0) {
-      manifest["fuel_entropy"] = layout_entropy;
+    if (!cluster_arg.empty()) {
+      manifest["fuel_clusters"] = cluster_json;
+      manifest["fuel_noise"] = noise;
+    }
+    if (layout_entropy >= 0.0) manifest["fuel_entropy"] = layout_entropy;
+    if (layout_entropy >= 0.0 || !cluster_arg.empty()) {
       manifest["fuel_seed"] = absl::GetFlag(FLAGS_fuel_seed);
       manifest["gamepieces"] = nlohmann::json::array();
       for (const auto& position : renderer.FuelPositions()) {

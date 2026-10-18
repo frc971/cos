@@ -131,13 +131,12 @@ auto ProjectedPointCounts(const gamepiece::HSVClusterTrackerNode& tracker,
   cv::Mat1f counts(size, 0.0f);
   for (const auto& cluster : clusters) {
     for (const auto& point : cluster.img_points) {
-      if (const auto offset = tracker.RobotRelativeOffset(point)) {
-        const auto position = pose.Translation() + offset->RotateBy(pose.Rotation());
-        const auto pixel = FieldPoint(position.X().value(), position.Y().value());
-        if (pixel.x >= 0 && pixel.x < size.width &&
-            pixel.y >= 0 && pixel.y < size.height) {
-          counts(static_cast<int>(pixel.y), static_cast<int>(pixel.x)) += 1.0f;
-        }
+      const auto offset = tracker.RobotRelativeOffset(point);
+      const auto position = pose.Translation() + offset.RotateBy(pose.Rotation());
+      const auto pixel = FieldPoint(position.X().value(), position.Y().value());
+      if (pixel.x >= 0 && pixel.x < size.width &&
+          pixel.y >= 0 && pixel.y < size.height) {
+        counts(static_cast<int>(pixel.y), static_cast<int>(pixel.x)) += 1.0f;
       }
     }
   }
@@ -188,12 +187,11 @@ auto FieldEllipse(const gamepiece::HSVClusterTrackerNode& tracker,
   const auto center = tracker.RobotRelativeOffset(cluster.centroid);
   std::vector<cv::Point2f> ground_points;
   for (const cv::Point2f& point : cluster.img_points) {
-    if (const auto offset = tracker.RobotRelativeOffset(point)) {
-      ground_points.emplace_back(static_cast<float>(offset->X().value()),
-                                 static_cast<float>(offset->Y().value()));
-    }
+    const auto offset = tracker.RobotRelativeOffset(point);
+    ground_points.emplace_back(static_cast<float>(offset.X().value()),
+                               static_cast<float>(offset.Y().value()));
   }
-  if (!center.has_value() || ground_points.size() < 2) {
+  if (ground_points.size() < 2) {
     return std::nullopt;
   }
   cv::Mat covariance;
@@ -214,7 +212,7 @@ auto FieldEllipse(const gamepiece::HSVClusterTrackerNode& tracker,
       std::atan2(eigenvectors.at<float>(0, 1), eigenvectors.at<float>(0, 0)) +
       robot_pose.Rotation().Radians().value();
   const frc::Translation2d field_center =
-      robot_pose.Translation() + center->RotateBy(robot_pose.Rotation());
+      robot_pose.Translation() + center.RotateBy(robot_pose.Rotation());
   return cv::RotatedRect{
       FieldPoint(field_center.X().value(), field_center.Y().value()),
       {diameter(0), diameter(1)},

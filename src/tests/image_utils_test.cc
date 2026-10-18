@@ -1,5 +1,7 @@
 #include "gamepiece/image_utils.h"
 
+#include <utility>
+
 #include <gtest/gtest.h>
 
 namespace gamepiece {
@@ -59,17 +61,41 @@ TYPED_TEST(ImageUtilsTest, PinholeNormalizesUsingIntrinsics) {
   const cv::Matx33d intrinsics{100, 0, 320, 0, 200, 240, 0, 0, 1};
   const auto offset = DistortedPinholePointOffset(
       cv::Point_<TypeParam>{370, 440}, 0, extrinsics, intrinsics);
-  ASSERT_TRUE(offset.has_value());
-  EXPECT_DOUBLE_EQ(offset->X().value(), 2);
-  EXPECT_DOUBLE_EQ(offset->Y().value(), -1);
+  EXPECT_DOUBLE_EQ(offset.X().value(), 2);
+  EXPECT_DOUBLE_EQ(offset.Y().value(), -1);
   const auto float_matrix_offset = UndistortedPinholePointOffset(
       cv::Point_<TypeParam>{0.5, 1}, 0, cv::Matx44f(extrinsics));
-  ASSERT_TRUE(float_matrix_offset.has_value());
-  EXPECT_EQ(*offset, *float_matrix_offset);
-  EXPECT_FALSE(UndistortedPinholePointOffset(
-      cv::Point_<TypeParam>{0, 0}, 0, extrinsics).has_value());
-  EXPECT_FALSE(UndistortedPinholePointOffset(
-      cv::Point_<TypeParam>{0, -1}, 0, extrinsics).has_value());
+  EXPECT_EQ(offset, float_matrix_offset);
+}
+
+TYPED_TEST(ImageUtilsTest, CullsHorizonBeforeProjection) {
+  cv::Matx44d extrinsics = cv::Matx44d::eye();
+  extrinsics(1, 0) = 0.5;  // Rolled horizon: y = -0.5*x.
+  extrinsics(1, 3) = -2;
+  std::vector<cv::Point_<TypeParam>> points{
+      {0, -1}, {0, 0}, {2, -1}, {2, 0}, {-2, 2},
+      {std::numeric_limits<TypeParam>::quiet_NaN(), 1}};
+  CullAboveHorizon(points, extrinsics);
+  const std::vector<cv::Point_<TypeParam>> expected{{2, 0}, {-2, 2}};
+  EXPECT_EQ(points, expected);
+  for (const auto& point : points)
+    EXPECT_DOUBLE_EQ(UndistortedPinholePointOffset(point, 0, extrinsics)
+                         .X().value(), 2);
+  CullAboveHorizon(points, cv::Matx44f(extrinsics));
+  EXPECT_EQ(points, expected);
+  points.clear();
+  CullAboveHorizon(points, extrinsics);
+  EXPECT_TRUE(points.empty());
+}
+
+TEST(ImageUtilsTest, CullsPairedPixelsWithoutLosingAlignment) {
+  using Pixel = std::pair<cv::Point2d, cv::Point2d>;
+  std::vector<Pixel> pixels{{{0, -1}, {0, 1}}, {{1, 1}, {1, 0}},
+                            {{2, 1}, {2, 2}}};
+  CullAboveHorizon(pixels, cv::Matx44d::eye(), &Pixel::first);
+  CullAboveHorizon(pixels, cv::Matx44d::eye(), &Pixel::second);
+  const std::vector<Pixel> expected{{{2, 1}, {2, 2}}};
+  EXPECT_EQ(pixels, expected);
 }
 
 }  // namespace

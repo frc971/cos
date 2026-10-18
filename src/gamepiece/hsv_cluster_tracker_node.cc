@@ -130,21 +130,13 @@ auto HSVClusterTrackerNode::GetPublications() const
 }
 
 auto HSVClusterTrackerNode::NormalizedPointOffset(
-    const cv::Point2f& point) const -> std::optional<frc::Translation2d> {
-  const auto offset =
-      UndistortedPinholePointOffset(point, 0, camera_extrinsics_cv_);
-  if (!offset.has_value() || !std::isfinite(offset->Norm().value()) ||
-      offset->Norm().value() > max_ground_distance_m_) {
-    return std::nullopt;
-  }
-  return offset;
+    const cv::Point2f& point) const -> frc::Translation2d {
+  return UndistortedPinholePointOffset(point, 0, camera_extrinsics_cv_);
 }
 
 auto HSVClusterTrackerNode::RobotRelativeOffset(const cv::Point2f& point) const
-    -> std::optional<frc::Translation2d> {
-  const auto offset = NormalizedPointOffset(point);
-  return offset.has_value() ? std::optional{*offset + extrinsics_offset_}
-                            : std::nullopt;
+    -> frc::Translation2d {
+  return NormalizedPointOffset(point) + extrinsics_offset_;
 }
 
 void HSVClusterTrackerNode::ProcessFrame(const cv::Mat& frame) {
@@ -165,8 +157,10 @@ void HSVClusterTrackerNode::ProcessFrame(const cv::Mat& frame) {
   }
   cv::undistortPoints(thresholded_points_, thresholded_points_,
                       camera_intrinsics_, distortion_coeffs_);
+  CullAboveHorizon(thresholded_points_, camera_extrinsics_cv_);
   std::erase_if(thresholded_points_, [this](const cv::Point2f& point) {
-    return !NormalizedPointOffset(point).has_value();
+    const double distance = NormalizedPointOffset(point).Norm().value();
+    return !std::isfinite(distance) || distance > max_ground_distance_m_;
   });
   if (thresholded_points_.empty()) {
     return;
@@ -194,16 +188,16 @@ auto HSVClusterTrackerNode::ClampToHorizon(cv::Point2f point) const
 auto HSVClusterTrackerNode::GroundPoint(const cv::Point2f& point,
                                         bool use_column_bottom) const
     -> cv::Point2f {
-  std::optional<frc::Translation2d> projected_offset;
+  auto offset = NormalizedPointOffset(point);
   if (use_column_bottom && !bottom_columns_.empty()) {
-    projected_offset = NormalizedPointOffset(
-        {point.x, InterpolatedLowestY(bottom_columns_, point.x)});
+    // Interpolation can extrapolate across a rolled horizon at an end column.
+    const auto projected = NormalizedPointOffset(ClampToHorizon(
+        {point.x, InterpolatedLowestY(bottom_columns_, point.x)}));
+    if (std::isfinite(projected.Norm().value()) &&
+        projected.Norm().value() <= max_ground_distance_m_) {
+      offset = projected;
+    }
   }
-  // Original rays are filtered frame points or horizon-clamped cluster seeds.
-  const auto offset = projected_offset.has_value()
-                          ? *projected_offset
-                          : UndistortedPinholePointOffset(
-                                point, 0, camera_extrinsics_cv_).value();
   return {static_cast<float>(offset.X().value()),
           static_cast<float>(offset.Y().value())};
 }
@@ -325,7 +319,7 @@ auto HSVClusterTrackerNode::ClusterDistance(
     return {};
   }
 
-  return NormalizedPointOffset(cluster.centroid).value();
+  return NormalizedPointOffset(cluster.centroid);
 }
 
 auto HSVClusterTrackerNode::ClustersOverlap(

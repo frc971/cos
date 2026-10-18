@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <utility>
 
 #include <frc/geometry/Pose2d.h>
 #include <frc/geometry/Translation2d.h>
@@ -129,17 +130,22 @@ auto HSVProjectorNode::CreateCallback()
                           distortion_coeffs_);
       cv::undistortPoints(lowest_points, lowest_points, intrinsics_,
                           distortion_coeffs_);
-      for (std::size_t index = 0; index < thresholded_points_.size(); ++index) {
-        const auto& point = thresholded_points_[index];
-        const cv::Point2d& bottom = lowest_points[index];
+      using Pixel = std::pair<cv::Point2d, cv::Point2d>;
+      std::vector<Pixel> pixels_to_project;
+      pixels_to_project.reserve(thresholded_points_.size());
+      for (std::size_t i = 0; i < thresholded_points_.size(); ++i) {
+        pixels_to_project.emplace_back(thresholded_points_[i], lowest_points[i]);
+      }
+      CullAboveHorizon(pixels_to_project, extrinsics_cv_, &Pixel::first);
+      CullAboveHorizon(pixels_to_project, extrinsics_cv_, &Pixel::second);
+      for (const auto& [point, bottom] : pixels_to_project) {
         const auto ground =
             UndistortedPinholePointOffset(bottom, 0, extrinsics_cv_);
-        if (!ground.has_value()) continue;
         const cv::Vec4d robot_to_ball_top =
             robot_to_camera *
-            cv::Vec4d{extrinsics_cv_(0, 3) - ground->Y().value(),
+            cv::Vec4d{extrinsics_cv_(0, 3) - ground.Y().value(),
                       -ball_height_m,
-                      extrinsics_cv_(2, 3) + ground->X().value(), 1};
+                      extrinsics_cv_(2, 3) + ground.X().value(), 1};
         const double image_height =
             bottom.y - robot_to_ball_top[1] / robot_to_ball_top[2];
         if (robot_to_ball_top[2] <= 0 || !std::isfinite(image_height) ||
@@ -151,32 +157,30 @@ auto HSVProjectorNode::CreateCallback()
         const double height = ball_height_m * std::min(height_fraction, 1.0);
         const auto projected = UndistortedPinholePointOffset(
             point, static_cast<float>(-height), extrinsics_cv_);
-        if (projected.has_value()) {
-          const auto location =
-              pose.Translation() +
-              (*projected + camera_position).RotateBy(pose.Rotation());
-          const double x = location.X().value();
-          const double y = location.Y().value();
-          const double weight = PixelWeight(point, height);
-          CHECK(std::isfinite(x) && std::isfinite(y));
-          CHECK(std::isfinite(weight) && weight > 0);
-          ++heatmap.projected_pixels;
-          heatmap.projected_weight += weight;
-          if (x < heatmap.min_m.x || x >= heatmap.max_m.x ||
-              y < heatmap.min_m.y || y >= heatmap.max_m.y) {
-            ++heatmap.outside_pixels;
-            continue;
-          }
-          const int col = std::min(
-              static_cast<int>((x - heatmap.min_m.x) / heatmap.resolution_m),
-              heatmap_size_.width - 1);
-          const int row = std::min(
-              static_cast<int>((y - heatmap.min_m.y) / heatmap.resolution_m),
-              heatmap_size_.height - 1);
-          ++heatmap.pixel_counts(row, col);
-          heatmap.weights(row, col) += weight;
-          heatmap.in_bounds_weight += weight;
+        const auto location =
+            pose.Translation() +
+            (projected + camera_position).RotateBy(pose.Rotation());
+        const double x = location.X().value();
+        const double y = location.Y().value();
+        const double weight = PixelWeight(point, height);
+        CHECK(std::isfinite(x) && std::isfinite(y));
+        CHECK(std::isfinite(weight) && weight > 0);
+        ++heatmap.projected_pixels;
+        heatmap.projected_weight += weight;
+        if (x < heatmap.min_m.x || x >= heatmap.max_m.x ||
+            y < heatmap.min_m.y || y >= heatmap.max_m.y) {
+          ++heatmap.outside_pixels;
+          continue;
         }
+        const int col = std::min(
+            static_cast<int>((x - heatmap.min_m.x) / heatmap.resolution_m),
+            heatmap_size_.width - 1);
+        const int row = std::min(
+            static_cast<int>((y - heatmap.min_m.y) / heatmap.resolution_m),
+            heatmap_size_.height - 1);
+        ++heatmap.pixel_counts(row, col);
+        heatmap.weights(row, col) += weight;
+        heatmap.in_bounds_weight += weight;
       }
     }
 
