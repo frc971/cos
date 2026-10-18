@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <chrono>
 #include <cstddef>
 #include <cstdio>
 #include <deque>
@@ -260,11 +261,12 @@ auto NearestClusterDistance(
 auto DrawClusterIndex(cv::Mat& image, const std::size_t cluster_index,
                       const cv::Point& centroid,
                       const double nearest_distance,
+                      const float density,
                       std::vector<cv::Rect>* occupied = nullptr) -> void {
   const std::string label = std::isfinite(nearest_distance)
-                                ? cv::format("%zu (%.2f m)", cluster_index,
-                                             nearest_distance)
-                                : cv::format("%zu (N/A)", cluster_index);
+                                ? cv::format("%zu | density %.1f (%.2f m)", cluster_index,
+                                             density, nearest_distance)
+                                : cv::format("%zu | density %.1f", cluster_index, density);
   constexpr double kFontScale = 0.65;
   constexpr int kTextThickness = 2;
   int baseline = 0;
@@ -366,12 +368,13 @@ auto AnnotateFrame(const cv::Mat& frame,
     DrawClusterIndex(visualization, clusters[i].id,
                      {static_cast<int>(std::lround(center.x)),
                       static_cast<int>(std::lround(center.y))},
-                     NearestClusterDistance(clusters, i));
+                     NearestClusterDistance(clusters, i), clusters[i].density);
     if (!position.has_value()) {
       continue;
     }
     const std::string label =
-        cv::format("%zu: %.2f m", clusters[i].id, position->Norm().value());
+        cv::format("%zu: density %.1f | balls %.1f (%zu verified) | %.2f m", clusters[i].id,
+                   clusters[i].density, clusters[i].estimated_ball_count, clusters[i].verified_ball_count, position->Norm().value());
     const cv::Point origin{20, 80 + static_cast<int>(i) * 28};
     cv::putText(visualization, label, origin, cv::FONT_HERSHEY_SIMPLEX, 0.7,
                 cv::Scalar{0, 0, 0}, 5, cv::LINE_AA);
@@ -609,7 +612,7 @@ auto main(int argc, char** argv) -> int {
         cv::circle(field_base, FieldPoint(point[0].get<double>(), point[1].get<double>()),
                    2, cv::Scalar{210, 210, 210}, cv::FILLED);
       }
-      cv::putText(field_base, "White dots: simulated Fuel centers", {20, field_base.rows - 15},
+      cv::putText(field_base, "White: all simulated centers | Rings: verified image evidence", {20, field_base.rows - 15},
                   cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar{210, 210, 210}, 1);
     }
     cv::Mat field_overlay = field_base.clone();
@@ -662,11 +665,14 @@ auto main(int argc, char** argv) -> int {
           pose_updated = true;
         }
       }
+      const auto tracking_start = std::chrono::steady_clock::now();
       tracker.ProcessFrame(frame, robot_pose);
       if (frame_count == 1) {
         // Match BOS's single-frame visualizer by processing the frame twice.
         tracker.ProcessFrame(frame, robot_pose);
       }
+      const double tracking_ms = std::chrono::duration<double, std::milli>(
+          std::chrono::steady_clock::now() - tracking_start).count() / (frame_count == 1 ? 2 : 1);
       const auto& clusters = *tracker.GetClusters();
       const auto output_path =
           output_directory / (input_path.stem().string() + "_clusters.png");
@@ -703,6 +709,11 @@ auto main(int argc, char** argv) -> int {
             DrawTranslucentEllipse(field, *ellipse, color);
             field_ellipses[cluster.id].emplace_back(*ellipse, frame_color);
           }
+          for (const auto& p : cluster.verified_ball_centers) {
+            const auto position = robot_pose->Translation() +
+                frc::Translation2d{units::meter_t{p.x}, units::meter_t{p.y}}.RotateBy(robot_pose->Rotation());
+            cv::circle(field, FieldPoint(position.X().value(), position.Y().value()), 4, color, 1, cv::LINE_AA);
+          }
         }
         DrawRobot(field, *robot_pose, cv::Scalar{255, 255, 255});
         DrawRobot(field_overlay, *robot_pose, frame_color);
@@ -718,7 +729,7 @@ auto main(int argc, char** argv) -> int {
           DrawClusterIndex(field, clusters[i].id,
                            {static_cast<int>(std::lround(pixel.x)),
                             static_cast<int>(std::lround(pixel.y))},
-                           NearestClusterDistance(clusters, i), &field_labels);
+                           NearestClusterDistance(clusters, i), clusters[i].density, &field_labels);
         }
         const std::string field_caption =
             input_path.filename().string() + " | " +
@@ -764,6 +775,8 @@ auto main(int argc, char** argv) -> int {
             PixelEllipse(gamepiece::ClusterEllipse(normalized_cluster),
                          cv::Mat(camera_matrix));
         pixel_count += cluster.img_points.size();
+        auto verified_centers = nlohmann::json::array();
+        for (const auto& point : normalized_cluster.verified_ball_centers) verified_centers.push_back({point.x, point.y});
         cluster_data.push_back(
             {{"id", cluster.id},
              {"centroid_px", {cluster.centroid.x, cluster.centroid.y}},
@@ -775,9 +788,12 @@ auto main(int argc, char** argv) -> int {
               {cluster.robot_relative_translation->X().value(),
                cluster.robot_relative_translation->Y().value()}},
              {"visible_fuel_support", normalized_cluster.fuel_count},
-             {"peak_density_per_m2", normalized_cluster.fuel_count /
-                 (2 * std::numbers::pi * std::sqrt(std::max(1e-8f,
-                     static_cast<float>(cv::determinant(normalized_cluster.ground_covar)))))},
+             {"density", normalized_cluster.density},
+             {"estimated_ball_count", normalized_cluster.estimated_ball_count},
+             {"density_area_m2", normalized_cluster.density_area_m2},
+             {"verified_ball_count", normalized_cluster.verified_ball_count},
+             {"verified_ball_centers_m", verified_centers},
+             {"residual_ball_evidence", {normalized_cluster.residual_ball_evidence[0], normalized_cluster.residual_ball_evidence[1]}},
              {"ground_covariance_m2",
               {{normalized_cluster.ground_covar(0, 0), normalized_cluster.ground_covar(0, 1)},
                {normalized_cluster.ground_covar(1, 0), normalized_cluster.ground_covar(1, 1)}}},
@@ -787,6 +803,7 @@ auto main(int argc, char** argv) -> int {
       }
       frames.push_back({{"input", input_path.string()},
                         {"output", output_path.string()},
+                        {"tracking_time_ms", tracking_ms},
                         {"robot_pose", robot_pose ? nlohmann::json{
                             {"x", robot_pose->X().value()}, {"y", robot_pose->Y().value()},
                             {"yaw", robot_pose->Rotation().Radians().value()}} : nlohmann::json{}},

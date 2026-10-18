@@ -1,6 +1,7 @@
 The tracker thresholds yellow Fuel (hue 18–30, saturation ≥100) and projects
-silhouette tangents of 7.5 cm radius spheres onto the field. It does not detect
-or identify individual balls. Outline consistency rejects unreliable geometry
+silhouette tangents of 7.5 cm radius spheres onto the field. Pile geometry uses
+contour evidence; a separate density pass verifies individual sphere arcs and
+measures residual image evidence. Outline consistency rejects unreliable geometry
 and estimates visible perimeter for occlusion weighting. All tangent evidence
 is retained at reduced weight for finding piles whose full outlines are not
 yet visible. Verification considers the part of an outline inside the image;
@@ -28,9 +29,15 @@ a missing estimate holds the last pose. Camera calibration and pose must be
 accurate. Switching between field and robot coordinates resets the ID map.
 
 Each result retains normalized image samples and robot-relative ground samples,
-weights, centroid, covariance, persistent ID, and visible support. The support
-and derived peak density describe visible evidence, not a complete inventory of
-occluded balls. IDs survive empty frames and re-entry. Ground covariance and
+weights, centroid, covariance, persistent ID, and visible support. `density` is
+the canonical per-pile scalar: estimated visible ball count divided by effective
+Gaussian footprint area. Verified sphere arcs anchor the count; unexplained
+yellow area and internal image edges supply a calibrated correction for partial
+balls. Calibration excludes balls with zero rendered image evidence. The
+estimated/verified counts, residual evidence, and `density_area_m2` are included
+in C++ results and visualizer JSON for inspection. See
+[density validation](../../validation/density/RESULTS.md). IDs survive empty
+frames and re-entry. Ground covariance and
 centroid are computed from projected samples, rather than projecting an image
 mean or covariance through a nonlinear transform.
 
@@ -105,6 +112,7 @@ ssh root@dev-orin 'cd /root && ./tools/hsv_cluster_visualizer --sim_run=/root/cl
 ```
 
 Outputs include camera/field views, per-frame and overall weighted heatmaps,
-comparison panels, and JSON with ground covariance, visible support, and peak
-density. Lens distortion follows the manifest's calibration settings. Frame
+comparison panels, and JSON with ground covariance, visible support, ball count
+evidence, and `density`. Colored rings in field views mark verified spheres.
+Lens distortion follows the manifest's calibration settings. Frame
 processing uses exact simulated poses, never inferred ground-truth ball positions.

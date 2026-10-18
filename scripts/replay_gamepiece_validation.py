@@ -8,6 +8,7 @@ import subprocess
 p = argparse.ArgumentParser()
 p.add_argument('source', type=Path)
 p.add_argument('output', type=Path)
+p.add_argument('--visualizer', default='./tools/hsv_cluster_visualizer')
 a = p.parse_args()
 manifests = sorted(a.source.glob('*/manifest.json'))
 if not manifests:
@@ -20,7 +21,7 @@ for manifest in manifests:
         frame['file'] = str((manifest.parent / frame['file']).resolve())
     (target/'manifest.json').write_text(json.dumps(data))
     with (target/'replay.log').open('w') as log:
-        subprocess.run(['./tools/hsv_cluster_visualizer', f'--sim_run={target}',
+        subprocess.run([a.visualizer, f'--sim_run={target}',
                         f'--output_dir={target}/clusters'], check=True,
                        stdout=log, stderr=subprocess.STDOUT)
     print(target, flush=True)

@@ -1,0 +1,16 @@
+{
+  "frames": 200,
+  "unchanged_fields": [
+    "id",
+    "centroid_px",
+    "pixel_count",
+    "covariance",
+    "ellipse_semi_axes_px",
+    "ellipse_angle_deg",
+    "ground_position_m",
+    "ground_covariance_m2",
+    "visible_fuel_support"
+  ],
+  "same_rgb_paths": true,
+  "exact_match": true
+}

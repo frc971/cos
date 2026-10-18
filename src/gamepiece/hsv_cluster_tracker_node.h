@@ -28,6 +28,12 @@ using kmeans_cluster_t = struct KMeansCluster {
   std::vector<float> ground_weights;  // Visible silhouette support in Fuel equivalents.
   cv::Matx22f ground_covar{};
   float fuel_count{};
+  float density{};  // Estimated visible balls / physical Gaussian area.
+  float estimated_ball_count{};
+  float density_area_m2{};  // Effective Gaussian footprint, with a ball-radius floor.
+  std::size_t verified_ball_count{};
+  std::vector<cv::Point2f> verified_ball_centers;  // Robot coordinates, meters.
+  cv::Vec2f residual_ball_evidence{};  // Unexplained area / sphere area, arc / perimeter.
   std::size_t id{};  // Persistent within one tracker instance.
 };
 
@@ -69,6 +75,7 @@ class HSVClusterTrackerNode final : public control_loop::INode {
       -> frc::Translation2d;
   auto ClusterGroundPoints() -> std::vector<kmeans_cluster_t>;
   void AssignPersistentIds();
+  void EstimateDensities(const cv::Mat& frame);
 
   std::string input_path_;
   std::string output_path_;
@@ -96,6 +103,7 @@ class HSVClusterTrackerNode final : public control_loop::INode {
   float max_ground_distance_m_;
   static constexpr float kIdMatchToleranceM = 0.9f;
   cv::Mat frame_;
+  cv::Mat density_map1_, density_map2_;
   frc::Translation2d extrinsics_offset_;
 };
 

@@ -43,21 +43,54 @@ auto Cluster(Tracker& tracker, const std::vector<cv::Point2f>& points,
 }
 // Ray-cast equal-radius spheres, so projection tests use exact simulated geometry.
 const cv::Matx33d kSphereIntrinsics{400, 0, 320, 0, 400, 100, 0, 0, 1};
-auto SphereImage(float forward = 4.0f, int balls = 6) -> cv::Mat {
+auto Spheres(const std::vector<cv::Vec3f>& centers) -> cv::Mat {
   cv::Mat3b hsv(480, 640, cv::Vec3b{0, 0, 0});
   for (int y = 0; y < hsv.rows; ++y) for (int x = 0; x < hsv.cols; ++x) {
     const cv::Vec3f ray{(x - 320) / 400.0f, (y - 100) / 400.0f, 1};
-    for (int ball = 0; ball < balls; ++ball) {
-      const float lateral = -0.45f + 0.18f * ball;
-      const cv::Vec3f center{-lateral, 0.925f, forward};
+    float nearest = 1e9f;
+    for (const auto& center : centers) {
       const float dot = ray.dot(center);
-      if (dot > 0 && dot * dot >= ray.dot(ray) * (center.dot(center) - 0.075f * 0.075f))
-        hsv(y, x) = {24, 125, 230};
+      const float discriminant = dot * dot - ray.dot(ray) * (center.dot(center) - .075f*.075f);
+      if (dot <= 0 || discriminant < 0) continue;
+      const float t = (dot - std::sqrt(discriminant)) / ray.dot(ray);
+      if (t >= nearest) continue;
+      nearest = t;
+      const auto normal = (t * ray - center) / .075f;
+      hsv(y, x) = {24, 125, static_cast<uchar>(140 + 90*std::max(0.0f, normal.dot(cv::Vec3f{-.3f, -.4f, -.8660254f})))};
     }
   }
   cv::Mat bgr;
   cv::cvtColor(hsv, bgr, cv::COLOR_HSV2BGR);
   return bgr;
+}
+auto SphereImage(float forward = 4.0f, int balls = 6) -> cv::Mat {
+  std::vector<cv::Vec3f> centers;
+  for (int i = 0; i < balls; ++i) centers.push_back({0.45f - .18f*i, .925f, forward});
+  return Spheres(centers);
+}
+TEST(HSVClusterTrackerTest, DensityRespondsToCountAreaAndPerspective) {
+  const auto measure = [](int side, float spread, float forward) {
+    Tracker tracker("d", "c", kSphereIntrinsics, kExtrinsics, {}, 640 * 480);
+    std::vector<cv::Vec3f> centers;
+    for (int x = 0; x < side; ++x) for (int y = 0; y < side; ++y)
+      centers.push_back({spread*(2*y/(side-1.0f)-1), .925f, forward+spread*(2*x/(side-1.0f)-1)});
+    tracker.ProcessFrame(Spheres(centers));
+    EXPECT_EQ(tracker.GetClusters()->size(), 1U);
+    if (!tracker.GetClusters()->empty()) {
+      const float count = tracker.GetClusters()->front().estimated_ball_count;
+      EXPECT_NEAR(count, side*side, .5f*side*side);
+      ::testing::Test::RecordProperty("balls_" + std::to_string(side) + "_" + std::to_string(spread) + "_" + std::to_string(forward), std::to_string(count));
+    }
+    return tracker.GetClusters()->empty() ? 0.0f : tracker.GetClusters()->front().density;
+  };
+  const float sparse = measure(3, .3f, 4), dense = measure(5, .3f, 4);
+  const float broad = measure(3, .6f, 4), far = measure(3, .3f, 5);
+  EXPECT_GT(dense / sparse, 2); EXPECT_LT(dense / sparse, 5);
+  EXPECT_GT(sparse / broad, 2.5); EXPECT_LT(sparse / broad, 5.5);
+  EXPECT_NEAR(far / sparse, 1, .3);
+  RecordProperty("count_ratio", std::to_string(dense / sparse));
+  RecordProperty("area_ratio", std::to_string(sparse / broad));
+  RecordProperty("distance_ratio", std::to_string(far / sparse));
 }
 TEST(HSVClusterTrackerTest, SphereProjectionPreservesLocationAndRejectsAllianceZone) {
   Tracker tracker("d", "c", kSphereIntrinsics, kExtrinsics, {}, 640 * 480);
@@ -115,6 +148,7 @@ TEST(HSVClusterTrackerNodeTest, ProcessesPaddedDeviceFrameWithPoseAndPublishesOn
   const auto* output = context->GetMessage<control_loop::ValueMessage<gamepiece::hsv_clusters_t>>("c");
   ASSERT_NE(output, nullptr); ASSERT_EQ(output->value.size(), 1U);
   EXPECT_NEAR(output->value.front().robot_relative_translation->X().value(), 4, 0.08);
+  EXPECT_GT(output->value.front().density, 0);
 }
 TEST(HSVClusterTrackerTest, PreservesBroadPileAndFindsNewSeparatedPile) {
   auto tracker = MakeTracker();

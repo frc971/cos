@@ -1,0 +1,32 @@
+[1/1] Uploading folders to dev-orin...
+Deploying build/bin and build/lib to root@dev-orin:/root...
+sending incremental file list
+./
+hsv_cluster_tracker_node_test
+
+sent 603,205 bytes  received 8,115 bytes  407,546.67 bytes/sec
+total size is 29,332,072  speedup is 47.98
+sending incremental file list
+
+sent 214 bytes  received 19 bytes  466.00 bytes/sec
+total size is 9,714,264  speedup is 41,692.12
+sending incremental file list
+
+sent 285 bytes  received 19 bytes  121.60 bytes/sec
+total size is 4,023,624  speedup is 13,235.61
+sending incremental file list
+
+sent 474 bytes  received 19 bytes  986.00 bytes/sec
+total size is 12,549,096  speedup is 25,454.56
+sending incremental file list
+
+sent 6,882 bytes  received 19 bytes  4,600.67 bytes/sec
+total size is 10,456,988  speedup is 1,515.29
+sending incremental file list
+
+sent 809 bytes  received 24 bytes  1,666.00 bytes/sec
+total size is 18,213,675  speedup is 21,865.16
+sending incremental file list
+
+sent 85 bytes  received 19 bytes  208.00 bytes/sec
+total size is 223  speedup is 2.14
