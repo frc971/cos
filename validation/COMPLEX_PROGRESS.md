@@ -29,3 +29,25 @@ Evidence: `evidence/complex-baseline.json`, `complex-ideal.json`,
 Target artifacts are under `/root/cluster-validation/` in
 `complex-baseline`, `complex-prominence`, `complex-mixed-ideal`,
 `complex-dynamic-ideal`, and `prominence-regression`.
+
+Second milestone: two density scales, verified-outline density weighting,
+clipping-aware verification, and occlusion correction that does not compensate
+for arcs contradicted by background pixels. Support now requires 1.5 estimated
+Fuel-equivalents, retaining small piles while rejecting isolated spheres.
+Contour sample count is no longer compared against image area. The 132-frame
+six-pile sweep and the 184 isolated-ball controls pass; thirteen tracker tests
+pass, including a distant small pile and single-ball rejection. The evaluator
+also has negative controls for count, geometry, lineage, and partial detections.
+
+Boundary-aware evaluation still requires every pile with 4+ visible balls and
+uses the unchanged geometry limits. It additionally accepts predictions that
+match true piles with only 1–3 visible balls, checks their location and lineage,
+and rejects unmatched predictions. Strict reports remain available. This fixes
+the old evaluator classifying real three-ball partial piles as false positives.
+
+An additional irregular six-pile layout with held-out seeds exposes further
+overmerging (27 missing group observations in 52 frames). A mixed-density wide
+sweep also has three boundary misses in 66 frames. These failures are recorded
+in `evidence/acceptance-staggered-ideal.json` and
+`evidence/acceptance-mixed-dynamic-ideal.json`. Completion remains unproven;
+the next step is a geometric overlap check before merging candidate modes.

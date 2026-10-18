@@ -94,7 +94,6 @@ class HSVClusterTrackerNode final : public control_loop::INode {
   cv::Vec<float, 5> distortion_coeffs_;
   cv::Matx44f camera_extrinsics_cv_;
   float max_ground_distance_m_;
-  std::size_t image_size_;
   static constexpr float kIdMatchToleranceM = 0.9f;
   cv::Mat frame_;
   frc::Translation2d extrinsics_offset_;

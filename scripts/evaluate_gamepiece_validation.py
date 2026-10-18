@@ -10,6 +10,7 @@ p = argparse.ArgumentParser()
 p.add_argument('root', type=Path)
 p.add_argument('--output', type=Path)
 p.add_argument('--expected-clusters', type=int)
+p.add_argument('--allow-partial', action='store_true', help='Accept true piles with 1–3 visible balls; still require every pile with 4+')
 a = p.parse_args()
 results = []
 for manifest in sorted(a.root.glob('*/manifest.json')):
@@ -20,6 +21,7 @@ for manifest in sorted(a.root.glob('*/manifest.json')):
     group_ids = np.array([piece['cluster_id'] for piece in pieces])
     previous_ids, misses, switches, extras = {}, 0, 0, 0
     distances, shapes, major_ratios, minor_ratios, frames, frame_metrics = [], [], [], [], [], []
+    partial_metrics = []
     for frame, observation in zip(truth['frames'], observations, strict=True):
         pose = observation['robot_pose']
         angle = pose['yaw']
@@ -27,9 +29,13 @@ for manifest in sorted(a.root.glob('*/manifest.json')):
         origin = np.array([pose['x'], pose['y']])
         visibility = np.array(frame['visible_fuel_pixels'])
         targets, covariances, ids = [], [], []
+        partial_targets, partial_ids = [], []
         for group in range(len(truth['fuel_clusters'])):
             keep = (group_ids == group) & (visibility >= 8)
             if np.count_nonzero(keep) < 4:
+                if np.any(keep):
+                    partial_targets.append(centers[keep].mean(0))
+                    partial_ids.append(group)
                 continue
             # Visible generated centers; no inferred/projection coordinates in truth.
             points = centers[keep]
@@ -41,10 +47,12 @@ for manifest in sorted(a.root.glob('*/manifest.json')):
         errors = np.linalg.norm(np.array(targets).reshape(-1, 2)[:, None, :] - points[None, :, :], axis=2)
         rows, cols = linear_sum_assignment(errors)
         matched = 0
+        matched_cols = set()
         for row, col in zip(rows, cols):
             if errors[row, col] > .9:
                 continue
             matched += 1
+            matched_cols.add(int(col))
             c = predicted[col]
             group = ids[row]
             if group in previous_ids and previous_ids[group] != c['id']:
@@ -61,7 +69,21 @@ for manifest in sorted(a.root.glob('*/manifest.json')):
             ratios = np.sqrt(np.maximum(np.linalg.eigvalsh(covariance), 0) / np.maximum(vals, .0025))
             minor_ratios.append(float(ratios[0])); major_ratios.append(float(ratios[1]))
         misses += len(targets) - matched
-        extras += len(predicted) - matched
+        partial_matched = 0
+        if a.allow_partial and partial_targets:
+            remaining = [i for i in range(len(predicted)) if i not in matched_cols]
+            partial_errors = np.linalg.norm(np.array(partial_targets)[:, None, :] - points[remaining][None, :, :], axis=2)
+            pr, pc = linear_sum_assignment(partial_errors)
+            for row, col in zip(pr, pc):
+                if partial_errors[row, col] > .9:
+                    continue
+                group, c = partial_ids[row], predicted[remaining[col]]
+                if group in previous_ids and previous_ids[group] != c['id']:
+                    switches += 1
+                previous_ids[group] = c['id']
+                partial_metrics.append([len(frames), int(group), c['id'], round(float(partial_errors[row, col]), 4)])
+                partial_matched += 1
+        extras += len(predicted) - matched - partial_matched
         frames.append([len(targets), len(predicted)])
     def percentile(values, fraction):
         return round(float(np.percentile(values, fraction)), 4) if values else 0
@@ -71,6 +93,9 @@ for manifest in sorted(a.root.glob('*/manifest.json')):
                   shape_p95_m=percentile(shapes, 95), shape_max_m=percentile(shapes, 100),
                   minor_std_p05=percentile(minor_ratios, 5), minor_std_p95=percentile(minor_ratios, 95),
                   major_std_p05=percentile(major_ratios, 5), major_std_p95=percentile(major_ratios, 95))
+    if a.allow_partial:
+        result['partial_metrics'] = partial_metrics
+        result['partial_centroid_max_m'] = max((m[3] for m in partial_metrics), default=0)
     # Fixed physical acceptance limits. Empty runs must also have no output.
     result['passed'] = (misses == extras == switches == 0 and result['centroid_p95_m'] <= .35
                         and result['shape_p95_m'] <= .3 and result['centroid_max_m'] <= .35
@@ -78,6 +103,8 @@ for manifest in sorted(a.root.glob('*/manifest.json')):
     if a.expected_clusters is not None:
         result['expected_count_met'] = all(n == a.expected_clusters for n, _ in frames)
         result['passed'] &= result['expected_count_met']
+    if a.allow_partial:
+        result['passed'] &= result['partial_centroid_max_m'] <= .35
     result['counts'] = [list(pair) for pair in dict.fromkeys(map(tuple, frames))]
     results.append(result)
 report = {'passed': bool(results) and all(r['passed'] for r in results), 'runs': results}

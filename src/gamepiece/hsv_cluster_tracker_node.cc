@@ -28,9 +28,8 @@ constexpr std::pair<int, int> hsv_color_range{18, 30};
 constexpr int minimum_saturation{100};
 constexpr float kFuelRadiusM = 0.075f;
 constexpr float kCellM = 0.1f;
-constexpr float kBandwidthM = 0.4f;
-
-constexpr double kmin_pixel_ratio = 0.0001;
+constexpr float kBandwidthM = 0.3f;
+constexpr float kMergeBandwidthM = 0.4f;
 
 auto Covariance(const std::vector<cv::Point2f>& points) -> cv::Matx22f {
   cv::Point2f mean{0.0f, 0.0f};
@@ -67,9 +66,8 @@ HSVClusterTrackerNode::HSVClusterTrackerNode(
       camera_intrinsics_(intrinsics),
       distortion_coeffs_(distortion_coeffs),
       camera_extrinsics_cv_(extrinsics),
-      max_ground_distance_m_(max_ground_distance_m),
-      image_size_(image_size) {
-  if (image_size_ == 0) {
+      max_ground_distance_m_(max_ground_distance_m) {
+  if (image_size == 0) {
     throw std::invalid_argument("Image size must be positive");
   }
   if (!std::isfinite(max_ground_distance_m_) || max_ground_distance_m_ <= 0) {
@@ -191,7 +189,7 @@ void HSVClusterTrackerNode::ProcessFrame(
     first /= cv::norm(first);
     const auto second = axis.cross(first);
     const float sine = kFuelRadiusM / norm, cosine = std::sqrt(1 - sine * sine);
-    int supported = 0;
+    int supported = 0, accessible = 0, hidden = 0;
     constexpr int kSamples = 32;
     for (int j = 0; j < kSamples; ++j) {
       const float angle = 2 * std::numbers::pi_v<float> * j / kSamples;
@@ -207,10 +205,16 @@ void HSVClusterTrackerNode::ProcessFrame(
       const float dy = y * radial + distortion_coeffs_[2] * (radius2 + 2 * y * y) + 2 * distortion_coeffs_[3] * x * y;
       const int px = cvRound(dx * camera_intrinsics_(0, 0) + camera_intrinsics_(0, 2));
       const int py = cvRound(dy * camera_intrinsics_(1, 1) + camera_intrinsics_(1, 2));
-      if (px >= 0 && px < frame.cols && py >= 0 && py < frame.rows &&
-          std::max(inside(py, px), outside(py, px)) <= 2.0f) ++supported;
+      if (px < 0 || px >= frame.cols || py < 0 || py >= frame.rows) continue;
+      ++accessible;
+      if (std::max(inside(py, px), outside(py, px)) <= 2.0f) ++supported;
+      if (inside(py, px) > 2.0f) ++hidden;
     }
-    return static_cast<float>(supported) / kSamples;
+    // Clipped arcs cannot contradict a candidate; verify the accessible outline.
+    // Only arcs inside yellow or outside the image can be occluded. An arc
+    // outside yellow is a fitting error and must not increase estimated mass.
+    return supported >= 4 && supported >= 0.25f * accessible ?
+        static_cast<float>(accessible - hidden) / kSamples : 0.0f;
   };
   for (const auto& contour : contours) {
     if (contour.size() < 12 || cv::contourArea(contour) < 8) continue;
@@ -258,7 +262,7 @@ void HSVClusterTrackerNode::ProcessFrame(
       thresholded_points_.push_back(normalized[i]);
       ground_points_.push_back(ground);
       ground_weights_.push_back(weight);
-      refined_weights_.push_back(fraction >= 0.25f ? weight / fraction : 0.0f);
+      refined_weights_.push_back(fraction > 0 ? weight / fraction : 0.0f);
     }
   }
   if (ground_points_.empty()) return;
@@ -282,13 +286,18 @@ auto HSVClusterTrackerNode::ClusterGroundPoints() -> std::vector<kmeans_cluster_
     const auto p = (ground_points_[i] - origin) / kCellM;
     const int cell = static_cast<int>(p.y) * width + static_cast<int>(p.x);
     cells.push_back(cell);
-    density(cell / width, cell % width) += ground_weights_[i];
+    // Verified outlines carry geometry; retain weak votes for partial entrants.
+    density(cell / width, cell % width) +=
+        std::max(refined_weights_[i], 0.1f * ground_weights_[i]);
   }
+  cv::Mat1f coarse;
+  cv::GaussianBlur(density, coarse, {}, kMergeBandwidthM / kCellM);
   cv::GaussianBlur(density, density, {}, kBandwidthM / kCellM);
   const int count = width * height;
   std::vector<int> order(count), basin(count, -1);
   std::iota(order.begin(), order.end(), 0);
   const auto value = [&](int cell) { return density(cell / width, cell % width); };
+  const auto merge_value = [&](int cell) { return coarse(cell / width, cell % width); };
   std::ranges::sort(order, [&](int a, int b) { return value(a) > value(b); });
   std::vector<int> prior(count, -1), peak_cell(count);
   std::iota(peak_cell.begin(), peak_cell.end(), 0);
@@ -332,9 +341,10 @@ auto HSVClusterTrackerNode::ClusterGroundPoints() -> std::vector<kmeans_cluster_
       // A new density mode beyond an established pile's 2-sigma footprint
       // must not inflate that pile merely because its visible mass is small.
       const bool different_piles = prior[first] != prior[second] &&
-          (prior[first] >= 0 || prior[second] >= 0) && separation >= 1.2f;
-      // Keep modes separated by a 25% density valley, even before IDs exist.
-      if (!different_piles && value(cell) >= 0.75f * std::min(peak[first], peak[second])) {
+          (prior[first] >= 0 || prior[second] >= 0) && separation >= 2 * kBandwidthM;
+      // Resolve weak entrants at 30 cm, but require a valley at 40 cm to split
+      // untracked piles: sampling bumps along a broad pile should merge.
+      if (!different_piles && merge_value(cell) >= 0.75f * std::min(merge_value(pa), merge_value(pb))) {
         const bool keep_first_peak = peak[first] >= peak[second];
         const float merged_peak = std::max(peak[first], peak[second]);
         const int merged_cell = keep_first_peak ? pa : pb;
@@ -361,11 +371,11 @@ auto HSVClusterTrackerNode::ClusterGroundPoints() -> std::vector<kmeans_cluster_
   }
   for (std::size_t index = 0; index < result.size(); ++index) {
     auto& c = result[index];
-    // Presence uses every tangent vote; shape uses verified outline support.
-    if (c.fuel_count < 2.5f || c.img_points.size() < kmin_pixel_ratio * image_size_) {
+    const float refined_mass = std::accumulate(c.ground_weights.begin(), c.ground_weights.end(), 0.0f);
+    // Occluded piles may have enough verified support but few exposed arcs.
+    if (std::max(c.fuel_count, refined_mass) < 1.5f) {
       c.img_points.clear(); continue;
     }
-    const float refined_mass = std::accumulate(c.ground_weights.begin(), c.ground_weights.end(), 0.0f);
     if (refined_mass < 0.25f * c.fuel_count) c.ground_weights = std::move(raw_weights[index]);
     else c.fuel_count = refined_mass;
     cv::Point2f center{};

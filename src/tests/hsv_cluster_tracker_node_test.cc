@@ -43,11 +43,12 @@ auto Cluster(Tracker& tracker, const std::vector<cv::Point2f>& points,
 }
 // Ray-cast equal-radius spheres, so projection tests use exact simulated geometry.
 const cv::Matx33d kSphereIntrinsics{400, 0, 320, 0, 400, 100, 0, 0, 1};
-auto SphereImage(float forward = 4.0f) -> cv::Mat {
+auto SphereImage(float forward = 4.0f, int balls = 6) -> cv::Mat {
   cv::Mat3b hsv(480, 640, cv::Vec3b{0, 0, 0});
   for (int y = 0; y < hsv.rows; ++y) for (int x = 0; x < hsv.cols; ++x) {
     const cv::Vec3f ray{(x - 320) / 400.0f, (y - 100) / 400.0f, 1};
-    for (float lateral : {-0.45f, -0.27f, -0.09f, 0.09f, 0.27f, 0.45f}) {
+    for (int ball = 0; ball < balls; ++ball) {
+      const float lateral = -0.45f + 0.18f * ball;
       const cv::Vec3f center{-lateral, 0.925f, forward};
       const float dot = ray.dot(center);
       if (dot > 0 && dot * dot >= ray.dot(ray) * (center.dot(center) - 0.075f * 0.075f))
@@ -72,6 +73,22 @@ TEST(HSVClusterTrackerTest, SphereProjectionPreservesLocationAndRejectsAllianceZ
   EXPECT_EQ(first.id, tracker.GetClusters()->front().id);
   tracker.ProcessFrame(image, frc::Pose2d{8.5_m, 4_m, frc::Rotation2d{0_rad}});
   EXPECT_TRUE(tracker.GetClusters()->empty());
+}
+TEST(HSVClusterTrackerTest, DoesNotRejectSmallDistantPileBecauseOfImageArea) {
+  Tracker tracker("d", "c", kSphereIntrinsics, kExtrinsics, {}, 1920 * 1080);
+  cv::Mat3b image(1080, 1920, cv::Vec3b{});
+  SphereImage(6).copyTo(image(cv::Rect{0, 0, 640, 480}));
+  tracker.ProcessFrame(image);
+  ASSERT_EQ(tracker.GetClusters()->size(), 1U);
+  EXPECT_LT(tracker.GetClusters()->front().img_points.size(), 207U);
+  EXPECT_NEAR(tracker.GetClusters()->front().robot_relative_translation->X().value(), 6, 0.25);
+}
+TEST(HSVClusterTrackerTest, RejectsOneBallButRetainsASmallPile) {
+  Tracker tracker("d", "c", kSphereIntrinsics, kExtrinsics, {}, 640 * 480);
+  tracker.ProcessFrame(SphereImage(6, 1));
+  EXPECT_TRUE(tracker.GetClusters()->empty());
+  tracker.ProcessFrame(SphereImage(6, 2));
+  EXPECT_EQ(tracker.GetClusters()->size(), 1U);
 }
 TEST(HSVClusterTrackerNodeTest, ProcessesPaddedDeviceFrameWithPoseAndPublishesOnce) {
   Tracker tracker("d", "c", kSphereIntrinsics, kExtrinsics, {}, 640 * 480, 20, "pose");
