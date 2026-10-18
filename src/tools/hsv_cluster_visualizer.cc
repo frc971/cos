@@ -136,7 +136,8 @@ auto ProjectedPointCounts(const gamepiece::HSVClusterTrackerNode& tracker,
       const auto pixel = FieldPoint(position.X().value(), position.Y().value());
       if (pixel.x >= 0 && pixel.x < size.width &&
           pixel.y >= 0 && pixel.y < size.height) {
-        counts(static_cast<int>(pixel.y), static_cast<int>(pixel.x)) += 1.0f;
+        counts(static_cast<int>(pixel.y), static_cast<int>(pixel.x)) +=
+            cluster.ground_weights[&point - cluster.img_points.data()];
       }
     }
   }
@@ -184,21 +185,9 @@ auto FieldEllipse(const gamepiece::HSVClusterTrackerNode& tracker,
                   const gamepiece::kmeans_cluster_t& cluster,
                   const frc::Pose2d& robot_pose)
     -> std::optional<cv::RotatedRect> {
-  const auto center = tracker.RobotRelativeOffset(cluster.centroid);
-  std::vector<cv::Point2f> ground_points;
-  for (const cv::Point2f& point : cluster.img_points) {
-    const auto offset = tracker.RobotRelativeOffset(point);
-    ground_points.emplace_back(static_cast<float>(offset.X().value()),
-                               static_cast<float>(offset.Y().value()));
-  }
-  if (ground_points.size() < 2) {
-    return std::nullopt;
-  }
-  cv::Mat covariance;
-  cv::Mat mean;
-  cv::calcCovarMatrix(cv::Mat(ground_points).reshape(1), covariance, mean,
-                      cv::COVAR_NORMAL | cv::COVAR_ROWS | cv::COVAR_SCALE,
-                      CV_32F);
+  (void)tracker;
+  const auto center = *cluster.robot_relative_translation;
+  const cv::Mat covariance(cluster.ground_covar);
   cv::Mat eigenvalues;
   cv::Mat eigenvectors;
   cv::eigen(covariance, eigenvalues, eigenvectors);
@@ -634,34 +623,6 @@ auto main(int argc, char** argv) -> int {
       CHECK(!frame.empty()) << "Cannot decode frame: " << input_path;
       CHECK(frame.size() == first_frame.size())
           << "Frame dimensions changed: " << input_path;
-      tracker.ProcessFrame(frame);
-      if (frame_count == 1) {
-        // Match BOS's single-frame visualizer by processing the frame twice.
-        tracker.ProcessFrame(frame);
-      }
-      const auto& clusters = *tracker.GetClusters();
-      const auto output_path =
-          output_directory / (input_path.stem().string() + "_clusters.png");
-      pending.push_back(Async(pool, [frame, clusters, camera_matrix, map_x, map_y,
-                                    pitch = camera_pose.Rotation().Y().value(),
-                                    input_path, output_path,
-                                    panel = (use_range || !sim.is_null()) &&
-                                            panel_indices.contains(frame_index)] {
-        const cv::Mat visualization = AnnotateFrame(
-            frame, clusters, cv::Mat(camera_matrix), map_x, map_y, pitch);
-        const std::string caption = input_path.filename().string() + " | " +
-                                    std::to_string(clusters.size()) + " clusters";
-        cv::putText(visualization, caption, {20, 40}, cv::FONT_HERSHEY_SIMPLEX,
-                    0.9, cv::Scalar{0, 0, 0}, 5, cv::LINE_AA);
-        cv::putText(visualization, caption, {20, 40}, cv::FONT_HERSHEY_SIMPLEX,
-                    0.9, cv::Scalar{255, 255, 255}, 2, cv::LINE_AA);
-        CHECK(cv::imwrite(output_path.string(), visualization));
-        cv::Mat thumbnail;
-        if (panel) {
-          cv::resize(visualization, thumbnail, {}, 0.5, 0.5, cv::INTER_AREA);
-        }
-        return thumbnail;
-      }));
       std::size_t pose_tag_count = 0;
       std::vector<localization::tag_detection_t> detections;
       bool pose_updated = false;
@@ -694,6 +655,34 @@ auto main(int argc, char** argv) -> int {
           pose_updated = true;
         }
       }
+      tracker.ProcessFrame(frame, robot_pose);
+      if (frame_count == 1) {
+        // Match BOS's single-frame visualizer by processing the frame twice.
+        tracker.ProcessFrame(frame, robot_pose);
+      }
+      const auto& clusters = *tracker.GetClusters();
+      const auto output_path =
+          output_directory / (input_path.stem().string() + "_clusters.png");
+      pending.push_back(Async(pool, [frame, clusters, camera_matrix, map_x, map_y,
+                                    pitch = camera_pose.Rotation().Y().value(),
+                                    input_path, output_path,
+                                    panel = (use_range || !sim.is_null()) &&
+                                            panel_indices.contains(frame_index)] {
+        const cv::Mat visualization = AnnotateFrame(
+            frame, clusters, cv::Mat(camera_matrix), map_x, map_y, pitch);
+        const std::string caption = input_path.filename().string() + " | " +
+                                    std::to_string(clusters.size()) + " clusters";
+        cv::putText(visualization, caption, {20, 40}, cv::FONT_HERSHEY_SIMPLEX,
+                    0.9, cv::Scalar{0, 0, 0}, 5, cv::LINE_AA);
+        cv::putText(visualization, caption, {20, 40}, cv::FONT_HERSHEY_SIMPLEX,
+                    0.9, cv::Scalar{255, 255, 255}, 2, cv::LINE_AA);
+        CHECK(cv::imwrite(output_path.string(), visualization));
+        cv::Mat thumbnail;
+        if (panel) {
+          cv::resize(visualization, thumbnail, {}, 0.5, 0.5, cv::INTER_AREA);
+        }
+        return thumbnail;
+      }));
       // Per-frame field view uses the camera view's cluster colors; the
       // all-frames overlay keeps one median-area ellipse per ID, colored by time.
       if (robot_pose.has_value()) {
@@ -778,12 +767,19 @@ auto main(int argc, char** argv) -> int {
              {"ground_position_m",
               {cluster.robot_relative_translation->X().value(),
                cluster.robot_relative_translation->Y().value()}},
+             {"estimated_fuel_count", normalized_cluster.fuel_count},
+             {"ground_covariance_m2",
+              {{normalized_cluster.ground_covar(0, 0), normalized_cluster.ground_covar(0, 1)},
+               {normalized_cluster.ground_covar(1, 0), normalized_cluster.ground_covar(1, 1)}}},
              {"covariance",
               {{cluster.covar(0, 0), cluster.covar(0, 1)},
                {cluster.covar(1, 0), cluster.covar(1, 1)}}}});
       }
       frames.push_back({{"input", input_path.string()},
                         {"output", output_path.string()},
+                        {"robot_pose", robot_pose ? nlohmann::json{
+                            {"x", robot_pose->X().value()}, {"y", robot_pose->Y().value()},
+                            {"yaw", robot_pose->Rotation().Radians().value()}} : nlohmann::json{}},
                         {"clusters", cluster_data}});
       std::cout << output_path << ": " << clusters.size() << " clusters, "
                 << pixel_count << " thresholded pixels, " << detections.size()

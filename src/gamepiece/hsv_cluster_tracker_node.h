@@ -9,6 +9,7 @@
 #include <vector>
 
 #include <frc/geometry/Translation2d.h>
+#include <frc/geometry/Pose2d.h>
 #include <opencv2/core.hpp>
 
 #include "control_loop/node.h"
@@ -23,6 +24,10 @@ using kmeans_cluster_t = struct KMeansCluster {
   cv::Matx22f covar{};  // Covariance of img_points in normalized coordinates.
   std::vector<cv::Point2f> img_points;
   std::optional<frc::Translation2d> robot_relative_translation = std::nullopt;
+  std::vector<cv::Point2f> ground_points;  // Robot coordinates, meters.
+  std::vector<float> ground_weights;  // Approximate visible Fuel counts.
+  cv::Matx22f ground_covar{};
+  float fuel_count{};
   std::size_t id{};  // Persistent within one tracker instance.
 };
 
@@ -40,7 +45,8 @@ class HSVClusterTrackerNode final : public control_loop::INode {
       std::size_t image_size,  // Total pixels (width * height).
       float max_ground_distance_m = 20.0f);
   // Processes a CPU BGR frame; callers must serialize access with callbacks.
-  void ProcessFrame(const cv::Mat& frame);
+  void ProcessFrame(const cv::Mat& frame,
+                    std::optional<frc::Pose2d> robot_pose = std::nullopt);
   [[nodiscard]] auto GetClusters() const
       -> const std::vector<kmeans_cluster_t>*;
   // Input must be a normalized point retained by ProcessFrame.
@@ -60,30 +66,8 @@ class HSVClusterTrackerNode final : public control_loop::INode {
   friend struct HSVClusterTrackerNodeTestPeer;
   [[nodiscard]] auto NormalizedPointOffset(const cv::Point2f& point) const
       -> frc::Translation2d;
-  [[nodiscard]] auto ClampToHorizon(cv::Point2f point) const -> cv::Point2f;
-  [[nodiscard]] auto GroundPoint(const cv::Point2f& point,
-                                 bool use_column_bottom = true) const
-      -> cv::Point2f;
-  [[nodiscard]] auto KMeans(
-      const std::vector<cv::Point2f>& data_points,
-      const std::vector<kmeans_cluster_t>& initial_clusters) const
-      -> std::vector<kmeans_cluster_t>;
-  [[nodiscard]] auto AssignToExistingClusters(
-      const std::vector<cv::Point2f>& data_points,
-      const std::vector<kmeans_cluster_t>& existing_clusters) const
-      -> std::vector<kmeans_cluster_t>;
-  [[nodiscard]] auto ClusterDistance(const kmeans_cluster_t& cluster) const
-      -> frc::Translation2d;
-  [[nodiscard]] auto ClustersOverlap(const kmeans_cluster_t& first,
-                                     const kmeans_cluster_t& second) const
-      -> bool;
-  auto MergeOverlappingClusters(
-      const std::vector<kmeans_cluster_t>& unfiltered_clusters)
-      -> std::vector<kmeans_cluster_t>;
-  auto AssignPersistentIds(std::vector<kmeans_cluster_t> clusters)
-      -> std::vector<kmeans_cluster_t>;
-  auto MergeClusters(const std::vector<kmeans_cluster_t>& clusters)
-      -> std::vector<kmeans_cluster_t>;
+  auto ClusterGroundPoints() -> std::vector<kmeans_cluster_t>;
+  void AssignPersistentIds();
 
   std::string input_path_;
   std::string output_path_;
@@ -92,11 +76,13 @@ class HSVClusterTrackerNode final : public control_loop::INode {
   std::vector<control_loop::MessageDescriptor> publications_;
   std::mutex processing_mutex_;
   std::vector<cv::Point2f> thresholded_points_;
-  std::vector<cv::Point2f> bottom_columns_;
+  std::vector<cv::Point2f> ground_points_;
+  std::vector<float> ground_weights_;
+  std::optional<frc::Pose2d> robot_pose_;
   std::vector<kmeans_cluster_t> clusters_;
   // Indexed by ID; retain the last observed ground position through empty frames.
   std::vector<frc::Translation2d> canonical_positions_;
-  utils::DisjointSetUnion cluster_dsu_;
+
   cv::Mat3b hsv_image_;
   cv::Mat1b hsv_masked_;
   cv::Matx33f camera_intrinsics_;
@@ -104,8 +90,7 @@ class HSVClusterTrackerNode final : public control_loop::INode {
   cv::Matx44f camera_extrinsics_cv_;
   float max_ground_distance_m_;
   std::size_t image_size_;
-  static constexpr float max_merge_distance_m{0.5f};
-  static constexpr float kIdMatchToleranceM = 0.5f;
+  static constexpr float kIdMatchToleranceM = 0.9f;
   cv::Mat frame_;
   frc::Translation2d extrinsics_offset_;
 };
