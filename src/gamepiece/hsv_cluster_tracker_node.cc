@@ -74,10 +74,10 @@ HSVClusterTrackerNode::HSVClusterTrackerNode(
     throw std::invalid_argument(
         "Maximum ground distance must be finite and positive");
   }
-  if (!std::isfinite(extrinsics(2, 3)) || extrinsics(2, 3) <= 0) {
+  if (!std::isfinite(extrinsics(2, 3)) || extrinsics(2, 3) <= kFuelRadiusM) {
     throw std::invalid_argument(
         "HSV tracker extrinsics must be the camera pose in robot coordinates "
-        "with a positive camera height");
+        "above the Fuel center plane");
   }
   // Capture the ground translation before changing from WPILib coordinates.
   extrinsics_offset_ = frc::Translation2d{units::meter_t{extrinsics(0, 3)},
@@ -156,32 +156,52 @@ void HSVClusterTrackerNode::ProcessFrame(
   HSVThreshold(frame, hsv_color_range.first, hsv_color_range.second,
                minimum_saturation, thresholded_points_, hsv_image_, hsv_masked_);
   if (thresholded_points_.empty()) return;
-  cv::undistortPoints(thresholded_points_, thresholded_points_,
-                      camera_intrinsics_, distortion_coeffs_);
-  CullAboveHorizon(thresholded_points_, camera_extrinsics_cv_);
-  std::vector<cv::Point2f> retained;
-  for (const auto& point : thresholded_points_) {
-    const auto offset = RobotRelativeOffset(point);
-    if (!std::isfinite(offset.Norm().value()) ||
-        offset.Distance(extrinsics_offset_).value() > max_ground_distance_m_) continue;
-    const auto position = robot_pose_ ? robot_pose_->Translation() +
-        offset.RotateBy(robot_pose_->Rotation()) : offset;
-    const cv::Point2f ground{static_cast<float>(position.X().value()),
-                             static_cast<float>(position.Y().value())};
-    // The neutral zone lies between the alliance-side trench faces.
-    if (robot_pose_ && (ground.x < 4.6f || ground.x > 11.94f ||
-                        ground.y < 0.0f || ground.y > 8.07f)) continue;
-    const float ray_y = camera_extrinsics_cv_(1, 0) * point.x +
-        camera_extrinsics_cv_(1, 1) * point.y + camera_extrinsics_cv_(1, 2);
-    const float depth = (-kFuelRadiusM - camera_extrinsics_cv_(1, 3)) / ray_y;
-    // Undo perspective area: a ball covers approximately pi*(f*r/depth)^2 pixels.
-    const float weight = depth * depth / (std::numbers::pi_v<float> *
-        kFuelRadiusM * kFuelRadiusM * camera_intrinsics_(0, 0) * camera_intrinsics_(1, 1));
-    retained.push_back(point);
-    ground_points_.push_back(ground);
-    ground_weights_.push_back(weight);
+  // Every silhouette tangent constrains a sphere center, without separating balls.
+  // For unit ray u and inward perpendicular v, center = t*u + radius*v.
+  // Its known height determines t. Occluded boundary arcs still provide evidence.
+  std::vector<std::vector<cv::Point>> contours;
+  cv::findContours(hsv_masked_, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_NONE);
+  thresholded_points_.clear();
+  const cv::Matx33f rotation = camera_extrinsics_cv_.get_minor<3, 3>(0, 0);
+  for (const auto& contour : contours) {
+    if (contour.size() < 12 || cv::contourArea(contour) < 8) continue;
+    std::vector<cv::Point2f> pixels(contour.begin(), contour.end()), normalized;
+    cv::undistortPoints(pixels, normalized, camera_intrinsics_, distortion_coeffs_);
+    std::vector<cv::Vec3f> rays;
+    for (const auto& p : normalized) {
+      const cv::Vec3f ray{p.x, p.y, 1};
+      rays.push_back(ray / cv::norm(ray));
+    }
+    for (std::size_t i = 0; i < rays.size(); ++i) {
+      const auto tangent = rays[(i + 4) % rays.size()] -
+          rays[(i + rays.size() - 4) % rays.size()];
+      auto normal = tangent.cross(rays[i]);
+      const float length = cv::norm(normal);
+      if (length < 1e-6f) continue;
+      normal = rotation * (normal / length);
+      const auto ray = rotation * rays[i];
+      if (ray[1] <= 1e-5f) continue;
+      const float distance = (-kFuelRadiusM - camera_extrinsics_cv_(1, 3) -
+                              kFuelRadiusM * normal[1]) / ray[1];
+      if (distance <= 0 || distance > max_ground_distance_m_) continue;
+      const auto center = distance * ray + kFuelRadiusM * normal;
+      const auto offset = frc::Translation2d{units::meter_t{center[2]},
+                                             units::meter_t{-center[0]}} + extrinsics_offset_;
+      const auto position = robot_pose_ ? robot_pose_->Translation() +
+          offset.RotateBy(robot_pose_->Rotation()) : offset;
+      const cv::Point2f ground{static_cast<float>(position.X().value()),
+                               static_cast<float>(position.Y().value())};
+      if (robot_pose_ && (ground.x < 4.6f || ground.x > 11.94f ||
+                          ground.y < 0.0f || ground.y > 8.07f)) continue;
+      // Inverse angular perimeter balances near/far silhouettes; hidden arcs
+      // contribute no mass, so fuel_count estimates visible support, not inventory.
+      const float weight = distance / (2 * std::numbers::pi_v<float> *
+          kFuelRadiusM * std::sqrt(camera_intrinsics_(0, 0) * camera_intrinsics_(1, 1)));
+      thresholded_points_.push_back(normalized[i]);
+      ground_points_.push_back(ground);
+      ground_weights_.push_back(weight);
+    }
   }
-  thresholded_points_ = std::move(retained);
   if (ground_points_.empty()) return;
   clusters_ = ClusterGroundPoints();
   AssignPersistentIds();
@@ -211,6 +231,8 @@ auto HSVClusterTrackerNode::ClusterGroundPoints() -> std::vector<kmeans_cluster_
   std::iota(order.begin(), order.end(), 0);
   const auto value = [&](int cell) { return density(cell / width, cell % width); };
   std::ranges::sort(order, [&](int a, int b) { return value(a) > value(b); });
+  std::vector<float> peak(count);
+  for (int cell : order) peak[cell] = value(cell);
   utils::DisjointSetUnion modes;
   modes.FillSets(count);
   // Descending watershed; join peaks only across a substantial density saddle.
@@ -231,9 +253,13 @@ auto HSVClusterTrackerNode::ClusterGroundPoints() -> std::vector<kmeans_cluster_
       const int nx = x + dx, ny = y + dy;
       if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
       const int neighbor = ny * width + nx;
-      if (basin[neighbor] >= 0 && value(cell) >=
-          0.55f * std::min(value(basin[cell]), value(basin[neighbor])))
-        modes.Union(basin[cell], basin[neighbor]);
+      if (basin[neighbor] < 0) continue;
+      const auto first = modes.Find(basin[cell]), second = modes.Find(basin[neighbor]);
+      if (value(cell) >= 0.55f * std::min(peak[first], peak[second])) {
+        const float merged_peak = std::max(peak[first], peak[second]);
+        modes.Union(first, second);
+        peak[modes.Find(first)] = merged_peak;
+      }
     }
   }
   std::vector<kmeans_cluster_t> result;

@@ -125,19 +125,19 @@ auto DrawRobot(cv::Mat& canvas, const frc::Pose2d& pose,
            cv::LINE_AA);
 }
 
-auto ProjectedPointCounts(const gamepiece::HSVClusterTrackerNode& tracker,
+auto ProjectedPointCounts(
                           const gamepiece::hsv_clusters_t& clusters,
                           const frc::Pose2d& pose, cv::Size size) -> cv::Mat1f {
   cv::Mat1f counts(size, 0.0f);
   for (const auto& cluster : clusters) {
-    for (const auto& point : cluster.img_points) {
-      const auto offset = tracker.RobotRelativeOffset(point);
+    for (std::size_t i = 0; i < cluster.ground_points.size(); ++i) {
+      const auto& p = cluster.ground_points[i];
+      const frc::Translation2d offset{units::meter_t{p.x}, units::meter_t{p.y}};
       const auto position = pose.Translation() + offset.RotateBy(pose.Rotation());
       const auto pixel = FieldPoint(position.X().value(), position.Y().value());
       if (pixel.x >= 0 && pixel.x < size.width &&
           pixel.y >= 0 && pixel.y < size.height) {
-        counts(static_cast<int>(pixel.y), static_cast<int>(pixel.x)) +=
-            cluster.ground_weights[&point - cluster.img_points.data()];
+        counts(static_cast<int>(pixel.y), static_cast<int>(pixel.x)) += cluster.ground_weights[i];
       }
     }
   }
@@ -181,11 +181,9 @@ auto PointHeatmap(const cv::Mat& base, const cv::Mat1f& counts,
 // The cluster's ground-plane 2-sigma ellipse (matching ClusterEllipse's
 // padding-free diameter), centered at the projected centroid, in field-canvas
 // pixels. Robot-relative geometry is moved onto the field by `robot_pose`.
-auto FieldEllipse(const gamepiece::HSVClusterTrackerNode& tracker,
-                  const gamepiece::kmeans_cluster_t& cluster,
+auto FieldEllipse(const gamepiece::kmeans_cluster_t& cluster,
                   const frc::Pose2d& robot_pose)
     -> std::optional<cv::RotatedRect> {
-  (void)tracker;
   const auto center = *cluster.robot_relative_translation;
   const cv::Mat covariance(cluster.ground_covar);
   cv::Mat eigenvalues;
@@ -692,7 +690,7 @@ auto main(int argc, char** argv) -> int {
         for (const auto& cluster : clusters) {
           const cv::Scalar color = ClusterColor(cluster.id);
           if (const auto ellipse =
-                  FieldEllipse(tracker, cluster, *robot_pose)) {
+                  FieldEllipse(cluster, *robot_pose)) {
             DrawTranslucentEllipse(field, *ellipse, color);
             field_ellipses[cluster.id].emplace_back(*ellipse, frame_color);
           }
@@ -720,7 +718,7 @@ auto main(int argc, char** argv) -> int {
                                                                : "simulated pose")
                                               : "no tags, pose held");
         const cv::Mat1f point_counts =
-            ProjectedPointCounts(tracker, clusters, *robot_pose, field_base.size());
+            ProjectedPointCounts(clusters, *robot_pose, field_base.size());
         overall_point_counts += point_counts;
         ++heatmap_frames;
         const auto heatmap_path = output_directory /
@@ -767,7 +765,10 @@ auto main(int argc, char** argv) -> int {
              {"ground_position_m",
               {cluster.robot_relative_translation->X().value(),
                cluster.robot_relative_translation->Y().value()}},
-             {"estimated_fuel_count", normalized_cluster.fuel_count},
+             {"visible_fuel_support", normalized_cluster.fuel_count},
+             {"peak_density_per_m2", normalized_cluster.fuel_count /
+                 (2 * std::numbers::pi * std::sqrt(std::max(1e-8f,
+                     static_cast<float>(cv::determinant(normalized_cluster.ground_covar)))))},
              {"ground_covariance_m2",
               {{normalized_cluster.ground_covar(0, 0), normalized_cluster.ground_covar(0, 1)},
                {normalized_cluster.ground_covar(1, 0), normalized_cluster.ground_covar(1, 1)}}},
@@ -782,7 +783,7 @@ auto main(int argc, char** argv) -> int {
                             {"yaw", robot_pose->Rotation().Radians().value()}} : nlohmann::json{}},
                         {"clusters", cluster_data}});
       std::cout << output_path << ": " << clusters.size() << " clusters, "
-                << pixel_count << " thresholded pixels, " << detections.size()
+                << pixel_count << " silhouette samples, " << detections.size()
                 << " tags detected, " << pose_tag_count << " used for pose\n";
     }
     for (auto& result : pending) {

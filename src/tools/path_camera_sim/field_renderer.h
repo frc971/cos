@@ -28,10 +28,11 @@ class FieldRenderer {
   FieldRenderer(const FieldRenderer&) = delete;
   auto operator=(const FieldRenderer&) -> FieldRenderer& = delete;
 
-  auto Render(const Eigen::Matrix4d& world_to_camera) -> cv::Mat;
+  auto Render(const Eigen::Matrix4d& world_to_camera, bool fuel_labels = false) -> cv::Mat;
   void SetFuelLayout(double entropy, uint32_t seed);
   void SetFuelClusters(const std::vector<FuelCluster>& clusters,
                        double noise_m, uint32_t seed);
+  auto FuelClusterIds() const -> const std::vector<std::size_t>& { return fuel_cluster_ids_; }
   auto FuelPositions() const -> const std::vector<std::array<double, 3>>&;
 
  private:
@@ -53,6 +54,7 @@ class FieldRenderer {
   std::vector<Draw> staged_fuel_draws_;
   std::vector<Draw> active_fuel_draws_;
   std::vector<std::array<double, 3>> fuel_positions_;
+  std::vector<std::size_t> fuel_cluster_ids_;
   float field_length_ = 0;
   float field_width_ = 0;
   EGLDisplay display_ = EGL_NO_DISPLAY;

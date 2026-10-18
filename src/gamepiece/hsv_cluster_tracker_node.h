@@ -25,7 +25,7 @@ using kmeans_cluster_t = struct KMeansCluster {
   std::vector<cv::Point2f> img_points;
   std::optional<frc::Translation2d> robot_relative_translation = std::nullopt;
   std::vector<cv::Point2f> ground_points;  // Robot coordinates, meters.
-  std::vector<float> ground_weights;  // Approximate visible Fuel counts.
+  std::vector<float> ground_weights;  // Visible silhouette support in Fuel equivalents.
   cv::Matx22f ground_covar{};
   float fuel_count{};
   std::size_t id{};  // Persistent within one tracker instance.
@@ -49,7 +49,8 @@ class HSVClusterTrackerNode final : public control_loop::INode {
                     std::optional<frc::Pose2d> robot_pose = std::nullopt);
   [[nodiscard]] auto GetClusters() const
       -> const std::vector<kmeans_cluster_t>*;
-  // Input must be a normalized point retained by ProcessFrame.
+  // Generic ray intersection with the Fuel center plane. Silhouette-corrected
+  // retained samples are in each cluster's ground_points.
   [[nodiscard]] auto RobotRelativeOffset(const cv::Point2f& point) const
       -> frc::Translation2d;
 
@@ -80,7 +81,8 @@ class HSVClusterTrackerNode final : public control_loop::INode {
   std::vector<float> ground_weights_;
   std::optional<frc::Pose2d> robot_pose_;
   std::vector<kmeans_cluster_t> clusters_;
-  // Indexed by ID; retain the last observed ground position through empty frames.
+  // Indexed by ID; field positions when a robot pose is provided.
+  // Retain positions through empty frames for re-entry matching.
   std::vector<frc::Translation2d> canonical_positions_;
 
   cv::Mat3b hsv_image_;

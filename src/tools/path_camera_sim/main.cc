@@ -34,6 +34,7 @@ ABSL_FLAG(std::string, field_dir, "constants/field-cad",
 ABSL_FLAG(std::string, output_dir, "/root/debug-output/path-camera-sim",
           "Directory for rendered PNGs");
 ABSL_FLAG(bool, apply_distortion, true, "Apply camera lens distortion");
+ABSL_FLAG(bool, fuel_truth, false, "Record occlusion-aware visible Fuel IDs for validation");
 ABSL_FLAG(double, fuel_entropy, -1.0,
           "Render staged Fuel and a second layout at this entropy (0 to 1)");
 ABSL_FLAG(uint32_t, fuel_seed, 0, "Seed for randomized Fuel layouts");
@@ -219,9 +220,11 @@ void Run() {
     if (layout_entropy >= 0.0 || !cluster_arg.empty()) {
       manifest["fuel_seed"] = absl::GetFlag(FLAGS_fuel_seed);
       manifest["gamepieces"] = nlohmann::json::array();
-      for (const auto& position : renderer.FuelPositions()) {
+      for (std::size_t i = 0; i < renderer.FuelPositions().size(); ++i) {
+        const auto& position = renderer.FuelPositions()[i];
         manifest["gamepieces"].push_back(
             {{"type", "Fuel"}, {"translation_m", position}});
+        if (!cluster_arg.empty()) manifest["gamepieces"].back()["cluster_id"] = renderer.FuelClusterIds()[i];
       }
     }
     for (size_t index = 0; index < poses.size(); ++index) {
@@ -242,6 +245,17 @@ void Run() {
       }
       manifest["frames"].push_back({{"file", filename.str()},
                                      {"robot_pose", item}});
+      if (absl::GetFlag(FLAGS_fuel_truth)) {
+        cv::Mat labels = renderer.Render(CameraWorldToOpenCv(pose, camera_to_robot), true);
+        if (!map_x.empty()) cv::remap(labels.clone(), labels, map_x, map_y, cv::INTER_NEAREST);
+        std::vector<std::size_t> visible(renderer.FuelPositions().size(), 0);
+        for (int y = 0; y < labels.rows; ++y) for (int x = 0; x < labels.cols; ++x) {
+          const auto p = labels.at<cv::Vec3b>(y, x);
+          const std::size_t id = p[2] + (p[1] << 8) + (p[0] << 16);
+          if (id > 0 && id <= visible.size()) ++visible[id - 1];
+        }
+        manifest["frames"].back()["visible_fuel_pixels"] = visible;
+      }
     }
     std::ofstream output(layout_dir / "manifest.json");
     if (!output) throw std::runtime_error("Cannot write manifest.json");
