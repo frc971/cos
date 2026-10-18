@@ -1,0 +1,26 @@
+{
+  "unique_input_frames": 450,
+  "processed_frames_checked": 1150,
+  "per_mode": {
+    "ideal": 100,
+    "noisy": 100,
+    "ideal-stateless": 100,
+    "ideal-filter": 100,
+    "angular": 250,
+    "angular-stateless": 250,
+    "angular-filter": 250
+  },
+  "same_rgb_paths": true,
+  "exact_match": true,
+  "unchanged_fields": [
+    "id",
+    "centroid_px",
+    "pixel_count",
+    "covariance",
+    "ellipse_semi_axes_px",
+    "ellipse_angle_deg",
+    "ground_position_m",
+    "ground_covariance_m2",
+    "visible_fuel_support"
+  ]
+}

@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <memory>
+#include <numbers>
 #include <random>
 #include <gtest/gtest.h>
 #include <opencv2/imgproc.hpp>
@@ -11,6 +12,9 @@
 
 namespace gamepiece {
 struct HSVClusterTrackerNodeTestPeer {
+  static auto ArcWeight(const cv::Matx33f& K, const cv::Vec3f& ray, const cv::Vec2f& normal, float depth) {
+    return HSVClusterTrackerNode::SphereArcWeight(K, ray, normal, depth);
+  }
   static auto Run(HSVClusterTrackerNode& tracker, const std::vector<cv::Point2f>& points,
                   std::optional<frc::Pose2d> pose = std::nullopt) {
     tracker.robot_pose_ = pose;
@@ -43,6 +47,27 @@ auto Cluster(Tracker& tracker, const std::vector<cv::Point2f>& points,
 }
 // Ray-cast equal-radius spheres, so projection tests use exact simulated geometry.
 const cv::Matx33d kSphereIntrinsics{400, 0, 320, 0, 400, 100, 0, 0, 1};
+TEST(HSVClusterTrackerTest, ArcEvidenceConservesSphereMassOffAxis) {
+  const cv::Matx33f K{600, 0, 320, 0, 430, 100, 0, 0, 1};
+  for (const float angle : {0.0f, .35f, .61f, -.61f}) {
+    const cv::Vec3f center{4*std::tan(angle), 0, 4}, axis = center / cv::norm(center);
+    auto first = axis.cross(cv::Vec3f{0, 1, 0}); first /= cv::norm(first);
+    const auto second = axis.cross(first); const float sine = .075f / cv::norm(center);
+    const auto sample = [&](int i) {
+      const float t = i*2*std::numbers::pi_v<float>/4096;
+      auto ray = std::sqrt(1-sine*sine)*axis+sine*(std::cos(t)*first+std::sin(t)*second);
+      return ray/ray[2];
+    };
+    float mass = 0;
+    for (int i = 0; i < 4096; ++i) {
+      const auto a = sample(i), b = sample(i+1), ray = (a+b)/2;
+      const cv::Vec2f tangent{K(0, 0)*(b[0]-a[0]), K(1, 1)*(b[1]-a[1])};
+      const float length = cv::norm(tangent);
+      mass += length*gamepiece::HSVClusterTrackerNodeTestPeer::ArcWeight(K, ray, {-tangent[1]/length, tangent[0]/length}, 4);
+    }
+    EXPECT_NEAR(mass, 1, .003);
+  }
+}
 auto Spheres(const std::vector<cv::Vec3f>& centers) -> cv::Mat {
   cv::Mat3b hsv(480, 640, cv::Vec3b{0, 0, 0});
   for (int y = 0; y < hsv.rows; ++y) for (int x = 0; x < hsv.cols; ++x) {
@@ -68,13 +93,16 @@ auto SphereImage(float forward = 4.0f, int balls = 6) -> cv::Mat {
   for (int i = 0; i < balls; ++i) centers.push_back({0.45f - .18f*i, .925f, forward});
   return Spheres(centers);
 }
+auto GridImage(int side, float spread = .3f, float forward = 4) -> cv::Mat {
+  std::vector<cv::Vec3f> centers;
+  for (int x = 0; x < side; ++x) for (int y = 0; y < side; ++y)
+    centers.push_back({spread*(2*y/(side-1.0f)-1), .925f, forward+spread*(2*x/(side-1.0f)-1)});
+  return Spheres(centers);
+}
 TEST(HSVClusterTrackerTest, DensityRespondsToCountAreaAndPerspective) {
   const auto measure = [](int side, float spread, float forward) {
     Tracker tracker("d", "c", kSphereIntrinsics, kExtrinsics, {}, 640 * 480);
-    std::vector<cv::Vec3f> centers;
-    for (int x = 0; x < side; ++x) for (int y = 0; y < side; ++y)
-      centers.push_back({spread*(2*y/(side-1.0f)-1), .925f, forward+spread*(2*x/(side-1.0f)-1)});
-    tracker.ProcessFrame(Spheres(centers));
+    tracker.ProcessFrame(GridImage(side, spread, forward));
     EXPECT_EQ(tracker.GetClusters()->size(), 1U);
     if (!tracker.GetClusters()->empty()) {
       const float count = tracker.GetClusters()->front().estimated_ball_count;
@@ -106,6 +134,84 @@ TEST(HSVClusterTrackerTest, SphereProjectionPreservesLocationAndRejectsAllianceZ
   EXPECT_EQ(first.id, tracker.GetClusters()->front().id);
   tracker.ProcessFrame(image, frc::Pose2d{8.5_m, 4_m, frc::Rotation2d{0_rad}});
   EXPECT_TRUE(tracker.GetClusters()->empty());
+}
+TEST(HSVClusterTrackerTest, PredictsStationaryBallsBeforeExploringNewEvidence) {
+  Tracker tracker("d", "c", kSphereIntrinsics, kExtrinsics, {}, 640 * 480);
+  for (int i = 0; i < 6; ++i) {
+    const float travel = .04f*i;
+    tracker.ProcessFrame(SphereImage(4-travel), frc::Pose2d{units::meter_t{2+travel}, 4_m, frc::Rotation2d{0_rad}});
+    ASSERT_EQ(tracker.GetClusters()->size(), 1U);
+    if (i > 0) { EXPECT_GT(tracker.GetClusters()->front().reused_ball_count, 0U); }
+  }
+  const auto before = tracker.GetClusters()->front();
+  tracker.ProcessFrame(cv::Mat3b(480, 640, cv::Vec3b{}), frc::Pose2d{2.2_m, 4_m, frc::Rotation2d{0_rad}});
+  EXPECT_TRUE(tracker.GetClusters()->empty());
+  tracker.ProcessFrame(SphereImage(3.8f), frc::Pose2d{2.2_m, 4_m, frc::Rotation2d{0_rad}});
+  ASSERT_EQ(tracker.GetClusters()->size(), 1U);
+  EXPECT_EQ(tracker.GetClusters()->front().id, before.id);
+  EXPECT_GT(tracker.GetClusters()->front().reused_ball_count, 0U);
+  tracker.ProcessFrame(SphereImage(3.8f));  // Coordinate-mode changes invalidate history.
+  ASSERT_EQ(tracker.GetClusters()->size(), 1U);
+  EXPECT_EQ(tracker.GetClusters()->front().reused_ball_count, 0U);
+  for (int i = 0; i < 9; ++i) tracker.ProcessFrame(cv::Mat3b(480, 640, cv::Vec3b{}));
+  tracker.ProcessFrame(SphereImage(3.8f));
+  ASSERT_EQ(tracker.GetClusters()->size(), 1U);
+  EXPECT_EQ(tracker.GetClusters()->front().reused_ball_count, 0U);
+}
+TEST(HSVClusterTrackerTest, RetainsStationaryMapWhileCameraLooksAway) {
+  Tracker tracker("d", "c", kSphereIntrinsics, kExtrinsics, {}, 640 * 480);
+  const frc::Pose2d pose{2_m, 4_m, frc::Rotation2d{0_rad}};
+  tracker.ProcessFrame(SphereImage(), pose);
+  for (int i = 0; i < 20; ++i) {
+    tracker.ProcessFrame(cv::Mat3b(480, 640, cv::Vec3b{}), frc::Pose2d{2_m, 4_m, frc::Rotation2d{3.14159_rad}});
+    EXPECT_TRUE(tracker.GetClusters()->empty());
+  }
+  tracker.ProcessFrame(SphereImage(), pose);
+  ASSERT_EQ(tracker.GetClusters()->size(), 1U);
+  EXPECT_GT(tracker.GetClusters()->front().reused_ball_count, 0U);
+}
+TEST(HSVClusterTrackerTest, DensityHistoryRespondsToRemovalAndAddition) {
+  Tracker tracker("d", "c", kSphereIntrinsics, kExtrinsics, {}, 640 * 480);
+  const auto dense = GridImage(5), sparse = GridImage(3);
+  std::vector<float> counts;
+  for (int i = 0; i < 8; ++i) {
+    tracker.ProcessFrame(dense); ASSERT_EQ(tracker.GetClusters()->size(), 1U);
+    counts.push_back(tracker.GetClusters()->front().estimated_ball_count);
+  }
+  ASSERT_EQ(tracker.GetClusters()->size(), 1U);
+  const float before = tracker.GetClusters()->front().estimated_ball_count;
+  for (int i = 0; i < 6; ++i) {
+    tracker.ProcessFrame(sparse); ASSERT_EQ(tracker.GetClusters()->size(), 1U);
+    counts.push_back(tracker.GetClusters()->front().estimated_ball_count);
+  }
+  ASSERT_EQ(tracker.GetClusters()->size(), 1U);
+  const float after = tracker.GetClusters()->front().estimated_ball_count;
+  EXPECT_LT(after, .65f*before); EXPECT_NEAR(after, 9, 4.5);
+  for (int i = 0; i < 6; ++i) {
+    tracker.ProcessFrame(dense); ASSERT_EQ(tracker.GetClusters()->size(), 1U);
+    counts.push_back(tracker.GetClusters()->front().estimated_ball_count);
+  }
+  EXPECT_GT(counts.back(), .85f*before);
+  RecordProperty("count_before", std::to_string(before)); RecordProperty("count_after_6_frames", std::to_string(after));
+  RecordProperty("count_returned_after_6_frames", std::to_string(counts.back()));
+  for (std::size_t i = 0; i < counts.size(); ++i) RecordProperty("step_"+std::to_string(i), std::to_string(counts[i]));
+}
+TEST(HSVClusterTrackerTest, StationaryFootprintSurvivesChangingCameraYaw) {
+  Tracker tracker("d", "c", kSphereIntrinsics, kExtrinsics, {}, 640 * 480);
+  float smallest = 1e9f, largest = 0;
+  for (float angle : {0.0f, -.25f, -.15f, 0.0f, .15f, .25f}) {
+    std::vector<cv::Vec3f> centers;
+    for (int i = -1; i <= 1; ++i) for (int j = -3; j <= 3; ++j) {
+      const float x = 4+.15f*i, y = .2f*j;
+      centers.push_back({x*std::sin(angle)-y*std::cos(angle), .925f, x*std::cos(angle)+y*std::sin(angle)});
+    }
+    tracker.ProcessFrame(Spheres(centers), frc::Pose2d{2_m, 4_m, frc::Rotation2d{units::radian_t{angle}}});
+    ASSERT_EQ(tracker.GetClusters()->size(), 1U);
+    const auto& c = tracker.GetClusters()->front();
+    smallest = std::min(smallest, c.density_area_m2); largest = std::max(largest, c.density_area_m2);
+    if (angle != 0) { EXPECT_GT(c.reused_ball_count, 0U); }
+  }
+  EXPECT_LT(largest/smallest, 1.3f); RecordProperty("area_span", std::to_string(largest/smallest));
 }
 TEST(HSVClusterTrackerTest, DoesNotRejectSmallDistantPileBecauseOfImageArea) {
   Tracker tracker("d", "c", kSphereIntrinsics, kExtrinsics, {}, 1920 * 1080);

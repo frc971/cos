@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites tests="18" failures="2" disabled="0" errors="0" time="1.762" timestamp="2026-10-13T15:30:15.910" name="AllTests">
+  <testsuite name="HSVClusterTrackerTest" tests="16" failures="2" disabled="0" skipped="0" errors="0" time="0.806" timestamp="2026-10-13T15:30:15.910">
+    <testcase name="ArcEvidenceConservesSphereMassOffAxis" file="/root/cos-worktrees/gamepiece-temporal-density/src/tests/hsv_cluster_tracker_node_test.cc" line="50" status="run" result="completed" time="0" timestamp="2026-10-13T15:30:15.910" classname="HSVClusterTrackerTest" />
+    <testcase name="DensityRespondsToCountAreaAndPerspective" file="/root/cos-worktrees/gamepiece-temporal-density/src/tests/hsv_cluster_tracker_node_test.cc" line="102" status="run" result="completed" time="0.147" timestamp="2026-10-13T15:30:15.911" classname="HSVClusterTrackerTest">
+      <failure message="/root/cos-worktrees/gamepiece-temporal-density/src/tests/hsv_cluster_tracker_node_test.cc:109&#x0A;The difference between count and side*side is 7.4157390594482422, which exceeds .5f*side*side, where&#x0A;count evaluates to 16.415739059448242,&#x0A;side*side evaluates to 9, and&#x0A;.5f*side*side evaluates to 4.5." type=""><![CDATA[/root/cos-worktrees/gamepiece-temporal-density/src/tests/hsv_cluster_tracker_node_test.cc:109
+The difference between count and side*side is 7.4157390594482422, which exceeds .5f*side*side, where
+count evaluates to 16.415739059448242,
+side*side evaluates to 9, and
+.5f*side*side evaluates to 4.5.]]></failure>
+      <properties>
+        <property name="balls_3_0.300000_4.000000" value="13.061428"/>
+        <property name="balls_5_0.300000_4.000000" value="23.378244"/>
+        <property name="balls_3_0.600000_4.000000" value="16.415739"/>
+        <property name="balls_3_0.300000_5.000000" value="11.565149"/>
+        <property name="count_ratio" value="2.006873"/>
+        <property name="area_ratio" value="3.248626"/>
+        <property name="distance_ratio" value="0.823307"/>
+      </properties>
+    </testcase>
+    <testcase name="SphereProjectionPreservesLocationAndRejectsAllianceZone" file="/root/cos-worktrees/gamepiece-temporal-density/src/tests/hsv_cluster_tracker_node_test.cc" line="123" status="run" result="completed" time="0.047" timestamp="2026-10-13T15:30:16.058" classname="HSVClusterTrackerTest" />
+    <testcase name="PredictsStationaryBallsBeforeExploringNewEvidence" file="/root/cos-worktrees/gamepiece-temporal-density/src/tests/hsv_cluster_tracker_node_test.cc" line="138" status="run" result="completed" time="0.203" timestamp="2026-10-13T15:30:16.106" classname="HSVClusterTrackerTest" />
+    <testcase name="DensityHistoryRespondsToBallRemoval" file="/root/cos-worktrees/gamepiece-temporal-density/src/tests/hsv_cluster_tracker_node_test.cc" line="161" status="run" result="completed" time="0.271" timestamp="2026-10-13T15:30:16.310" classname="HSVClusterTrackerTest">
+      <failure message="/root/cos-worktrees/gamepiece-temporal-density/src/tests/hsv_cluster_tracker_node_test.cc:170&#x0A;The difference between after and 9 is 5.2270803451538086, which exceeds 4.5, where&#x0A;after evaluates to 14.227080345153809,&#x0A;9 evaluates to 9, and&#x0A;4.5 evaluates to 4.5." type=""><![CDATA[/root/cos-worktrees/gamepiece-temporal-density/src/tests/hsv_cluster_tracker_node_test.cc:170
+The difference between after and 9 is 5.2270803451538086, which exceeds 4.5, where
+after evaluates to 14.227080345153809,
+9 evaluates to 9, and
+4.5 evaluates to 4.5.]]></failure>
+      <properties>
+        <property name="count_before" value="23.117113"/>
+        <property name="count_after_6_frames" value="14.227080"/>
+      </properties>
+    </testcase>
+    <testcase name="DoesNotRejectSmallDistantPileBecauseOfImageArea" file="/root/cos-worktrees/gamepiece-temporal-density/src/tests/hsv_cluster_tracker_node_test.cc" line="173" status="run" result="completed" time="0.09" timestamp="2026-10-13T15:30:16.581" classname="HSVClusterTrackerTest" />
+    <testcase name="RejectsOneBallButRetainsASmallPile" file="/root/cos-worktrees/gamepiece-temporal-density/src/tests/hsv_cluster_tracker_node_test.cc" line="182" status="run" result="completed" time="0.029" timestamp="2026-10-13T15:30:16.672" classname="HSVClusterTrackerTest" />
+    <testcase name="PreservesBroadPileAndFindsNewSeparatedPile" file="/root/cos-worktrees/gamepiece-temporal-density/src/tests/hsv_cluster_tracker_node_test.cc" line="216" status="run" result="completed" time="0.002" timestamp="2026-10-13T15:30:16.702" classname="HSVClusterTrackerTest" />
+    <testcase name="ProtectsWeakEnteringModeOutsideEstablishedFootprint" file="/root/cos-worktrees/gamepiece-temporal-density/src/tests/hsv_cluster_tracker_node_test.cc" line="230" status="run" result="completed" time="0.001" timestamp="2026-10-13T15:30:16.704" classname="HSVClusterTrackerTest" />
+    <testcase name="SeparatesSixPilesBeforeAnyIdsExist" file="/root/cos-worktrees/gamepiece-temporal-density/src/tests/hsv_cluster_tracker_node_test.cc" line="244" status="run" result="completed" time="0.004" timestamp="2026-10-13T15:30:16.706" classname="HSVClusterTrackerTest" />
+    <testcase name="SeparatesCompactPilesAcrossShallowSmoothedValley" file="/root/cos-worktrees/gamepiece-temporal-density/src/tests/hsv_cluster_tracker_node_test.cc" line="261" status="run" result="completed" time="0" timestamp="2026-10-13T15:30:16.710" classname="HSVClusterTrackerTest" />
+    <testcase name="UsesOneToOneIdsAndRetainsThemAcrossEmptyFrames" file="/root/cos-worktrees/gamepiece-temporal-density/src/tests/hsv_cluster_tracker_node_test.cc" line="268" status="run" result="completed" time="0.001" timestamp="2026-10-13T15:30:16.711" classname="HSVClusterTrackerTest" />
+    <testcase name="MatchesFieldPositionsDuringRobotMotion" file="/root/cos-worktrees/gamepiece-temporal-density/src/tests/hsv_cluster_tracker_node_test.cc" line="281" status="run" result="completed" time="0.001" timestamp="2026-10-13T15:30:16.713" classname="HSVClusterTrackerTest" />
+    <testcase name="RejectsSingletonSpecksButRetainsPileSamples" file="/root/cos-worktrees/gamepiece-temporal-density/src/tests/hsv_cluster_tracker_node_test.cc" line="295" status="run" result="completed" time="0.001" timestamp="2026-10-13T15:30:16.714" classname="HSVClusterTrackerTest" />
+    <testcase name="ProjectsOntoFuelCenterPlaneInRobotAxes" file="/root/cos-worktrees/gamepiece-temporal-density/src/tests/hsv_cluster_tracker_node_test.cc" line="305" status="run" result="completed" time="0" timestamp="2026-10-13T15:30:16.716" classname="HSVClusterTrackerTest" />
+    <testcase name="HandlesEmptyThresholdAndHorizonWithoutClusters" file="/root/cos-worktrees/gamepiece-temporal-density/src/tests/hsv_cluster_tracker_node_test.cc" line="313" status="run" result="completed" time="0" timestamp="2026-10-13T15:30:16.716" classname="HSVClusterTrackerTest" />
+  </testsuite>
+  <testsuite name="HSVClusterTrackerNodeTest" tests="2" failures="0" disabled="0" skipped="0" errors="0" time="0.956" timestamp="2026-10-13T15:30:16.716">
+    <testcase name="ProcessesPaddedDeviceFrameWithPoseAndPublishesOnce" file="/root/cos-worktrees/gamepiece-temporal-density/src/tests/hsv_cluster_tracker_node_test.cc" line="189" status="run" result="completed" time="0.956" timestamp="2026-10-13T15:30:16.716" classname="HSVClusterTrackerNodeTest" />
+    <testcase name="DeclaresMessagesAndPublishesNullOnce" file="/root/cos-worktrees/gamepiece-temporal-density/src/tests/hsv_cluster_tracker_node_test.cc" line="322" status="run" result="completed" time="0" timestamp="2026-10-13T15:30:17.672" classname="HSVClusterTrackerNodeTest" />
+  </testsuite>
+</testsuites>

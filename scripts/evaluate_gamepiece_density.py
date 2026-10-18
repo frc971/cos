@@ -72,6 +72,7 @@ for manifest in sorted(a.root.glob('*/manifest.json')):
                 row.update(count=c['estimated_ball_count'], verified=c['verified_ball_count'], residual=c['residual_ball_evidence'])
                 count_errors.append(abs(np.log(row['count']/len(cloud))))
                 row['area'] = c['density_area_m2']
+                if 'total_ball_evidence' in c: row['total_evidence'] = c['total_ball_evidence']
             rows.append(row); current.append((densities[g], estimate))
         for (ta, ea), (tb, eb) in itertools.combinations(current, 2):
             ratios.append(abs(np.log((ea/eb)/(ta/tb))))

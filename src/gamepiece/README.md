@@ -36,7 +36,12 @@ yellow area and internal image edges supply a calibrated correction for partial
 balls. Calibration excludes balls with zero rendered image evidence. The
 estimated/verified counts, residual evidence, and `density_area_m2` are included
 in C++ results and visualizer JSON for inspection. See
-[density validation](../../validation/density/RESULTS.md). IDs survive empty
+[initial density validation](../../validation/density/RESULTS.md). The default
+density model predicts stationary field-space sphere hypotheses before searching
+unexplained edges for new balls. Count and covariance estimates persist between
+frames; current image evidence is still required. See
+[temporal density validation](../../validation/temporal-density/RESULTS.md).
+IDs survive empty
 frames and re-entry. Ground covariance and
 centroid are computed from projected samples, rather than projecting an image
 mean or covariance through a nonlinear transform.

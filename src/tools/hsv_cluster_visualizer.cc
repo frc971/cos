@@ -395,6 +395,8 @@ auto ReadJson(const std::filesystem::path& path) -> nlohmann::json {
 }  // namespace
 
 auto main(int argc, char** argv) -> int {
+  auto density_history = gamepiece::DensityHistory::kPredict;
+  bool residual_density = true;
   std::vector<std::string> positional;
   std::string frames_directory(kDefaultFramesDirectory);
   std::string poses_path;
@@ -404,7 +406,15 @@ auto main(int argc, char** argv) -> int {
   int end_frame = -1;
   for (int i = 1; i < argc; ++i) {
     const std::string_view arg(argv[i]);
-    if (arg.starts_with("--sim_run=")) {
+    if (arg == "--density-no-history") {
+      density_history = gamepiece::DensityHistory::kNone;
+    } else if (arg == "--density-filter-only") {
+      density_history = gamepiece::DensityHistory::kFilter;
+    } else if (arg == "--density-residual-count") {
+      residual_density = true;
+    } else if (arg == "--density-total-count") {
+      residual_density = false;
+    } else if (arg.starts_with("--sim_run=")) {
       sim_run = arg.substr(10);
     } else if (arg.starts_with("--output_dir=")) {
       output_dir = arg.substr(13);
@@ -439,7 +449,8 @@ auto main(int argc, char** argv) -> int {
            "[--frames_dir=DIR]] [<intrinsics.json> <extrinsics.json> "
            "<output-directory> <frame.jpg>...]\n"
            "Or: hsv_cluster_visualizer --sim_run=RUN_OR_MANIFEST "
-           "[--output_dir=DIR]\n"
+           "[--output_dir=DIR] [--density-no-history | --density-filter-only] "
+           "[--density-total-count]\n"
            "With no positional arguments, uses the default calibration and "
            "output; with no range either, runs the sample frame.\n"
            "Calibration uses nested camera JSON (degrees) or flat BOS JSON "
@@ -586,7 +597,7 @@ auto main(int argc, char** argv) -> int {
     gamepiece::HSVClusterTrackerNode tracker(
         "decoded", "clusters", camera_matrix,
         utils::EigenToCvMat(camera_pose.ToMatrix()), distortion,
-        first_frame.total());
+        first_frame.total(), 20.0f, "", density_history, residual_density);
     const std::size_t frame_count = input_paths.size();
     cv::Mat map_x, map_y;
     cv::initUndistortRectifyMap(camera_matrix, distortion, cv::Mat(),
@@ -667,12 +678,8 @@ auto main(int argc, char** argv) -> int {
       }
       const auto tracking_start = std::chrono::steady_clock::now();
       tracker.ProcessFrame(frame, robot_pose);
-      if (frame_count == 1) {
-        // Match BOS's single-frame visualizer by processing the frame twice.
-        tracker.ProcessFrame(frame, robot_pose);
-      }
       const double tracking_ms = std::chrono::duration<double, std::milli>(
-          std::chrono::steady_clock::now() - tracking_start).count() / (frame_count == 1 ? 2 : 1);
+          std::chrono::steady_clock::now() - tracking_start).count();
       const auto& clusters = *tracker.GetClusters();
       const auto output_path =
           output_directory / (input_path.stem().string() + "_clusters.png");
@@ -790,10 +797,15 @@ auto main(int argc, char** argv) -> int {
              {"visible_fuel_support", normalized_cluster.fuel_count},
              {"density", normalized_cluster.density},
              {"estimated_ball_count", normalized_cluster.estimated_ball_count},
+             {"instantaneous_ball_count", normalized_cluster.instantaneous_ball_count},
+             {"instantaneous_density_area_m2", normalized_cluster.instantaneous_density_area_m2},
+             {"predicted_ball_count", normalized_cluster.predicted_ball_count},
+             {"reused_ball_count", normalized_cluster.reused_ball_count},
              {"density_area_m2", normalized_cluster.density_area_m2},
              {"verified_ball_count", normalized_cluster.verified_ball_count},
              {"verified_ball_centers_m", verified_centers},
              {"residual_ball_evidence", {normalized_cluster.residual_ball_evidence[0], normalized_cluster.residual_ball_evidence[1]}},
+             {"total_ball_evidence", {normalized_cluster.total_ball_evidence[0], normalized_cluster.total_ball_evidence[1]}},
              {"ground_covariance_m2",
               {{normalized_cluster.ground_covar(0, 0), normalized_cluster.ground_covar(0, 1)},
                {normalized_cluster.ground_covar(1, 0), normalized_cluster.ground_covar(1, 1)}}},
@@ -803,6 +815,9 @@ auto main(int argc, char** argv) -> int {
       }
       frames.push_back({{"input", input_path.string()},
                         {"output", output_path.string()},
+                        {"density_history", density_history == gamepiece::DensityHistory::kPredict ? "predict" :
+                            density_history == gamepiece::DensityHistory::kFilter ? "filter" : "none"},
+                        {"density_count_model", residual_density ? "residual" : "total"},
                         {"tracking_time_ms", tracking_ms},
                         {"robot_pose", robot_pose ? nlohmann::json{
                             {"x", robot_pose->X().value()}, {"y", robot_pose->Y().value()},

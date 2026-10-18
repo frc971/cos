@@ -32,8 +32,9 @@ constexpr float kCellM = 0.1f;
 constexpr float kBandwidthM = 0.3f;
 constexpr float kMergeBandwidthM = 0.4f;
 constexpr float kModeOverlapD2 = 4.6051702f;  // 90% contour for a 2D Gaussian.
-// Zero-intercept visible-ball calibration: validation/density/calibration.json.
-constexpr float kResidualAreaBalls = 4.632368f, kResidualArcBalls = 2.421001f;
+// Zero-intercept visible-ball calibrations: validation/temporal-density/.
+constexpr float kResidualAreaBalls = 4.305261f, kResidualArcBalls = 4.437539f;
+constexpr float kCountAnchor = .432812f, kCountArea = 1.423993f, kCountArc = 0.0f;
 
 auto Covariance(const std::vector<cv::Point2f>& points) -> cv::Matx22f {
   cv::Point2f mean{0.0f, 0.0f};
@@ -59,8 +60,11 @@ HSVClusterTrackerNode::HSVClusterTrackerNode(
     std::string_view input_path, std::string_view output_path,
     cv::Matx33d intrinsics, cv::Matx44d extrinsics,
     const cv::Vec<double, 5>& distortion_coeffs, std::size_t image_size,
-    const float max_ground_distance_m, std::string_view pose_path)
-    : input_path_(input_path),
+    const float max_ground_distance_m, std::string_view pose_path, DensityHistory density_history, bool residual_density)
+    : temporal_density_(density_history != DensityHistory::kNone),
+      predictive_density_(density_history == DensityHistory::kPredict),
+      residual_density_(residual_density),
+      input_path_(input_path),
       output_path_(output_path),
       pose_path_(pose_path),
       dependencies_({{input_path_, typeid(camera::DecodedJpegBuffer)}}),
@@ -163,7 +167,26 @@ void HSVClusterTrackerNode::ProcessFrame(
   // Switching coordinate frames invalidates the old ID map.
   if (robot_pose.has_value() != robot_pose_.has_value()) {
     canonical_positions_.clear(); canonical_covariances_.clear();
+    ball_tracks_.clear(); density_states_.clear();
   }
+  for (auto& track : ball_tracks_) {
+    ++track.age;
+    if (frame.empty()) continue;  // A missing sensor frame is not negative evidence.
+    const frc::Translation2d stored{units::meter_t{track.position.x}, units::meter_t{track.position.y}};
+    const auto p = robot_pose ? (stored-robot_pose->Translation()).RotateBy(-robot_pose->Rotation()) : stored;
+    const auto center = camera_extrinsics_cv_.get_minor<3, 3>(0, 0).t() *
+        (cv::Vec3f{-static_cast<float>(p.Y().value()), -kFuelRadiusM, static_cast<float>(p.X().value())} -
+         cv::Vec3f{camera_extrinsics_cv_(0, 3), camera_extrinsics_cv_(1, 3), camera_extrinsics_cv_(2, 3)});
+    if (center[2] <= kFuelRadiusM) continue;
+    const float x = center[0]/center[2], y = center[1]/center[2], r2 = x*x+y*y;
+    const float radial = 1+r2*(distortion_coeffs_[0]+r2*(distortion_coeffs_[1]+r2*distortion_coeffs_[4]));
+    const float px = camera_intrinsics_(0, 0)*(x*radial+2*distortion_coeffs_[2]*x*y+distortion_coeffs_[3]*(r2+2*x*x))+camera_intrinsics_(0, 2);
+    const float py = camera_intrinsics_(1, 1)*(y*radial+distortion_coeffs_[2]*(r2+2*y*y)+2*distortion_coeffs_[3]*x*y)+camera_intrinsics_(1, 2);
+    const float margin = 2*camera_intrinsics_(0, 0)*kFuelRadiusM/center[2];
+    if (px >= -margin && px < frame.cols+margin && py >= -margin && py < frame.rows+margin) ++track.missed;
+  }
+  std::erase_if(ball_tracks_, [](const auto& t) { return t.missed > 8 || t.age > 1000; });
+  for (auto& state : density_states_) ++state.missed;
   robot_pose_ = robot_pose;
   clusters_.clear();
   thresholded_points_.clear();
@@ -278,6 +301,14 @@ void HSVClusterTrackerNode::ProcessFrame(
   EstimateDensities(frame);
 }
 
+auto HSVClusterTrackerNode::SphereArcWeight(const cv::Matx33f& intrinsics,
+    const cv::Vec3f& ray, const cv::Vec2f& normal, float depth) -> float {
+  const float fx = intrinsics(0, 0), fy = intrinsics(1, 1);
+  const float a = fx * normal[0], b = fy * normal[1], radial = a * ray[0] + b * ray[1];
+  return depth * std::sqrt(a*a + b*b + radial*radial) /
+      (2 * std::numbers::pi_v<float> * kFuelRadiusM * fx * fy * cv::norm(ray));
+}
+
 void HSVClusterTrackerNode::EstimateDensities(const cv::Mat& frame) {
   if (clusters_.empty()) return;
   constexpr int kOutline = 32;
@@ -339,25 +370,14 @@ void HSVClusterTrackerNode::EstimateDensities(const cv::Mat& frame) {
     return cv::Vec3f{(x - intrinsics(0, 2)) / intrinsics(0, 0),
                      (y - intrinsics(1, 2)) / intrinsics(1, 1), 1};
   };
+  const auto arc_weight = [&](float depth, const cv::Vec3f& ray, const cv::Vec2f& normal) {
+    return SphereArcWeight(intrinsics, ray, normal, depth);
+  };
   for (int y = 0; y < edges.rows; ++y) for (int x = 0; x < edges.cols; ++x) if (edges(y, x)) {
     const float magnitude = std::hypot(gx(y, x), gy(y, x));
     if (magnitude < 1e-5f) continue;
     edge_normals[labels(y, x)] = {gx(y, x) / magnitude, gy(y, x) / magnitude};
     edge_pixels[labels(y, x)] = {x, y};
-    auto ray = ray_at(x, y); ray /= cv::norm(ray);
-    const cv::Vec3f tangent{-gy(y, x) / intrinsics(0, 0), gx(y, x) / intrinsics(1, 1), 0};
-    auto normal = tangent.cross(ray); normal /= cv::norm(normal);
-    const auto ground_ray = rotation * ray, ground_normal = rotation * normal;
-    if (ground_ray[1] <= 1e-5f) continue;
-    for (const int sign : {-1, 1}) {
-      const float distance = (height - sign * kFuelRadiusM * ground_normal[1]) / ground_ray[1];
-      if (distance <= 0 || distance > max_ground_distance_m_) continue;
-      const auto center = distance * ray + sign * kFuelRadiusM * normal;
-      const int px = cvRound(center[0] / center[2] * intrinsics(0, 0) + intrinsics(0, 2));
-      const int py = cvRound(center[1] / center[2] * intrinsics(1, 1) + intrinsics(1, 2));
-      if (px >= 0 && px < votes.cols && py >= 0 && py < votes.rows)
-        votes(py, px) += distance / (2 * std::numbers::pi_v<float> * kFuelRadiusM * focal);
-    }
   }
   struct Sphere {
     cv::Point2f pixel;
@@ -366,7 +386,8 @@ void HSVClusterTrackerNode::EstimateDensities(const cv::Mat& frame) {
     std::array<cv::Point, kOutline> outline;
     std::array<int, kOutline> evidence_labels{};
     std::array<float, kOutline> evidence_support{};
-    std::size_t owner{};
+    std::size_t owner{}, track = std::numeric_limits<std::size_t>::max();
+    float depth = 0;
   };
   const auto score = [&](cv::Point2f pixel) {
     Sphere sphere; sphere.pixel = pixel;
@@ -374,6 +395,7 @@ void HSVClusterTrackerNode::EstimateDensities(const cv::Mat& frame) {
     if (ground_ray[1] <= 1e-5f) return sphere;
     const auto center = height / ground_ray[1] * ray;
     if (center[2] <= kFuelRadiusM || cv::norm(center) > max_ground_distance_m_) return sphere;
+    sphere.depth = center[2];
     sphere.ground = camera + cv::Vec2f{ground_ray[2], -ground_ray[0]} * (height / ground_ray[1]);
     const auto axis = center / cv::norm(center);
     auto first = axis.cross(cv::Vec3f{0, 1, 0}); first /= cv::norm(first);
@@ -406,6 +428,55 @@ void HSVClusterTrackerNode::EstimateDensities(const cv::Mat& frame) {
     return sphere;
   };
   std::vector<Sphere> candidates;
+  const auto to_canonical = [&](cv::Point2f p) {
+    const frc::Translation2d point{units::meter_t{p.x}, units::meter_t{p.y}};
+    const auto q = robot_pose_ ? robot_pose_->Translation() + point.RotateBy(robot_pose_->Rotation()) : point;
+    return cv::Point2f{static_cast<float>(q.X().value()), static_cast<float>(q.Y().value())};
+  };
+  const auto to_robot = [&](cv::Point2f p) {
+    const frc::Translation2d point{units::meter_t{p.x}, units::meter_t{p.y}};
+    const auto q = robot_pose_ ? (point - robot_pose_->Translation()).RotateBy(-robot_pose_->Rotation()) : point;
+    return cv::Vec2f{static_cast<float>(q.X().value()), static_cast<float>(q.Y().value())};
+  };
+  cv::Mat1b predicted_edges(mask.size(), uchar{0});
+  // Predict stationary field-space hypotheses before looking for new balls.
+  if (predictive_density_) for (std::size_t i = 0; i < ball_tracks_.size(); ++i) {
+    const auto ground = to_robot(ball_tracks_[i].position);
+    const auto center = rotation.t() * (cv::Vec3f{-ground[1], -kFuelRadiusM, ground[0]} - camera_position);
+    if (center[2] <= kFuelRadiusM) continue;
+    const cv::Point2f pixel{center[0]/center[2]*intrinsics(0, 0)+intrinsics(0, 2),
+                            center[1]/center[2]*intrinsics(1, 1)+intrinsics(1, 2)};
+    const float margin = 2*focal*kFuelRadiusM/center[2];
+    if (pixel.x < -margin || pixel.x >= mask.cols+margin || pixel.y < -margin || pixel.y >= mask.rows+margin) continue;
+    Sphere best = score(pixel);
+    for (int dy = -1; dy <= 1; ++dy) for (int dx = -1; dx <= 1; ++dx) {
+      auto trial = score(pixel + cv::Point2f{static_cast<float>(dx), static_cast<float>(dy)});
+      if (trial.score > best.score) best = std::move(trial);
+    }
+    best.track = i;
+    if (best.score < .20f) continue;  // History never substitutes for current evidence.
+    const std::vector<cv::Point> outline(best.outline.begin(), best.outline.end());
+    cv::polylines(predicted_edges, outline, true, 255, 3);
+    candidates.push_back(std::move(best));
+  }
+  // Birth proposals use edges not explained by supported predictions.
+  for (int y = 0; y < edges.rows; ++y) for (int x = 0; x < edges.cols; ++x) {
+    if (!edges(y, x) || predicted_edges(y, x) || std::hypot(gx(y, x), gy(y, x)) < 1e-5f) continue;
+    auto ray = ray_at(x, y); ray /= cv::norm(ray);
+    const cv::Vec3f tangent{-gy(y, x) / intrinsics(0, 0), gx(y, x) / intrinsics(1, 1), 0};
+    auto normal = tangent.cross(ray); normal /= cv::norm(normal);
+    const auto ground_ray = rotation * ray, ground_normal = rotation * normal;
+    if (ground_ray[1] <= 1e-5f) continue;
+    for (const int sign : {-1, 1}) {
+      const float distance = (height - sign * kFuelRadiusM * ground_normal[1]) / ground_ray[1];
+      if (distance <= 0 || distance > max_ground_distance_m_) continue;
+      const auto center = distance * ray + sign * kFuelRadiusM * normal;
+      const int px = cvRound(center[0] / center[2] * intrinsics(0, 0) + intrinsics(0, 2));
+      const int py = cvRound(center[1] / center[2] * intrinsics(1, 1) + intrinsics(1, 2));
+      if (px >= 0 && px < votes.cols && py >= 0 && py < votes.rows)
+        votes(py, px) += arc_weight(center[2], ray_at(x, y), edge_normals[labels(y, x)]);
+    }
+  }
   cv::Mat1f smooth; cv::GaussianBlur(votes, smooth, {}, 1.25);
   for (int y = 1; y + 1 < votes.rows; ++y) for (int x = 1; x + 1 < votes.cols; ++x) {
     if (smooth(y, x) < 0.05f / (2 * std::numbers::pi_v<float> * 1.25f * 1.25f)) continue;
@@ -418,14 +489,17 @@ void HSVClusterTrackerNode::EstimateDensities(const cv::Mat& frame) {
       auto candidate = score({static_cast<float>(x + dx), static_cast<float>(y + dy)});
       if (candidate.score > best.score) best = std::move(candidate);
     }
-    if (best.score >= 0.30f) candidates.push_back(std::move(best));
+    if (best.score >= 0.20f) candidates.push_back(std::move(best));
   }
   std::vector<cv::Vec2f> centers;
   std::vector<cv::Matx22f> inverse_footprints;
+  std::vector<float> cluster_depths;
   for (const auto& c : clusters_) {
     const auto& p = *c.robot_relative_translation;
     centers.emplace_back(p.X().value(), p.Y().value());
     inverse_footprints.push_back((c.ground_covar + cv::Matx22f::eye() * 0.03f).inv());
+    const auto& point = centers.back();
+    cluster_depths.push_back((rotation.t() * (cv::Vec3f{-point[1], -kFuelRadiusM, point[0]} - camera_position))[2]);
   }
   const auto owner = [&](const cv::Vec2f& point, float limit) {
     std::size_t result = clusters_.size();
@@ -436,19 +510,53 @@ void HSVClusterTrackerNode::EstimateDensities(const cv::Mat& frame) {
     }
     return result;
   };
-  std::ranges::sort(candidates, std::greater{}, &Sphere::score);
+  std::ranges::sort(candidates, [](const auto& a, const auto& b) {
+    const bool pa = a.track != std::numeric_limits<std::size_t>::max();
+    const bool pb = b.track != std::numeric_limits<std::size_t>::max();
+    return pa != pb ? pa : a.score > b.score;
+  });
   std::vector<Sphere> verified;
+  cv::Mat1f evidence_depth(mask.size(), 0.0f);
+  cv::Mat1i evidence_owner(mask.size(), -1);
+  for (const auto& sphere : candidates) {
+    const auto i = owner(sphere.ground, 16);
+    if (i == clusters_.size()) continue;
+    std::vector<cv::Point> polygon(sphere.outline.begin(), sphere.outline.end());
+    const auto box = cv::boundingRect(polygon) & cv::Rect{0, 0, mask.cols, mask.rows};
+    if (box.empty()) continue;
+    for (auto& p : polygon) p -= box.tl();
+    cv::Mat1b footprint(box.size(), uchar{0}); cv::fillConvexPoly(footprint, polygon, 255);
+    cv::Mat1b select = footprint & ((evidence_depth(box) == 0) | (evidence_depth(box) > sphere.depth));
+    evidence_depth(box).setTo(sphere.depth, select); evidence_owner(box).setTo(static_cast<int>(i), select);
+  }
   for (auto& sphere : candidates) {
+    const bool predicted = sphere.track != std::numeric_limits<std::size_t>::max();
     sphere.owner = owner(sphere.ground, 9);
     if (sphere.owner == clusters_.size() || std::ranges::any_of(verified, [&](const auto& other) {
           return cv::norm(sphere.pixel - other.pixel) < 2.5;
         })) continue;
+    if (predicted) ++clusters_[sphere.owner].predicted_ball_count;
+    if (!predicted && sphere.score < .30f) continue;
     float unique = 0;
     for (int j = 0; j < kOutline; ++j) {
       const auto pixel = edge_pixels[sphere.evidence_labels[j]];
       if (!explained_edges(pixel.y, pixel.x)) unique += sphere.evidence_support[j];
     }
-    if (unique < 4) continue;  // Each added ball must explain new image edges.
+    if (unique < (predicted ? 3.0f : 4.0f)) continue;  // Each added ball must explain new image edges.
+    if (predictive_density_) {
+      if (predicted) {
+        auto& track = ball_tracks_[sphere.track];
+        const auto measurement = to_canonical({sphere.ground[0], sphere.ground[1]});
+        track.position += (measurement - track.position) / static_cast<float>(std::min<std::size_t>(8, track.observations + 1));
+        ++track.observations; track.missed = track.age = 0;
+        sphere.ground = to_robot(track.position);
+        ++clusters_[sphere.owner].reused_ball_count;
+      } else {
+        const auto position = to_canonical({sphere.ground[0], sphere.ground[1]});
+        if (std::ranges::none_of(ball_tracks_, [&](const auto& t) { return cv::norm(t.position-position) < .10f; }))
+          ball_tracks_.push_back({position});
+      }
+    }
     ++clusters_[sphere.owner].verified_ball_count;
     clusters_[sphere.owner].verified_ball_centers.emplace_back(sphere.ground[0], sphere.ground[1]);
     const std::vector<cv::Point> polygon(sphere.outline.begin(), sphere.outline.end());
@@ -461,25 +569,70 @@ void HSVClusterTrackerNode::EstimateDensities(const cv::Mat& frame) {
   // by verified spheres. Partial balls contribute even without a complete arc;
   // spheres with no image evidence cannot add a correction.
   for (int y = 0; y < mask.rows; ++y) for (int x = 0; x < mask.cols; ++x) {
-    const bool area = mask(y, x) && !explained(y, x), arc = edges(y, x) && !explained_edges(y, x);
+    const bool area = mask(y, x), arc = edges(y, x);
     if (!area && !arc) continue;
     const auto ray = ray_at(x, y), ground_ray = rotation * ray;
     if (ground_ray[1] <= 1e-5f) continue;
-    const float depth = height / ground_ray[1];
-    if (depth <= 0 || depth > max_ground_distance_m_) continue;
-    const auto point = camera + cv::Vec2f{ground_ray[2], -ground_ray[0]} * depth;
-    const auto i = owner(point, 16);
+    const auto plane_point = camera + cv::Vec2f{ground_ray[2], -ground_ray[0]} * (height / ground_ray[1]);
+    const auto i = evidence_owner(y, x) >= 0 ? static_cast<std::size_t>(evidence_owner(y, x)) : owner(plane_point, 16);
     if (i == clusters_.size()) continue;
+    const float depth = evidence_depth(y, x) > 0 ? evidence_depth(y, x) : cluster_depths[i];
+    if (depth <= kFuelRadiusM || depth > max_ground_distance_m_) continue;
     auto& evidence = clusters_[i].residual_ball_evidence;
-    if (area) evidence[0] += depth * depth / (std::numbers::pi_v<float> * kFuelRadiusM * kFuelRadiusM * focal * focal * cv::norm(ray));
-    if (arc) evidence[1] += depth * cv::norm(ray) / (2 * std::numbers::pi_v<float> * kFuelRadiusM * focal);
+    auto& total = clusters_[i].total_ball_evidence;
+    const float fx = intrinsics(0, 0), fy = intrinsics(1, 1), norm = cv::norm(ray);
+    if (area) {
+      const float weight = depth * depth / (std::numbers::pi_v<float> * kFuelRadiusM * kFuelRadiusM * fx * fy * norm);
+      total[0] += weight;
+      if (!explained(y, x)) evidence[0] += weight;
+    }
+    if (arc) {
+      const auto normal = edge_normals[labels(y, x)];
+      const float weight = arc_weight(depth, ray, normal);
+      total[1] += weight;
+      if (!explained_edges(y, x)) evidence[1] += weight;
+    }
   }
   for (auto& c : clusters_) {
-    c.estimated_ball_count = c.verified_ball_count + kResidualAreaBalls * c.residual_ball_evidence[0] + kResidualArcBalls * c.residual_ball_evidence[1];
+    c.instantaneous_ball_count = residual_density_ ?
+        c.verified_ball_count + kResidualAreaBalls * c.residual_ball_evidence[0] + kResidualArcBalls * c.residual_ball_evidence[1] :
+        std::max(static_cast<float>(c.verified_ball_count), kCountAnchor * c.verified_ball_count + kCountArea * c.total_ball_evidence[0] + kCountArc * c.total_ball_evidence[1]);
     auto covariance = c.ground_covar;
-    if (c.verified_ball_count >= 3) covariance =
-        (Covariance(c.verified_ball_centers) * static_cast<float>(c.verified_ball_count) + 3 * covariance) /
-        static_cast<float>(c.verified_ball_count + 3);
+    auto footprint = c.verified_ball_centers;
+    if (predictive_density_) for (const auto& track : ball_tracks_) {
+      if (track.missed == 0 || track.missed > 3) continue;
+      const auto point = to_robot(track.position);
+      if (owner(point, 9) == static_cast<std::size_t>(&c-clusters_.data())) footprint.emplace_back(point[0], point[1]);
+    }
+    if (footprint.size() >= 3) covariance =
+        (Covariance(footprint) * static_cast<float>(footprint.size()) + 3 * covariance) /
+        static_cast<float>(footprint.size() + 3);
+    c.instantaneous_density_area_m2 = 2 * std::numbers::pi_v<float> * std::sqrt(cv::determinant(
+        covariance + cv::Matx22f::eye() * (kFuelRadiusM * kFuelRadiusM / 4)));
+    c.estimated_ball_count = c.instantaneous_ball_count;
+    if (temporal_density_) {
+      const float angle = robot_pose_ ? robot_pose_->Rotation().Radians().value() : 0;
+      const cv::Matx22f field_rotation{std::cos(angle), -std::sin(angle), std::sin(angle), std::cos(angle)};
+      covariance = field_rotation * covariance * field_rotation.t();
+      if (density_states_.size() <= c.id) density_states_.resize(c.id + 1);
+      auto& state = density_states_[c.id];
+      if (state.updates == 0 || state.missed > 8) {
+        state.count = c.instantaneous_ball_count; state.covariance = covariance;
+        state.updates = state.changed = 0; state.innovation = 0;
+      } else {
+        const float innovation = c.instantaneous_ball_count - state.count;
+        const float threshold = state.changed >= 3 ? .08f : .25f;
+        state.changed = std::abs(innovation) > threshold * std::max(2.0f, state.count) ?
+            (innovation * state.innovation > 0 ? state.changed + 1 : 1) : 0;
+        const float gain = state.changed >= 3 ? .65f : .20f;
+        state.count += gain * innovation;
+        state.covariance += gain * (covariance - state.covariance);
+        state.innovation = innovation;
+      }
+      ++state.updates; state.missed = 0;
+      c.estimated_ball_count = std::max(static_cast<float>(c.verified_ball_count), state.count);
+      covariance = state.covariance;
+    }
     c.density_area_m2 = 2 * std::numbers::pi_v<float> * std::sqrt(cv::determinant(
         covariance + cv::Matx22f::eye() * (kFuelRadiusM * kFuelRadiusM / 4)));
     c.density = c.estimated_ball_count / c.density_area_m2;

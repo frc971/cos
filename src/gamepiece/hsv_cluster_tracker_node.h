@@ -34,10 +34,15 @@ using kmeans_cluster_t = struct KMeansCluster {
   std::size_t verified_ball_count{};
   std::vector<cv::Point2f> verified_ball_centers;  // Robot coordinates, meters.
   cv::Vec2f residual_ball_evidence{};  // Unexplained area / sphere area, arc / perimeter.
+  cv::Vec2f total_ball_evidence{};  // Geometry-normalized area and edge evidence.
+  float instantaneous_ball_count{};  // Current evidence before the temporal update.
+  float instantaneous_density_area_m2{};
+  std::size_t predicted_ball_count{}, reused_ball_count{};
   std::size_t id{};  // Persistent within one tracker instance.
 };
 
 using hsv_clusters_t = std::vector<kmeans_cluster_t>;
+enum class DensityHistory { kNone, kFilter, kPredict };
 
 // The normalized 2-sigma ellipse for image annotation.
 [[nodiscard]] auto ClusterEllipse(const kmeans_cluster_t& cluster) -> Ellipse;
@@ -49,7 +54,8 @@ class HSVClusterTrackerNode final : public control_loop::INode {
       cv::Matx33d intrinsics, cv::Matx44d extrinsics,
       const cv::Vec<double, 5>& distortion_coeffs,
       std::size_t image_size,  // Total pixels (width * height).
-      float max_ground_distance_m = 20.0f, std::string_view pose_path = "");
+      float max_ground_distance_m = 20.0f, std::string_view pose_path = "",
+      DensityHistory density_history = DensityHistory::kPredict, bool residual_density = true);
   // Processes a CPU BGR frame; callers must serialize access with callbacks.
   void ProcessFrame(const cv::Mat& frame,
                     std::optional<frc::Pose2d> robot_pose = std::nullopt);
@@ -76,6 +82,22 @@ class HSVClusterTrackerNode final : public control_loop::INode {
   auto ClusterGroundPoints() -> std::vector<kmeans_cluster_t>;
   void AssignPersistentIds();
   void EstimateDensities(const cv::Mat& frame);
+  static auto SphereArcWeight(const cv::Matx33f& intrinsics, const cv::Vec3f& ray,
+                              const cv::Vec2f& normal, float depth) -> float;
+  struct BallTrack {
+    cv::Point2f position;  // Field coordinates when pose is available.
+    std::size_t observations = 1, missed = 0, age = 0;
+  };
+  struct DensityState {
+    float count = 0, innovation = 0;
+    cv::Matx22f covariance{};
+    std::size_t updates = 0, missed = 0, changed = 0;
+  };
+  std::vector<BallTrack> ball_tracks_;
+  std::vector<DensityState> density_states_;
+  bool temporal_density_;
+  bool predictive_density_;
+  bool residual_density_;
 
   std::string input_path_;
   std::string output_path_;

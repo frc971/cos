@@ -1,0 +1,6 @@
+[1/6] Building CXX object src/gamepiece/CMakeFiles/hsv_cluster_tracker_node.dir/hsv_cluster_tracker_node.cc.o
+[2/6] Linking CXX static library lib/libhsv_cluster_tracker_node.a
+[3/6] Linking CXX executable tests/hsv_cluster_tracker_node_test
+[4/6] Linking CXX executable tests/full_robot_gamepiece_pipeline_test
+[5/6] Building CXX object src/tools/CMakeFiles/hsv_cluster_visualizer.dir/hsv_cluster_visualizer.cc.o
+[6/6] Linking CXX executable tools/hsv_cluster_visualizer
