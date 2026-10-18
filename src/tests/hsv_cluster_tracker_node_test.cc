@@ -127,6 +127,23 @@ TEST(HSVClusterTrackerTest, ProtectsWeakEnteringModeOutsideEstablishedFootprint)
   EXPECT_NE(next[1].id, first[0].id);
   EXPECT_LT(next[0].ground_covar(1, 1), 0.2f);
 }
+TEST(HSVClusterTrackerTest, SeparatesSixPilesBeforeAnyIdsExist) {
+  auto tracker = MakeTracker();
+  std::vector<cv::Point2f> points;
+  for (const auto center : {cv::Point2f{6, -1.5f}, {6, 0}, {6, 1.5f},
+                            {9, -3}, {9, 0}, {9, 3}}) {
+    const auto cloud = Cloud(center, 0.2f, 0.28f);
+    points.insert(points.end(), cloud.begin(), cloud.end());
+  }
+  const auto first = Cluster(tracker, points);
+  ASSERT_EQ(first.size(), 6U);
+  const auto next = Cluster(tracker, points);
+  ASSERT_EQ(next.size(), first.size());
+  for (std::size_t i = 0; i < first.size(); ++i) {
+    EXPECT_EQ(next[i].id, first[i].id);
+    EXPECT_LT(next[i].ground_covar(1, 1), 0.15f);
+  }
+}
 TEST(HSVClusterTrackerTest, UsesOneToOneIdsAndRetainsThemAcrossEmptyFrames) {
   auto tracker = MakeTracker();
   auto points = Cloud({6, -1.5});

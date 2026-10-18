@@ -333,7 +333,8 @@ auto HSVClusterTrackerNode::ClusterGroundPoints() -> std::vector<kmeans_cluster_
       // must not inflate that pile merely because its visible mass is small.
       const bool different_piles = prior[first] != prior[second] &&
           (prior[first] >= 0 || prior[second] >= 0) && separation >= 1.2f;
-      if (!different_piles && value(cell) >= 0.55f * std::min(peak[first], peak[second])) {
+      // Keep modes separated by a 25% density valley, even before IDs exist.
+      if (!different_piles && value(cell) >= 0.75f * std::min(peak[first], peak[second])) {
         const bool keep_first_peak = peak[first] >= peak[second];
         const float merged_peak = std::max(peak[first], peak[second]);
         const int merged_cell = keep_first_peak ? pa : pb;
