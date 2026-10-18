@@ -25,21 +25,22 @@ constexpr int minimum_saturation{150};
 
 constexpr int kInitialClusterCount = 10;
 constexpr float kCovarianceSpikeRatio = 2.5f;
+constexpr double kmin_pixel_ratio = 0.0001;
 
-auto Covariance(const std::vector<cv::Point2f>& points) -> cv::Mat {
+auto Covariance(const std::vector<cv::Point2f>& points) -> cv::Matx22f {
   cv::Point2f mean{0.0f, 0.0f};
   for (const cv::Point2f& point : points) {
     mean += point;
   }
   mean /= static_cast<float>(points.size());
 
-  cv::Mat covariance = cv::Mat::zeros(2, 2, CV_32F);
+  cv::Matx22f covariance{};
   for (const cv::Point2f& point : points) {
     const cv::Point2f offset = point - mean;
-    covariance.at<float>(0, 0) += offset.x * offset.x;
-    covariance.at<float>(0, 1) += offset.x * offset.y;
-    covariance.at<float>(1, 0) += offset.y * offset.x;
-    covariance.at<float>(1, 1) += offset.y * offset.y;
+    covariance(0, 0) += offset.x * offset.x;
+    covariance(0, 1) += offset.x * offset.y;
+    covariance(1, 0) += offset.y * offset.x;
+    covariance(1, 1) += offset.y * offset.y;
   }
   return covariance / static_cast<float>(points.size());
 }
@@ -49,7 +50,7 @@ auto Covariance(const std::vector<cv::Point2f>& points) -> cv::Mat {
 HSVClusterTrackerNode::HSVClusterTrackerNode(
     std::string_view input_path, std::string_view output_path,
     cv::Matx33d intrinsics, cv::Matx44d extrinsics,
-    const cv::Vec<double, 5>& distortion_coeffs,
+    const cv::Vec<double, 5>& distortion_coeffs, std::size_t image_size,
     const float max_ground_distance_m)
     : input_path_(input_path),
       output_path_(output_path),
@@ -60,7 +61,11 @@ HSVClusterTrackerNode::HSVClusterTrackerNode(
       camera_intrinsics_(intrinsics),
       distortion_coeffs_(distortion_coeffs),
       camera_extrinsics_cv_(extrinsics),
-      max_ground_distance_m_(max_ground_distance_m) {
+      max_ground_distance_m_(max_ground_distance_m),
+      image_size_(image_size) {
+  if (image_size_ == 0) {
+    throw std::invalid_argument("Image size must be positive");
+  }
   if (!std::isfinite(max_ground_distance_m_) || max_ground_distance_m_ <= 0) {
     throw std::invalid_argument(
         "Maximum ground distance must be finite and positive");
@@ -70,10 +75,9 @@ HSVClusterTrackerNode::HSVClusterTrackerNode(
         "HSV tracker extrinsics must be the camera pose in robot coordinates "
         "with a positive camera height");
   }
-  // doing this before basis change is intentional to keep extrinsics in wpilib coords
-  extrinsics_offset_ =
-      frc::Translation2d{units::meter_t{camera_extrinsics_cv_(2, 3)},
-                         units::meter_t{-camera_extrinsics_cv_(0, 3)}};
+  // Capture the ground translation before changing from WPILib coordinates.
+  extrinsics_offset_ = frc::Translation2d{units::meter_t{extrinsics(0, 3)},
+                                          units::meter_t{extrinsics(1, 3)}};
   utils::ChangeBasis(camera_extrinsics_cv_, utils::Basis::kWpiToCv);
 }
 
@@ -161,23 +165,39 @@ void HSVClusterTrackerNode::ProcessFrame(const cv::Mat& frame) {
   cv::undistortPoints(thresholded_points_, thresholded_points_,
                       camera_intrinsics_, distortion_coeffs_);
 
-  int cluster_count = kInitialClusterCount;
-  if (!previous_clusters.empty()) {
-    const std::vector<kmeans_cluster_t> assigned_clusters =
-        AssignToExistingClusters(thresholded_points_, previous_clusters);
-    cluster_count = static_cast<int>(previous_clusters.size()) +
-                    CovarianceSpikeCount(previous_clusters, assigned_clusters);
+  std::erase_if(thresholded_points_, [this](const cv::Point2f& point) {
+    return !NormalizedPointOffset(point).has_value();
+  });
+  if (thresholded_points_.empty()) {
+    return;
   }
-  cluster_count =
-      std::min({active_cluster_count_,
-                static_cast<int>(thresholded_points_.size()), cluster_count});
-  const std::vector<kmeans_cluster_t> unmerged_clusters =
-      KMeans(thresholded_points_, cluster_count, previous_clusters);
-  clusters_ = MergeOverlappingClusters(unmerged_clusters);
+  clusters_ =
+      MergeOverlappingClusters(KMeans(thresholded_points_, previous_clusters));
   for (auto& cluster : clusters_) {
     cluster.robot_relative_translation.emplace(ClusterDistance(cluster) +
-                                               CameraPosition());
+                                               extrinsics_offset_);
   }
+}
+
+auto HSVClusterTrackerNode::ClampToHorizon(cv::Point2f point) const
+    -> cv::Point2f {
+  const float y_coefficient = camera_extrinsics_cv_(1, 1);
+  const float horizon_y =
+      -(camera_extrinsics_cv_(1, 0) * point.x + camera_extrinsics_cv_(1, 2)) /
+      y_coefficient;
+  // Stay just on the ground side to keep the floor projection finite.
+  const float ground_y = horizon_y + std::copysign(1e-4f, y_coefficient);
+  point.y = y_coefficient > 0 ? std::max(point.y, ground_y)
+                              : std::min(point.y, ground_y);
+  return point;
+}
+
+auto HSVClusterTrackerNode::GroundPoint(const cv::Point2f& point) const
+    -> cv::Point2f {
+  const auto offset =
+      UndistortedPinholePointOffset(point, 0, camera_extrinsics_cv_).value();
+  return {static_cast<float>(offset.X().value()),
+          static_cast<float>(offset.Y().value())};
 }
 
 auto HSVClusterTrackerNode::AssignToExistingClusters(
@@ -187,258 +207,105 @@ auto HSVClusterTrackerNode::AssignToExistingClusters(
   if (existing_clusters.empty()) {
     return {};
   }
-
-  std::vector<cv::Point2f> scaled_centroids;
-  std::vector<std::size_t> existing_cluster_indices;
-  scaled_centroids.reserve(existing_clusters.size());
-  existing_cluster_indices.reserve(existing_clusters.size());
-  for (std::size_t cluster_index = 0; cluster_index < existing_clusters.size();
-       ++cluster_index) {
-    const kmeans_cluster_t& cluster = existing_clusters[cluster_index];
-    const std::optional<frc::Translation2d> point_offset =
-        NormalizedPointOffset(cluster.centroid);
-    if (!point_offset.has_value()) {
-      continue;
-    }
-    scaled_centroids.emplace_back(
-        static_cast<float>(point_offset->X().value()),
-        static_cast<float>(point_offset->Y().value()));
-    existing_cluster_indices.push_back(cluster_index);
-  }
-
   std::vector<kmeans_cluster_t> assigned_clusters(existing_clusters.size());
-  for (std::size_t cluster_index = 0; cluster_index < existing_clusters.size();
-       ++cluster_index) {
-    assigned_clusters[cluster_index].centroid =
-        existing_clusters[cluster_index].centroid;
+  std::vector<cv::Point2f> scaled_centroids;
+  scaled_centroids.reserve(existing_clusters.size());
+  for (std::size_t i = 0; i < existing_clusters.size(); ++i) {
+    assigned_clusters[i].centroid =
+        ClampToHorizon(existing_clusters[i].centroid);
+    scaled_centroids.push_back(GroundPoint(assigned_clusters[i].centroid));
   }
-  if (scaled_centroids.empty()) {
-    return assigned_clusters;
+  for (const auto& point : data_points) {
+    const cv::Point2f scaled_point = GroundPoint(point);
+    const auto nearest = std::ranges::min_element(
+        scaled_centroids, {}, [&](const cv::Point2f& center) {
+          return cv::norm(scaled_point - center);
+        });
+    assigned_clusters[nearest - scaled_centroids.begin()].img_points.push_back(
+        point);
   }
-
-  for (const cv::Point2f& point : data_points) {
-    const std::optional<frc::Translation2d> point_offset =
-        NormalizedPointOffset(point);
-    if (!point_offset.has_value()) {
-      continue;
-    }
-    const cv::Point2f scaled_point(
-        static_cast<float>(point_offset->X().value()),
-        static_cast<float>(point_offset->Y().value()));
-    std::size_t nearest_center = 0;
-    float nearest_distance = cv::norm(scaled_point - scaled_centroids.front());
-    for (std::size_t center_index = 1; center_index < scaled_centroids.size();
-         ++center_index) {
-      const float distance =
-          cv::norm(scaled_point - scaled_centroids[center_index]);
-      if (distance < nearest_distance) {
-        nearest_center = center_index;
-        nearest_distance = distance;
-      }
-    }
-    assigned_clusters[existing_cluster_indices[nearest_center]]
-        .img_points.push_back(point);
-  }
-
-  for (kmeans_cluster_t& cluster : assigned_clusters) {
-    if (cluster.img_points.size() > 1) {
+  for (auto& cluster : assigned_clusters) {
+    if (!cluster.img_points.empty()) {
       cluster.covar = Covariance(cluster.img_points);
     }
   }
   return assigned_clusters;
 }
 
-auto HSVClusterTrackerNode::CovarianceSpikeCount(
-    const std::vector<kmeans_cluster_t>& previous_clusters,
-    const std::vector<kmeans_cluster_t>& assigned_clusters) const -> int {
-  int spike_count = 0;
-  const std::size_t cluster_count =
-      std::min(previous_clusters.size(), assigned_clusters.size());
-  for (std::size_t cluster_index = 0; cluster_index < cluster_count;
-       ++cluster_index) {
-    const kmeans_cluster_t& previous = previous_clusters[cluster_index];
-    const kmeans_cluster_t& assigned = assigned_clusters[cluster_index];
-    if (previous.covar.rows != 2 || previous.covar.cols != 2 ||
-        assigned.covar.rows != 2 || assigned.covar.cols != 2) {
-      continue;
-    }
-
-    // manual calculation of trace for covariance
-    const float previous_spread =
-        previous.covar.at<float>(0, 0) + previous.covar.at<float>(1, 1);
-    const float assigned_spread =
-        assigned.covar.at<float>(0, 0) + assigned.covar.at<float>(1, 1);
-    if (previous_spread > std::numeric_limits<float>::epsilon() &&
-        assigned_spread > previous_spread * kCovarianceSpikeRatio) {
-      ++spike_count;
-    }
-  }
-  return spike_count;
-}
-
 auto HSVClusterTrackerNode::KMeans(
-    const std::vector<cv::Point2f>& data_points, const int requested_k,
+    const std::vector<cv::Point2f>& data_points,
     const std::vector<kmeans_cluster_t>& initial_clusters) const
     -> std::vector<kmeans_cluster_t> {
-  if (data_points.empty() || requested_k <= 0 ||
-      std::cmp_greater(requested_k, data_points.size())) {
-    throw std::invalid_argument("Invalid HSV KMeans configuration");
-  }
-
-  std::vector<cv::Point2f> scaled_points;
-  std::vector<size_t> used_point_indices;
-  scaled_points.reserve(data_points.size());
-  for (size_t i = 0; i < data_points.size(); i++) {
-    // inaccurate for most points because this assumes they're on the floor, may change later
-    const std::optional<frc::Translation2d> point_offset =
-        NormalizedPointOffset(data_points[i]);
-    if (!point_offset.has_value()) {
-      continue;  // to avoid yellow in the stands, which is above the field hoizon line
-    }
-    // Use meters in both dimensions. The floor projection accounts for the
-    // larger ground distance represented by vertical motion in the image.
-    scaled_points.emplace_back(static_cast<float>(point_offset->X().value()),
-                               static_cast<float>(point_offset->Y().value()));
-    used_point_indices.push_back(i);
-  }
-  if (scaled_points.empty()) {
+  if (data_points.empty()) {
     return {};
   }
-  // Horizon rejection can leave fewer usable points than requested clusters.
-  const int k = std::min(requested_k, static_cast<int>(scaled_points.size()));
-
-  cv::Mat labels;
+  auto seeds = initial_clusters;
+  if (seeds.empty()) {
+    const int initial_k =
+        std::min(kInitialClusterCount, static_cast<int>(data_points.size()));
+    seeds.resize(initial_k);
+    for (int i = 0; i < initial_k; ++i) {
+      seeds[i].centroid = data_points[i * data_points.size() / initial_k];
+    }
+  }
+  auto assigned_clusters = AssignToExistingClusters(data_points, seeds);
+  for (std::size_t i = 0; i < initial_clusters.size(); ++i) {
+    const auto& assigned = assigned_clusters[i];
+    const float previous_spread = cv::trace(initial_clusters[i].covar);
+    const float assigned_spread = cv::trace(assigned.covar);
+    if (assigned.img_points.empty() ||
+        previous_spread <= std::numeric_limits<float>::epsilon() ||
+        assigned_spread <= previous_spread * kCovarianceSpikeRatio) {
+      continue;
+    }
+    const Ellipse ellipse = ClusterEllipse(assigned);
+    const cv::Point2f offset{
+        static_cast<float>(ellipse.semi_axes.width *
+                           std::cos(ellipse.rotation) / 3.0),
+        static_cast<float>(ellipse.semi_axes.width *
+                           std::sin(ellipse.rotation) / 3.0)};
+    std::vector<kmeans_cluster_t> split(2);
+    split[0].centroid = assigned.centroid - offset;
+    split[1].centroid = assigned.centroid + offset;
+    split = AssignToExistingClusters(assigned.img_points, split);
+    assigned_clusters[i] = std::move(split[0]);
+    assigned_clusters.push_back(std::move(split[1]));
+  }
+  std::erase_if(assigned_clusters, [](const auto& cluster) {
+    return cluster.img_points.empty();
+  });
+  const int k = static_cast<int>(assigned_clusters.size());
+  std::vector<cv::Point2f> points, scaled_points;
+  std::vector<int> initial_labels;
+  points.reserve(data_points.size());
+  scaled_points.reserve(data_points.size());
+  initial_labels.reserve(data_points.size());
+  for (int i = 0; i < k; ++i) {
+    for (const auto& point : assigned_clusters[i].img_points) {
+      points.push_back(point);
+      scaled_points.push_back(GroundPoint(point));
+      initial_labels.push_back(i);
+    }
+  }
+  cv::Mat labels(initial_labels, true);
   cv::Mat centers;
   const cv::TermCriteria criteria(
       cv::TermCriteria::EPS + cv::TermCriteria::MAX_ITER, 100, 1e-4);
-
-  std::vector<cv::Point2f> initial_centers;
-  initial_centers.reserve(k);
-  for (const kmeans_cluster_t& cluster : initial_clusters) {
-    if (std::cmp_equal(initial_centers.size(), k)) {
-      break;
-    }
-    const std::optional<frc::Translation2d> point_offset =
-        NormalizedPointOffset(cluster.centroid);
-    if (point_offset.has_value()) {
-      initial_centers.emplace_back(
-          static_cast<float>(point_offset->X().value()),
-          static_cast<float>(point_offset->Y().value()));
-    }
-  }
-
-  std::vector<bool> new_centroids(scaled_points.size(), false);
-  while (std::cmp_less(initial_centers.size(), k)) {
-    std::size_t farthest_point = scaled_points.size();
-    float farthest_distance = -1.0f;
-    for (std::size_t point_index = 0; point_index < scaled_points.size();
-         ++point_index) {
-      if (new_centroids[point_index]) {
-        continue;
-      }
-
-      double distance_to_nearest_center = std::numeric_limits<double>::max();
-      for (const cv::Point2f& center : initial_centers) {
-        distance_to_nearest_center =
-            std::min(distance_to_nearest_center,
-                     cv::norm(scaled_points[point_index] - center));
-      }
-      if (initial_centers.empty() ||
-          distance_to_nearest_center > farthest_distance) {
-        farthest_point = point_index;
-        farthest_distance = distance_to_nearest_center;
-      }
-    }
-
-    if (farthest_point == scaled_points.size()) {
-      break;
-    }
-    new_centroids[farthest_point] = true;
-    initial_centers.push_back(scaled_points[farthest_point]);
-  }
-
-  labels = cv::Mat(static_cast<int>(scaled_points.size()), 1, CV_32S);
-  std::vector<int> label_counts(k, 0);
-  for (int point_index = 0; point_index < labels.rows; ++point_index) {
-    int nearest_center = 0;
-    float nearest_distance =
-        cv::norm(scaled_points[point_index] - initial_centers.front());
-    for (int center_index = 1; center_index < k; ++center_index) {
-      const float distance =
-          cv::norm(scaled_points[point_index] - initial_centers[center_index]);
-      if (distance < nearest_distance) {
-        nearest_center = center_index;
-        nearest_distance = distance;
-      }
-    }
-    labels.at<int>(point_index, 0) = nearest_center;
-    ++label_counts[nearest_center];
-  }
-
-  for (int empty_cluster = 0; empty_cluster < k; ++empty_cluster) {
-    if (label_counts[empty_cluster] != 0) {
-      continue;
-    }
-
-    int point_to_reassign = -1;
-    float closest_distance = std::numeric_limits<float>::max();
-    for (int point_index = 0; point_index < labels.rows; ++point_index) {
-      const int current_cluster = labels.at<int>(point_index, 0);
-      if (label_counts[current_cluster] <= 1) {
-        continue;
-      }
-      const float distance =
-          cv::norm(scaled_points[point_index] - initial_centers[empty_cluster]);
-      if (distance < closest_distance) {
-        point_to_reassign = point_index;
-        closest_distance = distance;
-      }
-    }
-
-    if (point_to_reassign >= 0) {
-      const int old_cluster = labels.at<int>(point_to_reassign, 0);
-      labels.at<int>(point_to_reassign, 0) = empty_cluster;
-      --label_counts[old_cluster];
-      ++label_counts[empty_cluster];
-    }
-  }
-
   cv::kmeans(scaled_points, k, labels, criteria, 1,
              cv::KMEANS_USE_INITIAL_LABELS, centers);
 
-  std::vector<cv::Point2f> centroid_sums(k, {0.0f, 0.0f});
-  std::vector<int> centroid_counts(k, 0);
-
+  std::vector<kmeans_cluster_t> clusters(k);
   for (int i = 0; i < labels.rows; ++i) {
-    const int cluster = labels.at<int>(i, 0);
-    centroid_sums[cluster] += data_points[used_point_indices[i]];
-    ++centroid_counts[cluster];
+    auto& cluster = clusters[labels.at<int>(i)];
+    cluster.centroid += points[i];
+    cluster.img_points.push_back(points[i]);
   }
-
-  std::vector<cv::Point2f> centroids(k);
-  for (int i = 0; i < k; ++i) {
-    centroids[i] = centroid_sums[i] / static_cast<float>(centroid_counts[i]);
-  }
-
-  std::vector<std::vector<cv::Point2f>> cluster_points(k);
-  for (int i = 0; i < labels.rows; ++i) {
-    const int cluster = labels.at<int>(i, 0);
-    cluster_points.at(cluster).push_back(data_points.at(used_point_indices[i]));
-  }
-
-  std::vector<kmeans_cluster_t> clusters;
-  clusters.reserve(k);
-  for (int i = 0; i < k; ++i) {
-    kmeans_cluster_t cluster;
-    cluster.centroid = centroids[i];
-    cluster.img_points = std::move(cluster_points.at(i));
-
-    if (cluster.img_points.size() > 1) {
-      cluster.covar = Covariance(cluster.img_points);
-    } else {
-      cluster.covar = cv::Mat::zeros(2, 2, CV_32F);
-    }
-    clusters.push_back(std::move(cluster));
+  std::erase_if(clusters, [this](const auto& cluster) {
+    return cluster.img_points.size() < kmin_pixel_ratio * image_size_;
+  });
+  for (auto& cluster : clusters) {
+    cluster.centroid /= static_cast<float>(cluster.img_points.size());
+    cluster.covar = Covariance(cluster.img_points);
   }
   return clusters;
 }
@@ -449,13 +316,7 @@ auto HSVClusterTrackerNode::ClusterDistance(
     return {};
   }
 
-  const auto lowest_point = std::ranges::max_element(
-      cluster.img_points,
-      [](const cv::Point2f& first, const cv::Point2f& second) -> bool {
-        return first.y < second.y;
-      });
-  const auto offset = NormalizedPointOffset(*lowest_point).value();
-  return offset;
+  return NormalizedPointOffset(cluster.centroid).value();
 }
 
 auto HSVClusterTrackerNode::ClustersOverlap(
@@ -466,7 +327,7 @@ auto HSVClusterTrackerNode::ClustersOverlap(
 }
 
 auto ClusterEllipse(const kmeans_cluster_t& cluster) -> Ellipse {
-  const cv::Mat& covariance = cluster.covar;
+  const cv::Mat covariance(cluster.covar);
   if (covariance.rows != 2 || covariance.cols != 2) {
     throw std::invalid_argument("KMeans covariance must be 2 by 2");
   }
@@ -546,7 +407,7 @@ auto HSVClusterTrackerNode::MergeOverlappingClusters(
     if (merged.img_points.size() > 1) {
       merged.covar = Covariance(merged.img_points);
     } else {
-      merged.covar = cv::Mat::zeros(2, 2, CV_32F);
+      merged.covar = cv::Matx22f::zeros();
     }
   }
 

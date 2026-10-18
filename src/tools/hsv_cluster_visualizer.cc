@@ -8,13 +8,17 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <numbers>
+#include <optional>
 #include <random>
 #include <set>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include <frc/apriltag/AprilTagDetector.h>
+#include <frc/geometry/Pose2d.h>
 #include <frc/geometry/Pose3d.h>
 #include <frc/geometry/Rotation3d.h>
 #include <nlohmann/json.hpp>
@@ -23,6 +27,8 @@
 #include <opencv2/imgproc.hpp>
 
 #include "absl/log/check.h"
+#include "camera/camera_config.h"
+#include "localization/multi_tag_solver_node.h"
 #include "utils/cv_geometry.h"
 
 namespace {
@@ -39,12 +45,11 @@ constexpr std::string_view kDefaultFramePath =
     "/cos-logs/downloaded_video_frames/frame_001500.jpg";
 
 // Drawing helpers are adapted from BOS's hsv_cluster_visualizer.cc.
-auto RandomClusterColor(std::mt19937& random_generator) -> cv::Scalar {
-  std::uniform_int_distribution<int> hue_distribution(0, 179);
-  const cv::Mat hsv_pixel(
-      1, 1, CV_8UC3,
-      cv::Scalar{static_cast<double>(hue_distribution(random_generator)), 220.0,
-                 255.0});
+constexpr std::mt19937::result_type kClusterColorSeed = 0x4B4D4541;
+
+auto HueColor(const int hue) -> cv::Scalar {
+  const cv::Mat hsv_pixel(1, 1, CV_8UC3,
+                          cv::Scalar{static_cast<double>(hue), 220.0, 255.0});
   cv::Mat bgr_pixel;
   cv::cvtColor(hsv_pixel, bgr_pixel, cv::COLOR_HSV2BGR);
   const cv::Vec3b color = bgr_pixel.at<cv::Vec3b>(0, 0);
@@ -52,19 +57,119 @@ auto RandomClusterColor(std::mt19937& random_generator) -> cv::Scalar {
           static_cast<double>(color[2])};
 }
 
+auto RandomClusterColor(std::mt19937& random_generator) -> cv::Scalar {
+  return HueColor(std::uniform_int_distribution<int>(0, 179)(random_generator));
+}
+
+// Top-down field view in WPILib axes: +X right along the field, +Y up.
+constexpr double kFieldPixelsPerMeter = 80.0;
+constexpr double kFieldEllipseAlpha = 0.3;
+
+auto FieldPoint(const double x_m, const double y_m) -> cv::Point2f {
+  return {static_cast<float>(x_m * kFieldPixelsPerMeter),
+          static_cast<float>(
+              (localization::kApriltagLayout.GetFieldWidth().value() - y_m) *
+              kFieldPixelsPerMeter)};
+}
+
+auto MakeFieldCanvas() -> cv::Mat {
+  const auto& layout = localization::kApriltagLayout;
+  cv::Mat3b canvas(
+      static_cast<int>(layout.GetFieldWidth().value() * kFieldPixelsPerMeter),
+      static_cast<int>(layout.GetFieldLength().value() * kFieldPixelsPerMeter),
+      cv::Vec3b{40, 40, 40});
+  for (int x = 0; x <= static_cast<int>(layout.GetFieldLength().value()); ++x) {
+    cv::line(canvas, FieldPoint(x, 0),
+             FieldPoint(x, layout.GetFieldWidth().value()),
+             cv::Scalar{70, 70, 70}, 1);
+  }
+  for (int y = 0; y <= static_cast<int>(layout.GetFieldWidth().value()); ++y) {
+    cv::line(canvas, FieldPoint(0, y),
+             FieldPoint(layout.GetFieldLength().value(), y),
+             cv::Scalar{70, 70, 70}, 1);
+  }
+  for (const frc::AprilTag& tag : layout.GetTags()) {
+    cv::circle(canvas, FieldPoint(tag.pose.X().value(), tag.pose.Y().value()),
+               3, cv::Scalar{255, 255, 255}, cv::FILLED, cv::LINE_AA);
+  }
+  return canvas;
+}
+
+auto DrawRobot(cv::Mat& canvas, const frc::Pose2d& pose,
+               const cv::Scalar& color) -> void {
+  const frc::Translation2d nose =
+      pose.Translation() +
+      frc::Translation2d{0.5_m, 0_m}.RotateBy(pose.Rotation());
+  cv::circle(canvas, FieldPoint(pose.X().value(), pose.Y().value()), 5, color,
+             cv::FILLED, cv::LINE_AA);
+  cv::line(canvas, FieldPoint(pose.X().value(), pose.Y().value()),
+           FieldPoint(nose.X().value(), nose.Y().value()), color, 2,
+           cv::LINE_AA);
+}
+
+// The cluster's ground-plane 2-sigma ellipse (matching ClusterEllipse's
+// padding-free diameter), centered at the projected centroid, in field-canvas
+// pixels. Robot-relative geometry is moved onto the field by `robot_pose`.
+auto FieldEllipse(const gamepiece::HSVClusterTrackerNode& tracker,
+                  const gamepiece::kmeans_cluster_t& cluster,
+                  const frc::Pose2d& robot_pose)
+    -> std::optional<cv::RotatedRect> {
+  const auto center = tracker.RobotRelativeOffset(cluster.centroid);
+  std::vector<cv::Point2f> ground_points;
+  for (const cv::Point2f& point : cluster.img_points) {
+    if (const auto offset = tracker.RobotRelativeOffset(point)) {
+      ground_points.emplace_back(static_cast<float>(offset->X().value()),
+                                 static_cast<float>(offset->Y().value()));
+    }
+  }
+  if (!center.has_value() || ground_points.size() < 2) {
+    return std::nullopt;
+  }
+  cv::Mat covariance;
+  cv::Mat mean;
+  cv::calcCovarMatrix(cv::Mat(ground_points).reshape(1), covariance, mean,
+                      cv::COVAR_NORMAL | cv::COVAR_ROWS | cv::COVAR_SCALE,
+                      CV_32F);
+  cv::Mat eigenvalues;
+  cv::Mat eigenvectors;
+  cv::eigen(covariance, eigenvalues, eigenvectors);
+  const auto diameter = [&](const int i) -> float {
+    return static_cast<float>(
+        4.0 * kFieldPixelsPerMeter *
+        std::sqrt(std::max(eigenvalues.at<float>(i, 0), 0.0f)));
+  };
+  // Field-axis angle of the major axis; the canvas's +Y is image-up.
+  const double field_angle =
+      std::atan2(eigenvectors.at<float>(0, 1), eigenvectors.at<float>(0, 0)) +
+      robot_pose.Rotation().Radians().value();
+  const frc::Translation2d field_center =
+      robot_pose.Translation() + center->RotateBy(robot_pose.Rotation());
+  return cv::RotatedRect{
+      FieldPoint(field_center.X().value(), field_center.Y().value()),
+      {diameter(0), diameter(1)},
+      static_cast<float>(-field_angle * 180.0 / std::numbers::pi)};
+}
+
+auto DrawTranslucentEllipse(cv::Mat& canvas, const cv::RotatedRect& ellipse,
+                            const cv::Scalar& color) -> void {
+  cv::Mat filled = canvas.clone();
+  cv::ellipse(filled, ellipse, color, cv::FILLED, cv::LINE_AA);
+  cv::addWeighted(filled, kFieldEllipseAlpha, canvas, 1.0 - kFieldEllipseAlpha,
+                  0.0, canvas);
+  cv::ellipse(canvas, ellipse, color, 1, cv::LINE_AA);
+}
+
 auto PixelEllipse(const gamepiece::Ellipse& ellipse,
-                  const cv::Mat& camera_matrix)
-    -> cv::RotatedRect {
+                  const cv::Mat& camera_matrix) -> cv::RotatedRect {
   // Transform the algorithm's actual ellipse, including its normalized radius
   // padding. Unequal fx/fy can change both its axis lengths and orientation.
   const cv::Matx33d intrinsics(camera_matrix);
   const double cosine = std::cos(ellipse.rotation);
   const double sine = std::sin(ellipse.rotation);
-  const cv::Matx22d axes{
-      intrinsics(0, 0) * ellipse.semi_axes.width * cosine,
-      -intrinsics(0, 0) * ellipse.semi_axes.height * sine,
-      intrinsics(1, 1) * ellipse.semi_axes.width * sine,
-      intrinsics(1, 1) * ellipse.semi_axes.height * cosine};
+  const cv::Matx22d axes{intrinsics(0, 0) * ellipse.semi_axes.width * cosine,
+                         -intrinsics(0, 0) * ellipse.semi_axes.height * sine,
+                         intrinsics(1, 1) * ellipse.semi_axes.width * sine,
+                         intrinsics(1, 1) * ellipse.semi_axes.height * cosine};
   cv::Mat eigenvalues;
   cv::Mat eigenvectors;
   cv::eigen(cv::Mat(axes * axes.t()), eigenvalues, eigenvectors);
@@ -83,16 +188,53 @@ auto PixelEllipse(const gamepiece::Ellipse& ellipse,
           static_cast<float>(angle)};
 }
 
+auto NearestClusterDistance(
+    const std::vector<gamepiece::kmeans_cluster_t>& clusters,
+    const std::size_t index) -> double {
+  double nearest = std::numeric_limits<double>::infinity();
+  const auto& position = clusters[index].robot_relative_translation;
+  for (std::size_t i = 0; position.has_value() && i < clusters.size(); ++i) {
+    const auto& other = clusters[i].robot_relative_translation;
+    if (i != index && other.has_value()) {
+      nearest = std::min(nearest, position->Distance(*other).value());
+    }
+  }
+  return nearest;
+}
+
 auto DrawClusterIndex(cv::Mat& image, const std::size_t cluster_index,
-                      const cv::Point& centroid) -> void {
-  const std::string label = std::to_string(cluster_index);
-  constexpr double kFontScale = 0.8;
+                      const cv::Point& centroid,
+                      const double nearest_distance,
+                      std::vector<cv::Rect>* occupied = nullptr) -> void {
+  const std::string label = std::isfinite(nearest_distance)
+                                ? cv::format("%zu (%.2f m)", cluster_index,
+                                             nearest_distance)
+                                : cv::format("%zu (N/A)", cluster_index);
+  constexpr double kFontScale = 0.65;
   constexpr int kTextThickness = 2;
   int baseline = 0;
   const cv::Size text_size = cv::getTextSize(
       label, cv::FONT_HERSHEY_SIMPLEX, kFontScale, kTextThickness, &baseline);
-  const cv::Point text_origin{centroid.x - text_size.width / 2,
-                              centroid.y + text_size.height / 2};
+  cv::Point text_origin{
+      std::clamp(centroid.x - text_size.width / 2, 4,
+                 std::max(4, image.cols - text_size.width - 4)),
+      std::clamp(centroid.y + text_size.height / 2, text_size.height + 4,
+                 image.rows - baseline - 4)};
+  if (occupied != nullptr) {
+    const auto bounds = [&] {
+      return cv::Rect{text_origin.x - 4,
+                      text_origin.y - text_size.height - 4,
+                      text_size.width + 8, text_size.height + baseline + 8};
+    };
+    while (text_origin.y > text_size.height + 4 &&
+           std::ranges::any_of(*occupied, [&](const cv::Rect& previous) {
+             return (previous & bounds()).area() > 0;
+           })) {
+      text_origin.y = std::max(text_size.height + 4,
+                              text_origin.y - text_size.height - baseline - 8);
+    }
+    occupied->push_back(bounds());
+  }
 
   cv::putText(image, label, text_origin, cv::FONT_HERSHEY_SIMPLEX, kFontScale,
               cv::Scalar{0, 0, 0}, kTextThickness + 4, cv::LINE_AA);
@@ -109,13 +251,9 @@ auto PixelCluster(const gamepiece::kmeans_cluster_t& cluster,
     return {point.x * intrinsics(0, 0) + intrinsics(0, 2),
             point.y * intrinsics(1, 1) + intrinsics(1, 2)};
   };
-  // Evaluate into fresh storage: result initially shares cluster.covar, and
-  // assigning a MatExpr directly to it can overwrite the normalized covariance.
-  const cv::Mat pixel_covariance =
-      cv::Mat(scale) * cluster.covar * cv::Mat(scale.t());
   gamepiece::kmeans_cluster_t result = cluster;
   result.centroid = pixel_point(cluster.centroid);
-  result.covar = pixel_covariance;
+  result.covar = scale * cluster.covar * scale.t();
   for (auto& point : result.img_points) {
     point = pixel_point(point);
   }
@@ -125,12 +263,12 @@ auto PixelCluster(const gamepiece::kmeans_cluster_t& cluster,
 auto AnnotateFrame(const cv::Mat& frame,
                    const std::vector<gamepiece::kmeans_cluster_t>& clusters,
                    const cv::Mat& camera_matrix,
-                   const cv::Mat& distortion_coeffs) -> cv::Mat {
+                   const cv::Mat& distortion_coeffs, const double pitch)
+    -> cv::Mat {
   cv::Mat visualization;
   cv::undistort(frame, visualization, camera_matrix, distortion_coeffs,
                 camera_matrix);
 
-  constexpr std::mt19937::result_type kClusterColorSeed = 0x4B4D4541;
   std::mt19937 random_generator(kClusterColorSeed);
   for (std::size_t cluster_index = 0; cluster_index < clusters.size();
        ++cluster_index) {
@@ -155,10 +293,36 @@ auto AnnotateFrame(const cv::Mat& frame,
     cv::ellipse(visualization, ellipse, cv::Scalar{0, 0, 0}, 6, cv::LINE_AA);
     cv::ellipse(visualization, ellipse, color, 2, cv::LINE_AA);
 
-    const cv::Point centroid{
-        static_cast<int>(std::lround(pixel_cluster.centroid.x)),
-        static_cast<int>(std::lround(pixel_cluster.centroid.y))};
-    DrawClusterIndex(visualization, cluster_index, centroid);
+  }
+  const double horizon_y = camera_matrix.at<double>(1, 2) -
+                           std::tan(pitch) * camera_matrix.at<double>(1, 1);
+  if (horizon_y >= 0 && horizon_y <= visualization.rows - 1) {
+    const int y = static_cast<int>(std::lround(horizon_y));
+    cv::line(visualization, {0, y}, {visualization.cols - 1, y},
+             cv::Scalar{0, 0, 0}, 4, cv::LINE_AA);
+    cv::line(visualization, {0, y}, {visualization.cols - 1, y},
+             cv::Scalar{0, 255, 255}, 2, cv::LINE_AA);
+  }
+  // Keep distances in a legend so nearby cluster labels stay readable.
+  for (std::size_t i = 0; i < clusters.size(); ++i) {
+    const auto& position = clusters[i].robot_relative_translation;
+    const auto center =
+        PixelEllipse(gamepiece::ClusterEllipse(clusters[i]), camera_matrix)
+            .center;
+    DrawClusterIndex(visualization, i,
+                     {static_cast<int>(std::lround(center.x)),
+                      static_cast<int>(std::lround(center.y))},
+                     NearestClusterDistance(clusters, i));
+    if (!position.has_value()) {
+      continue;
+    }
+    const std::string label =
+        cv::format("%zu: %.2f m", i, position->Norm().value());
+    const cv::Point origin{20, 80 + static_cast<int>(i) * 28};
+    cv::putText(visualization, label, origin, cv::FONT_HERSHEY_SIMPLEX, 0.7,
+                cv::Scalar{0, 0, 0}, 5, cv::LINE_AA);
+    cv::putText(visualization, label, origin, cv::FONT_HERSHEY_SIMPLEX, 0.7,
+                cv::Scalar{255, 255, 255}, 2, cv::LINE_AA);
   }
   return visualization;
 }
@@ -196,8 +360,8 @@ auto main(int argc, char** argv) -> int {
     std::cerr << "--start and --end must both be set with start <= end\n";
     return 1;
   }
-  if (!use_defaults && (positional.size() < 3 ||
-                        (positional.size() == 3 && !use_range))) {
+  if (!use_defaults &&
+      (positional.size() < 3 || (positional.size() == 3 && !use_range))) {
     std::cerr
         << "Usage: hsv_cluster_visualizer [--start=N --end=M "
            "[--frames_dir=DIR]] [<intrinsics.json> <extrinsics.json> "
@@ -248,11 +412,25 @@ auto main(int argc, char** argv) -> int {
                             rotation_scale},
             units::radian_t{extrinsics.at("rotation_z").get<double>() *
                             rotation_scale}));
-    // The tracker rotates camera rays into robot coordinates and uses the
-    // camera's height in that frame. It needs the camera pose, not its inverse.
-    gamepiece::HSVClusterTrackerNode tracker(
-        "decoded", "clusters", camera_matrix,
-        utils::EigenToCvMat(camera_pose.ToMatrix()), distortion);
+    // Robot pose comes from the multi-tag solver, which needs nested camera
+    // JSON; without it only the camera-view outputs are produced.
+    std::optional<localization::MultiTagSolverNode> tag_solver;
+    if (intrinsics_json.contains("intrinsics") && rotations_in_degrees) {
+      tag_solver.emplace(
+          "tags", "pose",
+          camera::Intrinsics{use_defaults
+                                 ? std::filesystem::path{kDefaultIntrinsicsPath}
+                                 : std::filesystem::path{positional[0]}},
+          camera::Extrinsics{use_defaults
+                                 ? std::filesystem::path{kDefaultExtrinsicsPath}
+                                 : std::filesystem::path{positional[1]}});
+    }
+    frc::AprilTagDetector tag_detector;
+    CHECK(tag_detector.AddFamily("tag36h11"));
+    frc::AprilTagDetector::Config detector_config;
+    detector_config.quadDecimate = 1.0F;
+    tag_detector.SetConfig(detector_config);
+    std::optional<frc::Pose2d> robot_pose;  // Held across frames without tags.
     const std::filesystem::path output_directory(
         use_defaults ? std::filesystem::path{kDefaultOutputDirectory}
                      : std::filesystem::path{argv[3]});
@@ -271,20 +449,31 @@ auto main(int argc, char** argv) -> int {
     if (input_paths.empty()) {
       input_paths.emplace_back(kDefaultFramePath);
     }
+    const cv::Mat first_frame =
+        cv::imread(input_paths.front().string(), cv::IMREAD_COLOR);
+    CHECK(!first_frame.empty())
+        << "Cannot decode frame: " << input_paths.front();
+    gamepiece::HSVClusterTrackerNode tracker(
+        "decoded", "clusters", camera_matrix,
+        utils::EigenToCvMat(camera_pose.ToMatrix()), distortion,
+        first_frame.total());
     const std::size_t frame_count = input_paths.size();
     // Evenly spaced subset of up to 5 frames for the comparison panel.
     const std::size_t panel_size = std::min<std::size_t>(frame_count, 5);
     std::set<std::size_t> panel_indices;
     for (std::size_t i = 0; i < panel_size; ++i) {
-      panel_indices.insert(panel_size == 1 ? 0
-                                           : i * (frame_count - 1) /
-                                                 (panel_size - 1));
+      panel_indices.insert(
+          panel_size == 1 ? 0 : i * (frame_count - 1) / (panel_size - 1));
     }
     std::vector<cv::Mat> panel_frames;
+    const cv::Mat field_base = MakeFieldCanvas();
+    cv::Mat field_overlay = field_base.clone();
     for (std::size_t frame_index = 0; frame_index < frame_count;
          ++frame_index) {
       const std::filesystem::path& input_path = input_paths[frame_index];
-      const cv::Mat frame = cv::imread(input_path.string(), cv::IMREAD_COLOR);
+      const cv::Mat frame =
+          frame_index == 0 ? first_frame
+                           : cv::imread(input_path.string(), cv::IMREAD_COLOR);
       CHECK(!frame.empty()) << "Cannot decode frame: " << input_path;
       tracker.ProcessFrame(frame);
       if (frame_count == 1) {
@@ -293,7 +482,8 @@ auto main(int argc, char** argv) -> int {
       }
       const auto& clusters = *tracker.GetClusters();
       const cv::Mat visualization = AnnotateFrame(
-          frame, clusters, cv::Mat(camera_matrix), cv::Mat(distortion));
+          frame, clusters, cv::Mat(camera_matrix), cv::Mat(distortion),
+          camera_pose.Rotation().Y().value());
       const std::string caption = input_path.filename().string() + " | " +
                                   std::to_string(clusters.size()) + " clusters";
       cv::putText(visualization, caption, {20, 40}, cv::FONT_HERSHEY_SIMPLEX,
@@ -303,6 +493,69 @@ auto main(int argc, char** argv) -> int {
       const auto output_path =
           output_directory / (input_path.stem().string() + "_clusters.png");
       CHECK(cv::imwrite(output_path.string(), visualization));
+      cv::Mat gray;
+      cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
+      std::vector<localization::tag_detection_t> detections;
+      for (const auto* result : tag_detector.Detect(
+               gray.cols, gray.rows, static_cast<int>(gray.step), gray.data)) {
+        localization::tag_detection_t detection{.tag_id = result->GetId()};
+        for (int corner = 0; corner < 4; ++corner) {
+          detection.corners[corner] = {result->GetCorner(corner).x,
+                                       result->GetCorner(corner).y};
+        }
+        detections.push_back(detection);
+      }
+      std::size_t pose_tag_count = 0;
+      if (tag_solver.has_value()) {
+        if (const auto estimate = tag_solver->AmbiguousSolve(detections)) {
+          std::cout << "z: " << estimate->pos1.pose.Translation().Z().value()
+                    << std::endl;
+          robot_pose = estimate->pos1.pose.ToPose2d();
+          pose_tag_count = estimate->pos1.tag_ids.size();
+        }
+      }
+      // Per-frame field view uses the camera view's cluster colors; the
+      // all-frames overlay colors by time so motion is visible.
+      if (robot_pose.has_value()) {
+        cv::Mat field = field_base.clone();
+        std::mt19937 field_color_generator(kClusterColorSeed);
+        const cv::Scalar frame_color =
+            HueColor(static_cast<int>(frame_index * 120 / frame_count));
+        for (const auto& cluster : clusters) {
+          const cv::Scalar color = RandomClusterColor(field_color_generator);
+          if (const auto ellipse =
+                  FieldEllipse(tracker, cluster, *robot_pose)) {
+            DrawTranslucentEllipse(field, *ellipse, color);
+            DrawTranslucentEllipse(field_overlay, *ellipse, frame_color);
+          }
+        }
+        DrawRobot(field, *robot_pose, cv::Scalar{255, 255, 255});
+        DrawRobot(field_overlay, *robot_pose, frame_color);
+        std::vector<cv::Rect> field_labels;
+        for (std::size_t i = 0; i < clusters.size(); ++i) {
+          const auto& position = clusters[i].robot_relative_translation;
+          if (!position.has_value()) {
+            continue;
+          }
+          const auto center = robot_pose->Translation() +
+                              position->RotateBy(robot_pose->Rotation());
+          const auto pixel = FieldPoint(center.X().value(), center.Y().value());
+          DrawClusterIndex(field, i,
+                           {static_cast<int>(std::lround(pixel.x)),
+                            static_cast<int>(std::lround(pixel.y))},
+                           NearestClusterDistance(clusters, i), &field_labels);
+        }
+        const std::string field_caption =
+            input_path.filename().string() + " | " +
+            (pose_tag_count > 0 ? std::to_string(pose_tag_count) + " tags"
+                                : "no tags, pose held");
+        cv::putText(field, field_caption, {20, 30}, cv::FONT_HERSHEY_SIMPLEX,
+                    0.8, cv::Scalar{255, 255, 255}, 2, cv::LINE_AA);
+        CHECK(cv::imwrite(
+            (output_directory / (input_path.stem().string() + "_field.png"))
+                .string(),
+            field));
+      }
       if (use_range && panel_indices.contains(frame_index)) {
         cv::Mat thumbnail;
         cv::resize(visualization, thumbnail, {}, 0.5, 0.5, cv::INTER_AREA);
@@ -313,8 +566,9 @@ auto main(int argc, char** argv) -> int {
       for (const auto& normalized_cluster : clusters) {
         const auto cluster =
             PixelCluster(normalized_cluster, cv::Mat(camera_matrix));
-        const auto ellipse = PixelEllipse(
-            gamepiece::ClusterEllipse(normalized_cluster), cv::Mat(camera_matrix));
+        const auto ellipse =
+            PixelEllipse(gamepiece::ClusterEllipse(normalized_cluster),
+                         cv::Mat(camera_matrix));
         pixel_count += cluster.img_points.size();
         cluster_data.push_back(
             {{"centroid_px", {cluster.centroid.x, cluster.centroid.y}},
@@ -323,18 +577,22 @@ auto main(int argc, char** argv) -> int {
               {ellipse.size.width / 2.0f, ellipse.size.height / 2.0f}},
              {"ellipse_angle_deg", ellipse.angle},
              {"ground_position_m",
-              {cluster.camera_relative_translation->X().value(),
-               cluster.camera_relative_translation->Y().value()}},
+              {cluster.robot_relative_translation->X().value(),
+               cluster.robot_relative_translation->Y().value()}},
              {"covariance",
-              {{cluster.covar.at<float>(0, 0), cluster.covar.at<float>(0, 1)},
-               {cluster.covar.at<float>(1, 0),
-                cluster.covar.at<float>(1, 1)}}}});
+              {{cluster.covar(0, 0), cluster.covar(0, 1)},
+               {cluster.covar(1, 0), cluster.covar(1, 1)}}}});
       }
       frames.push_back({{"input", input_path.string()},
                         {"output", output_path.string()},
                         {"clusters", cluster_data}});
       std::cout << output_path << ": " << clusters.size() << " clusters, "
-                << pixel_count << " thresholded pixels\n";
+                << pixel_count << " thresholded pixels, " << detections.size()
+                << " tags detected, " << pose_tag_count << " used for pose\n";
+    }
+    if (robot_pose.has_value()) {
+      CHECK(cv::imwrite((output_directory / "field_overlay.png").string(),
+                        field_overlay));
     }
     if (!panel_frames.empty()) {
       cv::Mat panel;

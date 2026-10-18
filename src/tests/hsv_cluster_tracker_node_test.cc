@@ -15,12 +15,23 @@
 
 #include "camera/nvjpeg_decode_node.h"
 
+namespace gamepiece {
+struct HSVClusterTrackerNodeTestPeer {
+  static auto Run(const HSVClusterTrackerNode& tracker,
+                  const std::vector<cv::Point2f>& points,
+                  const hsv_clusters_t& seeds) {
+    return tracker.KMeans(points, seeds);
+  }
+};
+}  // namespace gamepiece
+
 namespace {
 
 const cv::Matx33d kIntrinsics{100, 0, 64, 0, 100, 48, 0, 0, 1};
 const cv::Matx44d kExtrinsics{1, 0, 0, 0, 0, 1, 0, 0,
                              0, 0, 1, 1, 0, 0, 0, 1};
 const cv::Vec<double, 5> kDistortion{0, 0, 0, 0, 0};
+constexpr std::size_t kImageSize = 128 * 96;
 
 auto MakeContext(std::uint64_t id = 0) -> control_loop::Context {
   return std::make_shared<control_loop::ContextInternal>(
@@ -39,18 +50,98 @@ auto MakeImage() -> cv::Mat {
   return bgr;
 }
 
+TEST(HSVClusterTrackerTest, SplitsOnlySpikingClustersAlongTheirMajorAxis) {
+  gamepiece::HSVClusterTrackerNode tracker("decoded", "clusters", kIntrinsics,
+                                         kExtrinsics, kDistortion, kImageSize);
+  const auto seed = [](float x) {
+    gamepiece::kmeans_cluster_t cluster;
+    cluster.centroid = {x, 0.5f};
+    cluster.covar = cv::Matx22f::eye() * 0.0001f;
+    return cluster;
+  };
+  std::vector<cv::Point2f> points;
+  for (float x : {-0.6f, -0.2f, 0.4f}) {
+    for (float dx : {-0.005f, 0.005f}) {
+      for (float dy : {-0.005f, 0.005f}) {
+        points.emplace_back(x + dx, 0.5f + dy);
+      }
+    }
+  }
+  auto clusters = gamepiece::HSVClusterTrackerNodeTestPeer::Run(
+      tracker, points, {seed(-0.4f), seed(0.4f)});
+  ASSERT_EQ(clusters.size(), 3U);
+  std::ranges::sort(clusters, {}, [](const auto& c) { return c.centroid.x; });
+  const float expected_x[] = {-0.6f, -0.2f, 0.4f};
+  for (int i = 0; i < 3; ++i) {
+    EXPECT_EQ(clusters[i].img_points.size(), 4U);
+    EXPECT_NEAR(clusters[i].centroid.x, expected_x[i], 1e-5);
+    EXPECT_NEAR(clusters[i].centroid.y, 0.5f, 1e-5);
+  }
+  EXPECT_EQ(gamepiece::HSVClusterTrackerNodeTestPeer::Run(tracker, points,
+                                                        clusters).size(), 3U);
+  EXPECT_TRUE(gamepiece::HSVClusterTrackerNodeTestPeer::Run(
+                  tracker, {points.front()}, clusters).empty());
+}
+
+TEST(HSVClusterTrackerTest, DropsDeadSeedsAndClampsAboveHorizonSeeds) {
+  gamepiece::HSVClusterTrackerNode tracker("decoded", "clusters", kIntrinsics,
+                                         kExtrinsics, kDistortion, kImageSize);
+  const std::vector<cv::Point2f> points{{-0.01f, 0.5f}, {0.01f, 0.5f},
+                                       {-0.01f, 0.6f}, {0.01f, 0.6f}};
+  gamepiece::hsv_clusters_t seeds(6);
+  for (auto& seed : seeds) {
+    seed.centroid = {0, 0.55f};
+  }
+  auto clusters = gamepiece::HSVClusterTrackerNodeTestPeer::Run(
+      tracker, points, seeds);
+  ASSERT_EQ(clusters.size(), 1U);
+  EXPECT_EQ(clusters.front().img_points.size(), points.size());
+  seeds.resize(1);
+  for (float y : {-0.2f, 0.0f, 0.001f}) {
+    seeds.front().centroid.y = y;
+    clusters = gamepiece::HSVClusterTrackerNodeTestPeer::Run(
+        tracker, points, seeds);
+    ASSERT_EQ(clusters.size(), 1U);
+    EXPECT_EQ(clusters.front().img_points.size(), points.size());
+    EXPECT_TRUE(cv::checkRange(clusters.front().covar));
+  }
+  seeds.front().centroid = {0, 2.0f};
+  seeds.front().covar = cv::Matx22f::eye() * 0.0001f;
+  clusters = gamepiece::HSVClusterTrackerNodeTestPeer::Run(tracker, points, seeds);
+  ASSERT_EQ(clusters.size(), 1U);
+  EXPECT_EQ(clusters.front().img_points.size(), points.size());
+}
+
+TEST(HSVClusterTrackerTest, CullsUsingFullImagePixelCountAfterKMeans) {
+  const std::vector<cv::Point2f> points{{-0.5f, 0.5f}, {-0.51f, 0.5f},
+                                       {0.5f, 0.5f}, {0.51f, 0.5f},
+                                       {0.5f, 0.51f}};
+  gamepiece::hsv_clusters_t seeds(2);
+  seeds[0].centroid = {-0.5f, 0.5f};
+  seeds[1].centroid = {0.5f, 0.5f};
+  for (std::size_t area : {20000U, 20001U}) {
+    gamepiece::HSVClusterTrackerNode tracker("decoded", "clusters", kIntrinsics,
+                                           kExtrinsics, kDistortion, area);
+    const auto clusters = gamepiece::HSVClusterTrackerNodeTestPeer::Run(
+        tracker, points, seeds);
+    ASSERT_EQ(clusters.size(), area == 20000 ? 2U : 1U);
+    EXPECT_EQ(clusters.back().img_points.size(), 3U);
+  }
+}
+
 TEST(HSVClusterTrackerTest, PreservesBosThresholdsAndClearsEmptyFrames) {
   gamepiece::HSVClusterTrackerNode tracker("decoded", "clusters", kIntrinsics,
-                                         kExtrinsics, kDistortion);
+                                         kExtrinsics, kDistortion, kImageSize);
   tracker.ProcessFrame(MakeImage());
   ASSERT_FALSE(tracker.GetClusters()->empty());
   std::size_t points = 0;
   for (const auto& cluster : *tracker.GetClusters()) {
     points += cluster.img_points.size();
-    ASSERT_TRUE(cluster.camera_relative_translation.has_value());
-    EXPECT_TRUE(std::isfinite(cluster.camera_relative_translation->X().value()));
-    EXPECT_TRUE(std::isfinite(cluster.camera_relative_translation->Y().value()));
+    ASSERT_TRUE(cluster.robot_relative_translation.has_value());
+    EXPECT_TRUE(std::isfinite(cluster.robot_relative_translation->X().value()));
+    EXPECT_TRUE(std::isfinite(cluster.robot_relative_translation->Y().value()));
     EXPECT_TRUE(cv::checkRange(cluster.covar));
+    EXPECT_GT(cv::trace(cluster.covar), 0);
     for (const auto& point : cluster.img_points) {
       EXPECT_GE(point.y, 0.12f);
       EXPECT_LT(point.y, 0.32f);
@@ -67,26 +158,45 @@ TEST(HSVClusterTrackerTest, PreservesBosThresholdsAndClearsEmptyFrames) {
   EXPECT_FALSE(tracker.GetClusters()->empty());
 }
 
-TEST(HSVClusterTrackerTest, StoresNormalizedCoordinatesAndProjectsGroundRays) {
+TEST(HSVClusterTrackerTest, StoresNormalizedCoordinatesAndProjectsCentroids) {
   gamepiece::HSVClusterTrackerNode tracker("decoded", "clusters", kIntrinsics,
-                                         kExtrinsics, kDistortion);
+                                         kExtrinsics, kDistortion, kImageSize);
   tracker.ProcessFrame(MakeImage());
   ASSERT_FALSE(tracker.GetClusters()->empty());
   for (const auto& cluster : *tracker.GetClusters()) {
     ASSERT_FALSE(cluster.img_points.empty());
-    ASSERT_TRUE(cluster.camera_relative_translation.has_value());
-    const auto lowest_point = std::ranges::max_element(
-        cluster.img_points, {}, &cv::Point2f::y);
+    ASSERT_TRUE(cluster.robot_relative_translation.has_value());
     // This calibration has no rotation and a one-meter camera height. A ray
     // intersects the floor at forward distance height / normalized_y.
-    const double forward_distance = 1.0 / lowest_point->y;
-    const double lateral_distance = -lowest_point->x * forward_distance;
-    EXPECT_NEAR(cluster.camera_relative_translation->X().value(),
+    const double forward_distance = 1.0 / cluster.centroid.y;
+    const double lateral_distance = -cluster.centroid.x * forward_distance;
+    EXPECT_NEAR(cluster.robot_relative_translation->X().value(),
                 forward_distance, 1e-5);
-    EXPECT_NEAR(cluster.camera_relative_translation->Y().value(),
+    EXPECT_NEAR(cluster.robot_relative_translation->Y().value(),
                 lateral_distance, 1e-5);
     EXPECT_GE(cluster.centroid.y, 0.12f);
     EXPECT_LT(cluster.centroid.y, 0.32f);
+  }
+}
+
+TEST(HSVClusterTrackerTest, TranslationIsRobotRelativeInWpilibAxes) {
+  // Camera 0.5 m forward and 0.2 m left of the robot origin, 1 m high.
+  const cv::Matx44d offset_extrinsics{1, 0, 0, 0.5, 0, 1, 0, 0.2,
+                                      0, 0, 1, 1,   0, 0, 0, 1};
+  gamepiece::HSVClusterTrackerNode centered("decoded", "clusters", kIntrinsics,
+                                            kExtrinsics, kDistortion,
+                                            kImageSize);
+  gamepiece::HSVClusterTrackerNode offset("decoded", "clusters", kIntrinsics,
+                                          offset_extrinsics, kDistortion,
+                                          kImageSize);
+  centered.ProcessFrame(MakeImage());
+  offset.ProcessFrame(MakeImage());
+  ASSERT_EQ(centered.GetClusters()->size(), offset.GetClusters()->size());
+  for (std::size_t i = 0; i < offset.GetClusters()->size(); ++i) {
+    const auto& expected = *centered.GetClusters()->at(i).robot_relative_translation;
+    const auto& actual = *offset.GetClusters()->at(i).robot_relative_translation;
+    EXPECT_NEAR(actual.X().value(), expected.X().value() + 0.5, 1e-5);
+    EXPECT_NEAR(actual.Y().value(), expected.Y().value() + 0.2, 1e-5);
   }
 }
 
@@ -94,7 +204,7 @@ TEST(HSVClusterTrackerTest, NormalizedPointsReprojectWithDistortion) {
   const cv::Matx33d intrinsics{140, 0, 64, 0, 90, 48, 0, 0, 1};
   const cv::Vec<double, 5> distortion{0.1, -0.03, 0.01, -0.02, 0.005};
   gamepiece::HSVClusterTrackerNode tracker("decoded", "clusters", intrinsics,
-                                         kExtrinsics, distortion);
+                                         kExtrinsics, distortion, kImageSize);
   tracker.ProcessFrame(MakeImage());
   ASSERT_FALSE(tracker.GetClusters()->empty());
   std::size_t point_count = 0;
@@ -133,13 +243,16 @@ TEST(HSVClusterTrackerTest, RejectsHorizonPointsAndCapsClustersToUsablePoints) {
   cv::Mat bgr;
   cv::cvtColor(hsv, bgr, cv::COLOR_HSV2BGR);
   gamepiece::HSVClusterTrackerNode tracker("decoded", "clusters", kIntrinsics,
-                                         kExtrinsics, kDistortion);
+                                         kExtrinsics, kDistortion, 1);
+  tracker.ProcessFrame(MakeImage());
   tracker.ProcessFrame(bgr);
   ASSERT_EQ(tracker.GetClusters()->size(), 1U);
   const auto& cluster = tracker.GetClusters()->front();
   ASSERT_EQ(cluster.img_points.size(), 1U);
   EXPECT_EQ(cluster.img_points.front(), cv::Point2f(0, 0.22f));
   EXPECT_EQ(cluster.centroid, cv::Point2f(0, 0.22f));
+  EXPECT_TRUE(cv::checkRange(cluster.covar));
+  EXPECT_EQ(cv::norm(cluster.covar), 0);
   hsv(70, 64) = cv::Vec3b{0, 0, 0};
   cv::cvtColor(hsv, bgr, cv::COLOR_HSV2BGR);
   tracker.ProcessFrame(bgr);
@@ -148,12 +261,13 @@ TEST(HSVClusterTrackerTest, RejectsHorizonPointsAndCapsClustersToUsablePoints) {
 
 TEST(HSVClusterTrackerTest, AppliesConfigurableGroundDistanceLimit) {
   gamepiece::HSVClusterTrackerNode tracker("decoded", "clusters", kIntrinsics,
-                                         kExtrinsics, kDistortion, 2.0f);
+                                         kExtrinsics, kDistortion, kImageSize,
+                                         2.0f);
   tracker.ProcessFrame(MakeImage());
   EXPECT_TRUE(tracker.GetClusters()->empty());
   EXPECT_THROW(gamepiece::HSVClusterTrackerNode("decoded", "clusters",
                                                kIntrinsics, kExtrinsics,
-                                               kDistortion, 0.0f),
+                                               kDistortion, kImageSize, 0.0f),
                std::invalid_argument);
 }
 
@@ -164,9 +278,10 @@ TEST(HSVClusterTrackerTest, ClusteringIsIndependentOfPixelOrigin) {
   const cv::Matx33d intrinsics{128, 0, 64, 0, 128, 48, 0, 0, 1};
   const cv::Matx33d shifted_intrinsics{128, 0, 128, 0, 128, 96, 0, 0, 1};
   gamepiece::HSVClusterTrackerNode tracker("decoded", "clusters", intrinsics,
-                                         kExtrinsics, kDistortion);
+                                         kExtrinsics, kDistortion, kImageSize);
   gamepiece::HSVClusterTrackerNode shifted_tracker(
-      "decoded", "clusters", shifted_intrinsics, kExtrinsics, kDistortion);
+      "decoded", "clusters", shifted_intrinsics, kExtrinsics, kDistortion,
+      shifted_image.total());
   tracker.ProcessFrame(image);
   shifted_tracker.ProcessFrame(shifted_image);
   ASSERT_FALSE(tracker.GetClusters()->empty());
@@ -184,7 +299,7 @@ TEST(HSVClusterTrackerTest, ClusteringIsIndependentOfPixelOrigin) {
 
 TEST(HSVClusterTrackerNodeTest, DeclaresInputAndOutputAndPublishesNullOnce) {
   gamepiece::HSVClusterTrackerNode node("decoded", "clusters", kIntrinsics,
-                                        kExtrinsics, kDistortion);
+                                        kExtrinsics, kDistortion, kImageSize);
   ASSERT_EQ(node.GetDependencies().size(), 1U);
   EXPECT_TRUE(node.GetDependencies()[0].GetTypes().contains(
       typeid(camera::DecodedJpegBuffer)));
@@ -215,9 +330,9 @@ TEST(HSVClusterTrackerNodeTest, DeclaresInputAndOutputAndPublishesNullOnce) {
 
 TEST(HSVClusterTrackerNodeTest, ProcessesPaddedDeviceFramesAndRetainsHistory) {
   gamepiece::HSVClusterTrackerNode node("decoded", "clusters", kIntrinsics,
-                                        kExtrinsics, kDistortion);
+                                        kExtrinsics, kDistortion, kImageSize);
   gamepiece::HSVClusterTrackerNode tracker("decoded", "clusters", kIntrinsics,
-                                         kExtrinsics, kDistortion);
+                                         kExtrinsics, kDistortion, kImageSize);
   int notifications = 0;
   node.RegisterCallback(
       [&](const control_loop::Context&) -> void { ++notifications; });
@@ -258,8 +373,8 @@ TEST(HSVClusterTrackerNodeTest, ProcessesPaddedDeviceFramesAndRetainsHistory) {
       EXPECT_EQ(actual.centroid, expected.centroid);
       EXPECT_EQ(actual.img_points, expected.img_points);
       EXPECT_DOUBLE_EQ(cv::norm(actual.covar - expected.covar), 0);
-      EXPECT_EQ(actual.camera_relative_translation,
-                expected.camera_relative_translation);
+      EXPECT_EQ(actual.robot_relative_translation,
+                expected.robot_relative_translation);
     }
     if (id == 0) {
       first = output;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <functional>
 #include <mutex>
 #include <optional>
@@ -19,7 +20,7 @@ namespace gamepiece {
 using kmeans_cluster_t = struct KMeansCluster {
   cv::Point2f
       centroid;  // Undistorted, focal-length-normalized image coordinates (x/z, y/z).
-  cv::Mat covar;  // Covariance of img_points in normalized coordinates.
+  cv::Matx22f covar{};  // Covariance of img_points in normalized coordinates.
   std::vector<cv::Point2f> img_points;
   std::optional<frc::Translation2d> robot_relative_translation = std::nullopt;
 };
@@ -31,11 +32,12 @@ using hsv_clusters_t = std::vector<kmeans_cluster_t>;
 
 class HSVClusterTrackerNode final : public control_loop::INode {
  public:
-  HSVClusterTrackerNode(std::string_view input_path,
-                        std::string_view output_path, cv::Matx33d intrinsics,
-                        cv::Matx44d extrinsics,
-                        const cv::Vec<double, 5>& distortion_coeffs,
-                        float max_ground_distance_m = 20.0f);
+  HSVClusterTrackerNode(
+      std::string_view input_path, std::string_view output_path,
+      cv::Matx33d intrinsics, cv::Matx44d extrinsics,
+      const cv::Vec<double, 5>& distortion_coeffs,
+      std::size_t image_size,  // Total pixels (width * height).
+      float max_ground_distance_m = 20.0f);
   // Processes a CPU BGR frame; callers must serialize access with callbacks.
   void ProcessFrame(const cv::Mat& frame);
   [[nodiscard]] auto GetClusters() const
@@ -53,19 +55,19 @@ class HSVClusterTrackerNode final : public control_loop::INode {
       -> const std::vector<control_loop::MessageDescriptor>& override;
 
  private:
+  friend struct HSVClusterTrackerNodeTestPeer;
   [[nodiscard]] auto NormalizedPointOffset(const cv::Point2f& point) const
       -> std::optional<frc::Translation2d>;
+  [[nodiscard]] auto ClampToHorizon(cv::Point2f point) const -> cv::Point2f;
+  [[nodiscard]] auto GroundPoint(const cv::Point2f& point) const -> cv::Point2f;
   [[nodiscard]] auto KMeans(
-      const std::vector<cv::Point2f>& data_points, int k,
+      const std::vector<cv::Point2f>& data_points,
       const std::vector<kmeans_cluster_t>& initial_clusters) const
       -> std::vector<kmeans_cluster_t>;
   [[nodiscard]] auto AssignToExistingClusters(
       const std::vector<cv::Point2f>& data_points,
       const std::vector<kmeans_cluster_t>& existing_clusters) const
       -> std::vector<kmeans_cluster_t>;
-  [[nodiscard]] auto CovarianceSpikeCount(
-      const std::vector<kmeans_cluster_t>& previous_clusters,
-      const std::vector<kmeans_cluster_t>& assigned_clusters) const -> int;
   [[nodiscard]] auto ClusterDistance(const kmeans_cluster_t& cluster) const
       -> frc::Translation2d;
   [[nodiscard]] auto ClustersOverlap(const kmeans_cluster_t& first,
@@ -81,7 +83,6 @@ class HSVClusterTrackerNode final : public control_loop::INode {
   std::vector<control_loop::MessageDescriptor> dependencies_;
   std::vector<control_loop::MessageDescriptor> publications_;
   std::mutex processing_mutex_;
-  int active_cluster_count_ = 20;
   std::vector<cv::Point2f> thresholded_points_;
   std::vector<kmeans_cluster_t> clusters_;
   utils::DisjointSetUnion cluster_dsu_;
@@ -91,6 +92,7 @@ class HSVClusterTrackerNode final : public control_loop::INode {
   cv::Vec<float, 5> distortion_coeffs_;
   cv::Matx44f camera_extrinsics_cv_;
   float max_ground_distance_m_;
+  std::size_t image_size_;
   static constexpr float max_merge_distance_m{0.5f};
   cv::Mat frame_;
   frc::Translation2d extrinsics_offset_;
