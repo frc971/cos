@@ -9,6 +9,7 @@ from scipy.optimize import linear_sum_assignment
 p = argparse.ArgumentParser()
 p.add_argument('root', type=Path)
 p.add_argument('--output', type=Path)
+p.add_argument('--expected-clusters', type=int)
 a = p.parse_args()
 results = []
 for manifest in sorted(a.root.glob('*/manifest.json')):
@@ -74,6 +75,9 @@ for manifest in sorted(a.root.glob('*/manifest.json')):
     result['passed'] = (misses == extras == switches == 0 and result['centroid_p95_m'] <= .35
                         and result['shape_p95_m'] <= .3 and result['centroid_max_m'] <= .35
                         and result['shape_max_m'] <= .3)
+    if a.expected_clusters is not None:
+        result['expected_count_met'] = all(n == a.expected_clusters for n, _ in frames)
+        result['passed'] &= result['expected_count_met']
     result['counts'] = [list(pair) for pair in dict.fromkeys(map(tuple, frames))]
     results.append(result)
 report = {'passed': bool(results) and all(r['passed'] for r in results), 'runs': results}

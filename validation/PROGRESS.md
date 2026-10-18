@@ -1,4 +1,9 @@
-Completed validation on root@dev-orin, 2026-10-18. All tests used simulated
+Follow-up seven-pile validation **fails**: all seven reference groups are visible
+in 52 frames, but two of four seeds merge foreground piles. See
+[SEVEN_CLUSTERS.md](SEVEN_CLUSTERS.md) for measurements, images, and C++ replay.
+The results below describe the earlier, smaller layouts only.
+
+Completed initial validation on root@dev-orin, 2026-10-18. All tests used simulated
 RGB, exact camera/robot poses, and separately recorded ground truth. No real
 video or live-camera inputs were used.
 
