@@ -225,16 +225,19 @@ void HSVClusterTrackerNode::ProcessFrame(
       const cv::Vec3f ray{p.x, p.y, 1};
       rays.push_back(ray / cv::norm(ray));
     }
-    for (std::size_t i = 0; i < rays.size(); ++i) {
-      // Image clipping is not a sphere tangent. The simulator's distortion
-      // remap can also clip at the undistorted image boundary.
-      const auto& pixel = pixels[i];
+    const auto clipped = [&](std::size_t i) {
+      const auto& p = pixels[i];
       const float ux = normalized[i].x * camera_intrinsics_(0, 0) + camera_intrinsics_(0, 2);
       const float uy = normalized[i].y * camera_intrinsics_(1, 1) + camera_intrinsics_(1, 2);
-      if (pixel.x < 5 || pixel.x >= frame.cols - 5 || pixel.y < 5 || pixel.y >= frame.rows - 5 ||
-          ux < 5 || ux >= frame.cols - 5 || uy < 5 || uy >= frame.rows - 5) continue;
-      const auto tangent = rays[(i + 4) % rays.size()] -
-          rays[(i + rays.size() - 4) % rays.size()];
+      return p.x < 1 || p.x >= frame.cols - 1 || p.y < 1 || p.y >= frame.rows - 1 ||
+          ux < 1 || ux >= frame.cols - 1 || uy < 1 || uy >= frame.rows - 1;
+    };
+    for (std::size_t i = 0; i < rays.size(); ++i) {
+      // Image clipping is not a sphere tangent. The simulator's distortion
+      // remap can also clip the source. Check the whole tangent stencil.
+      const auto before = (i + rays.size() - 4) % rays.size(), after = (i + 4) % rays.size();
+      if (clipped(i) || clipped(before) || clipped(after)) continue;
+      const auto tangent = rays[after] - rays[before];
       auto normal = tangent.cross(rays[i]);
       const float length = cv::norm(normal);
       if (length < 1e-6f) continue;
@@ -329,22 +332,46 @@ auto HSVClusterTrackerNode::ClusterGroundPoints() -> std::vector<kmeans_cluster_
         if (distance < closest) { closest = distance; prior[cell] = id; }
       }
     }
+  }
+  struct Moments { float mass = 0; cv::Vec2f sum{}; cv::Matx22f square{}; };
+  std::vector<Moments> moments(count);
+  for (std::size_t i = 0; i < cells.size(); ++i) {
+    if (basin[cells[i]] < 0) continue;
+    auto& m = moments[basin[cells[i]]];
+    const float w = std::max(refined_weights_[i], 0.1f * ground_weights_[i]);
+    const cv::Vec2f p{ground_points_[i].x, ground_points_[i].y};
+    m.mass += w; m.sum += w * p; m.square += w * (p * p.t());
+  }
+  for (int cell : order) {
     if (basin[cell] < 0) continue;
+    const int x = cell % width, y = cell / width;
     for (int dy = -1; dy <= 1; ++dy) for (int dx = -1; dx <= 1; ++dx) {
       const int nx = x + dx, ny = y + dy;
       if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
       const int neighbor = ny * width + nx;
       if (basin[neighbor] < 0) continue;
       const auto first = modes.Find(basin[cell]), second = modes.Find(basin[neighbor]);
+      if (first == second) continue;
       const int pa = peak_cell[first], pb = peak_cell[second];
       const float separation = kCellM * std::hypot(pa % width - pb % width, pa / width - pb / width);
       // A new density mode beyond an established pile's 2-sigma footprint
       // must not inflate that pile merely because its visible mass is small.
       const bool different_piles = prior[first] != prior[second] &&
           (prior[first] >= 0 || prior[second] >= 0) && separation >= 2 * kBandwidthM;
+      const auto a = moments[first], b = moments[second];
+      bool overlap = a.mass == 0 || b.mass == 0 ||
+          (prior[first] >= 0 && prior[first] == prior[second]);
+      if (!overlap) {
+        // Smoothing can bridge compact piles; their sample ellipses must overlap.
+        const auto ma = a.sum / a.mass, mb = b.sum / b.mass, delta = ma - mb;
+        const auto covariance = a.square / a.mass - ma * ma.t() +
+            b.square / b.mass - mb * mb.t() + cv::Matx22f::eye() * (2 * kFuelRadiusM * kFuelRadiusM);
+        overlap = delta.dot(covariance.inv() * delta) <= 9.0f;
+      }
       // Resolve weak entrants at 30 cm, but require a valley at 40 cm to split
       // untracked piles: sampling bumps along a broad pile should merge.
-      if (!different_piles && merge_value(cell) >= 0.75f * std::min(merge_value(pa), merge_value(pb))) {
+      if (!different_piles && overlap && std::min(merge_value(cell), merge_value(neighbor)) >=
+          0.75f * std::min(merge_value(pa), merge_value(pb))) {
         const bool keep_first_peak = peak[first] >= peak[second];
         const float merged_peak = std::max(peak[first], peak[second]);
         const int merged_cell = keep_first_peak ? pa : pb;
@@ -352,6 +379,7 @@ auto HSVClusterTrackerNode::ClusterGroundPoints() -> std::vector<kmeans_cluster_
         modes.Union(first, second);
         const auto root = modes.Find(first);
         peak[root] = merged_peak; peak_cell[root] = merged_cell; prior[root] = merged_prior;
+        moments[root] = {a.mass + b.mass, a.sum + b.sum, a.square + b.square};
       }
     }
   }

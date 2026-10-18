@@ -27,13 +27,15 @@ with tempfile.TemporaryDirectory() as tmp:
         assert result.returncode in (0, 1), result.stderr
         assert json.loads(result.stdout)['passed'] == expected
     check(base, True); check(base, False, partial=False)
-    for defect in ['missing', 'extra', 'position', 'shape', 'id', 'partial_position']:
+    for defect in ['missing', 'extra', 'position', 'shape', 'id', 'duplicate_id', 'partial_position']:
         data = copy.deepcopy(base)
         if defect == 'missing': data[1]['clusters'].pop(0)
         elif defect == 'extra': data[1]['clusters'].append({'id': 99, 'ground_position_m': [11, 1], 'ground_covariance_m2': [[.01, 0], [0, .01]]})
         elif defect == 'position': data[1]['clusters'][0]['ground_position_m'][0] += .5
         elif defect == 'shape': data[1]['clusters'][0]['ground_covariance_m2'] = [[1, 0], [0, 1]]
         elif defect == 'id': data[1]['clusters'][0]['id'] = 99
+        elif defect == 'duplicate_id':
+            for frame in data: frame['clusters'][1]['id'] = 0
         else: data[1]['clusters'][2]['ground_position_m'][0] += .5
         check(data, False)
-print('Evaluator positive/strict controls and six defect controls passed.')
+print('Evaluator positive/strict controls and seven defect controls passed.')

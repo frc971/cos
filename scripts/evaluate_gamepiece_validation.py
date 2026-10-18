@@ -20,6 +20,7 @@ for manifest in sorted(a.root.glob('*/manifest.json')):
     centers = np.array([piece['translation_m'][:2] for piece in pieces]).reshape(-1, 2)
     group_ids = np.array([piece['cluster_id'] for piece in pieces])
     previous_ids, misses, switches, extras = {}, 0, 0, 0
+    id_owners, identity_conflicts = {}, 0
     distances, shapes, major_ratios, minor_ratios, frames, frame_metrics = [], [], [], [], [], []
     partial_metrics = []
     for frame, observation in zip(truth['frames'], observations, strict=True):
@@ -43,6 +44,8 @@ for manifest in sorted(a.root.glob('*/manifest.json')):
             covariances.append(np.cov(points.T, bias=True))
             ids.append(group)
         predicted = observation['clusters']
+        frame_ids = [c['id'] for c in predicted]
+        identity_conflicts += len(frame_ids) - len(set(frame_ids))
         points = np.array([rotation @ c['ground_position_m'] + origin for c in predicted]).reshape(-1, 2)
         errors = np.linalg.norm(np.array(targets).reshape(-1, 2)[:, None, :] - points[None, :, :], axis=2)
         rows, cols = linear_sum_assignment(errors)
@@ -55,6 +58,8 @@ for manifest in sorted(a.root.glob('*/manifest.json')):
             matched_cols.add(int(col))
             c = predicted[col]
             group = ids[row]
+            identity_conflicts += id_owners.get(c['id'], group) != group
+            id_owners.setdefault(c['id'], group)
             if group in previous_ids and previous_ids[group] != c['id']:
                 switches += 1
             previous_ids[group] = c['id']
@@ -78,6 +83,8 @@ for manifest in sorted(a.root.glob('*/manifest.json')):
                 if partial_errors[row, col] > .9:
                     continue
                 group, c = partial_ids[row], predicted[remaining[col]]
+                identity_conflicts += id_owners.get(c['id'], group) != group
+                id_owners.setdefault(c['id'], group)
                 if group in previous_ids and previous_ids[group] != c['id']:
                     switches += 1
                 previous_ids[group] = c['id']
@@ -88,7 +95,7 @@ for manifest in sorted(a.root.glob('*/manifest.json')):
     def percentile(values, fraction):
         return round(float(np.percentile(values, fraction)), 4) if values else 0
     result = dict(run=manifest.parent.name, frames=len(frames), counts=frames, frame_metrics=frame_metrics,
-                  misses=misses, extras=extras, id_switches=switches,
+                  misses=misses, extras=extras, id_switches=switches, identity_conflicts=identity_conflicts,
                   centroid_p95_m=percentile(distances, 95), centroid_max_m=percentile(distances, 100),
                   shape_p95_m=percentile(shapes, 95), shape_max_m=percentile(shapes, 100),
                   minor_std_p05=percentile(minor_ratios, 5), minor_std_p95=percentile(minor_ratios, 95),
@@ -97,7 +104,7 @@ for manifest in sorted(a.root.glob('*/manifest.json')):
         result['partial_metrics'] = partial_metrics
         result['partial_centroid_max_m'] = max((m[3] for m in partial_metrics), default=0)
     # Fixed physical acceptance limits. Empty runs must also have no output.
-    result['passed'] = (misses == extras == switches == 0 and result['centroid_p95_m'] <= .35
+    result['passed'] = (misses == extras == switches == identity_conflicts == 0 and result['centroid_p95_m'] <= .35
                         and result['shape_p95_m'] <= .3 and result['centroid_max_m'] <= .35
                         and result['shape_max_m'] <= .3)
     if a.expected_clusters is not None:

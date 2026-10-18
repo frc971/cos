@@ -161,6 +161,13 @@ TEST(HSVClusterTrackerTest, SeparatesSixPilesBeforeAnyIdsExist) {
     EXPECT_LT(next[i].ground_covar(1, 1), 0.15f);
   }
 }
+TEST(HSVClusterTrackerTest, SeparatesCompactPilesAcrossShallowSmoothedValley) {
+  auto tracker = MakeTracker();
+  auto points = Cloud({6, -0.65f}, 0.2f, 0.25f);
+  const auto other = Cloud({6, 0.65f}, 0.2f, 0.25f);
+  points.insert(points.end(), other.begin(), other.end());
+  EXPECT_EQ(Cluster(tracker, points).size(), 2U);
+}
 TEST(HSVClusterTrackerTest, UsesOneToOneIdsAndRetainsThemAcrossEmptyFrames) {
   auto tracker = MakeTracker();
   auto points = Cloud({6, -1.5});

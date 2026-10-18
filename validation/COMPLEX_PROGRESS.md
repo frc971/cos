@@ -51,3 +51,18 @@ sweep also has three boundary misses in 66 frames. These failures are recorded
 in `evidence/acceptance-staggered-ideal.json` and
 `evidence/acceptance-mixed-dynamic-ideal.json`. Completion remains unproven;
 the next step is a geometric overlap check before merging candidate modes.
+
+Third milestone: watershed basins now accumulate weighted sample moments before
+merging. A shallow smoothed valley can join untracked basins only when their
+combined-covariance ellipses overlap within three sigma. Peaks inside the same
+established footprint can still merge, preserving broad piles. All 52 irregular
+six-pile frames and the 130 earlier ideal frames pass; fourteen tracker tests
+pass. Evidence: `geometry-staggered-ideal.json` and
+`geometry-regression-ideal.json`. The evaluator additionally rejects duplicate
+IDs and identity reuse across different reference piles.
+
+The mixed sweep's three remaining strict-count misses are being checked against
+the actual visibility of the full cluster centroid. One frame's four ID-visible
+balls appear as one overlapping RGB patch behind a field structure. An
+independent field-depth centroid probe is being added; strict pixel-count
+reports will remain alongside centroid-visibility checks. The goal remains open.
