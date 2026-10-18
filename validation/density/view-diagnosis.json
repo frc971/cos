@@ -1,0 +1,194 @@
+{
+  "reference": "Identical image-visible ball identities across every view of both piles",
+  "span": "maximum estimated pile ratio / minimum across the run",
+  "conditions": {
+    "ideal": {
+      "fixed_membership_pairs": 96,
+      "ratio_spans": {
+        "density": {
+          "median": 1.361373111436325,
+          "p90": 1.7173711154829703,
+          "maximum": 2.1602467584090483
+        },
+        "count": {
+          "median": 1.317216522493608,
+          "p90": 1.6050408720264082,
+          "maximum": 1.9493406399030653
+        },
+        "area": {
+          "median": 1.1952081659270473,
+          "p90": 1.3638343589115358,
+          "maximum": 1.6678362464638443
+        },
+        "old_area": {
+          "median": 1.1106037785848573,
+          "p90": 1.2931834634722434,
+          "maximum": 1.3990920234466404
+        },
+        "snapped_area": {
+          "median": 1.1731964329287994,
+          "p90": 1.3508761784711576,
+          "maximum": 1.6881684939030908
+        },
+        "complete_area": {
+          "median": 1.0207198291381905,
+          "p90": 1.0451319625333861,
+          "maximum": 1.1136625589834077
+        }
+      },
+      "centroid_error_m_all_observations": {
+        "median": 0.04710202083070585,
+        "p90": 0.1258329665731391,
+        "maximum": 0.4219473627432547
+      },
+      "reproduced_area_max_error_m2": 2.924251190083993e-07,
+      "metadata_sha256": {
+        "ideal/six_dense_steps-1009/manifest.json": "0ea9443829e59e14eff4d1f5cb6f32af3531c2bc1e539167b52d6ca8791dc33b",
+        "ideal/six_dense_steps-1009/clusters/clusters.json": "099a47d3e6adfe71ace9a40337540294d93543b99a7f279b43b01b9e00015926",
+        "ideal/six_dense_steps-2003/manifest.json": "9a1eaaa2433888d53dd9b507134f85eef9ca930b3631b5aa6b4034b56bc3e85d",
+        "ideal/six_dense_steps-2003/clusters/clusters.json": "ee6df08f2097f2d888f906cba62f59a49ef72f52de0242a6978316487582afff",
+        "ideal/six_dense_steps-3001/manifest.json": "aba95a3ff4500941087ec9507f714ee3f3e3dfa0b70f439d7b0820e91a564980",
+        "ideal/six_dense_steps-3001/clusters/clusters.json": "9c005a52a4b67d475aa54b687b28be47eb7ac30771ac8bf947d78b5eb040b343",
+        "ideal/six_dense_steps-4001/manifest.json": "1235aef0e705cbfb32a89ca9e804430cf6f48752f30a0eed09f724c4cb6563dd",
+        "ideal/six_dense_steps-4001/clusters/clusters.json": "be556b2fe372ac9f99efda3d9eae4fdac5c5ff43445255cfe2eca17bee41f581",
+        "ideal/six_density_steps-1009/manifest.json": "17c5444b93f13996eaa919b3b1ded66926b4c4edf06db5e001ed0d93fe413912",
+        "ideal/six_density_steps-1009/clusters/clusters.json": "36c7e2853e5476ef290c92e13f4d1b63361161c42e008f1530258597bd3b2931",
+        "ideal/six_density_steps-2003/manifest.json": "419678900522b57cd0b158458d273a580f6521a95a65c5316a10646a7c5d5a98",
+        "ideal/six_density_steps-2003/clusters/clusters.json": "97ee67ea9c779ef2c8574d9efb3b8429bfdde1357e7c4fcf9caa6f6d6d1923c9",
+        "ideal/six_density_steps-3001/manifest.json": "82a41981cd6e5c95b4bfa6a22ee3f0d5450c759940cf002431250839a1d5a047",
+        "ideal/six_density_steps-3001/clusters/clusters.json": "35cc320c94eb1d0f7709737830a5430bd851c7c8d771f7a132553190bcd4e6f6",
+        "ideal/six_density_steps-4001/manifest.json": "0b09bc88c274ec68bfa2fe6c988cf4ecc215c7c914b2199a2ffb9a2d5904b083",
+        "ideal/six_density_steps-4001/clusters/clusters.json": "ed1c5ef6c56c6b6af9e26ed86e157b8b98cf957127f2b6289b1fdc872bd1845d",
+        "ideal/six_equal_count-1009/manifest.json": "0faad574b881ab43caa2e9c876a10fc45b93e0ab1a939eaa935545eedd60396c",
+        "ideal/six_equal_count-1009/clusters/clusters.json": "d958cba816400897dc44776cb5a7252e2b15d924d0b2ca9ac99c84b8e43f0afa",
+        "ideal/six_equal_count-2003/manifest.json": "9a51ae86a9af4762c511359781afd3c4df554b62220cdf8befa6eee318ead83c",
+        "ideal/six_equal_count-2003/clusters/clusters.json": "81497ffb53687bdf84eb23438077e25d43687f5414f15c5b1b43b66d28e7a24b",
+        "ideal/six_equal_count-3001/manifest.json": "4b90adf6d43ae440aa8c7a8bbe417d670350790397b589e41e38037a5d4df125",
+        "ideal/six_equal_count-3001/clusters/clusters.json": "f182327c697877d2dcea05f87269b60e9c8a7b9d5c7ec618eee326016b566f72",
+        "ideal/six_equal_count-4001/manifest.json": "15069ecd97e85c5df1526f103a3435371c6e693d766262b7cd006465ccc67771",
+        "ideal/six_equal_count-4001/clusters/clusters.json": "7918dc6f5d64ab55d9e4d72440a70d22feedd10a2f55ab4206a86ef11f98d1b9",
+        "ideal/six_equal_density-1009/manifest.json": "6f8cc8959b43f9c0d7fddc2117c94e60227373280f534e37e5fdf5d6b5b1befc",
+        "ideal/six_equal_density-1009/clusters/clusters.json": "63e9bd89fb1cf6c9c939f66b3c07919fbd61f0c28703834c305054691718c8be",
+        "ideal/six_equal_density-2003/manifest.json": "57a678ebd3ee3818b25a9b72ef705089d482c11414a0ef8bedd56bb635cf7282",
+        "ideal/six_equal_density-2003/clusters/clusters.json": "1ea5defbf197ed08fa8f7393421bdb2973486534fc1daf9a896750f8a3da7431",
+        "ideal/six_equal_density-3001/manifest.json": "7f657774575242b8e22d58ec7b5dcb7e5eca87b1a33c8cb4808c583cc7fdbb92",
+        "ideal/six_equal_density-3001/clusters/clusters.json": "74e354884a6d42a958a01c1791b95c0f3398f5cafe0251fb8f872fe98656c75c",
+        "ideal/six_equal_density-4001/manifest.json": "5a8f4644be57d5c3d0c6eb9478ebe8602be9c6454ded3e2906725b10cc0b2d75",
+        "ideal/six_equal_density-4001/clusters/clusters.json": "ac051e2e3c142993b5c32dc98ee828efb3d892de80799c86e72b94777641f279",
+        "ideal/six_wide_steps-1009/manifest.json": "68a868834084b8c165f7a4fdd698523282f7a2d3a825086bf45c3546b8dc129e",
+        "ideal/six_wide_steps-1009/clusters/clusters.json": "803b613c07b92b0d26d69299afff49401a7a07dfa85afe1c19abc48df6480e3b",
+        "ideal/six_wide_steps-2003/manifest.json": "adf865a05af233758bdada2ce1becd1599f2b08bc2ad26efc560a17d9c71a4d6",
+        "ideal/six_wide_steps-2003/clusters/clusters.json": "f0b88b635d36a8c0c3c734f67e995fd1adfa78c98b6a8bbafa30012fa9260f54",
+        "ideal/six_wide_steps-3001/manifest.json": "d3f58f069e8face039ed0188d9d7935b59bc183641eb7efa063862c342512d93",
+        "ideal/six_wide_steps-3001/clusters/clusters.json": "c1a59dae73147e3d91055fe1d285791f3c6c0ee5b239b702fce094c6a560a0a6",
+        "ideal/six_wide_steps-4001/manifest.json": "650b58ed50c0ea7a6d4d9d36fd749901404919b861ba025af80dc10553643711",
+        "ideal/six_wide_steps-4001/clusters/clusters.json": "62d298c91ae0b45c7637ccd61cb6c44d900d55f866b05e4ae0d313338f33cd41"
+      }
+    },
+    "noisy": {
+      "fixed_membership_pairs": 111,
+      "ratio_spans": {
+        "density": {
+          "median": 1.353255949694257,
+          "p90": 1.7901468613838234,
+          "maximum": 2.765866267926082
+        },
+        "count": {
+          "median": 1.2913526848478134,
+          "p90": 1.673901452921444,
+          "maximum": 2.5092138070309242
+        },
+        "area": {
+          "median": 1.1885149907083923,
+          "p90": 1.3898965699429746,
+          "maximum": 1.7223698697570358
+        },
+        "old_area": {
+          "median": 1.0864599186073998,
+          "p90": 1.2792515339006414,
+          "maximum": 1.3969954556605009
+        },
+        "snapped_area": {
+          "median": 1.179573323440421,
+          "p90": 1.3301773745286272,
+          "maximum": 1.8244450520651128
+        },
+        "complete_area": {
+          "median": 1.0160343490608215,
+          "p90": 1.0369314480444676,
+          "maximum": 1.0622997310238662
+        }
+      },
+      "centroid_error_m_all_observations": {
+        "median": 0.04561502837093234,
+        "p90": 0.12310865256550683,
+        "maximum": 0.6716598840744162
+      },
+      "reproduced_area_max_error_m2": 2.1568696295659606e-07,
+      "metadata_sha256": {
+        "noisy/six_dense_steps-1009/manifest.json": "fb4e7cea4f5c89ae0bb4b1cd2c627b7eae2f8afb50529b8d7eadf1c8d3678371",
+        "noisy/six_dense_steps-1009/clusters/clusters.json": "eaf911f1f9e5939910228b35d5294adb6284324dc2f4b62a65d80486bebc5679",
+        "noisy/six_dense_steps-2003/manifest.json": "8ed99c0d03be301a3a77be037efb7f6efd64de751dfb01a590cfcdbf9c502099",
+        "noisy/six_dense_steps-2003/clusters/clusters.json": "700822f8d8ed426fe24dbbf57bd46a928dd7734d635b411de5cc138af23e4787",
+        "noisy/six_dense_steps-3001/manifest.json": "8b5c9fdf6bd9612b9cdf2b9157fbceb6c9c2edf32ced4b5751788cb5de08a084",
+        "noisy/six_dense_steps-3001/clusters/clusters.json": "d8f1833d371bd5f212cb96c4adc514622c87d6ddeecd4d9fdd6b59ef9d6c1727",
+        "noisy/six_dense_steps-4001/manifest.json": "1f644cf5209553e4c236798f52f64e81d63f33de34cf6c981a32757b9cb7ce8d",
+        "noisy/six_dense_steps-4001/clusters/clusters.json": "82c7ed5d3fdb8bd87ad196bc20cffce7a61acb1486a44320d5b191332f06455e",
+        "noisy/six_density_steps-1009/manifest.json": "54ed61250f3174a9d299ac6a36a955c783b4218915e8d9042992b864101f1930",
+        "noisy/six_density_steps-1009/clusters/clusters.json": "8c5c75b5ccf3d8a444163cedd973745a60dcd1a02cd5ec790137c6e0c693f67b",
+        "noisy/six_density_steps-2003/manifest.json": "e0910b4532a72389d18bb537c01690ef598a7e5d9929e1c7e853ec8d681a5a08",
+        "noisy/six_density_steps-2003/clusters/clusters.json": "753fdd7ce55d1ab3722b6d67ef86194f52d2e0351159d437a2c4f44d25919076",
+        "noisy/six_density_steps-3001/manifest.json": "bb58540d010bf845fc3f1c4a476b4b30acdb74ebb6cc3ff006c6fa4e2294799b",
+        "noisy/six_density_steps-3001/clusters/clusters.json": "f68e7f71aede43060644e4d30268f9775bf68e530f3fcd50820580091d36e7a8",
+        "noisy/six_density_steps-4001/manifest.json": "ce546e0b2cfc3594150bc57c8cf349a263877d8a8b82242e4e54330c29c2e964",
+        "noisy/six_density_steps-4001/clusters/clusters.json": "71f46a68edfcb19058658ee3ad163cf97f375a664a8c67c4f75d5cd9d4a5e934",
+        "noisy/six_equal_count-1009/manifest.json": "844df345c1b523648a26663e77ec86042280137f717f2b35a18a5d52efe79291",
+        "noisy/six_equal_count-1009/clusters/clusters.json": "c05e7ae0dc42b2ed206d4308a7b14353e655781d92842228c12483ed58fba003",
+        "noisy/six_equal_count-2003/manifest.json": "5cbad9f46e8d4aa4eb35fb6c205abda56442078e1628de8fb72011015e2dbb74",
+        "noisy/six_equal_count-2003/clusters/clusters.json": "5b6ec22efece7eb48665d91ee036782c6cb176047308d1e6536d992aaab1413b",
+        "noisy/six_equal_count-3001/manifest.json": "f40366673416497abe2bcb3210afa4b59cfd5e49153e48b6f08e9cd0fe5fff9a",
+        "noisy/six_equal_count-3001/clusters/clusters.json": "0c1217e7c9f526259e286e4f7f16d85cd85d1bb5ec09114a2e8681fbf556896c",
+        "noisy/six_equal_count-4001/manifest.json": "70a437bb333bb7f643e4e99116af29bce80fb6c2eb430808e98e333dbcedc7ec",
+        "noisy/six_equal_count-4001/clusters/clusters.json": "7bc1a2fb4238788b69390f39811813149376c5ceea99a67d3df39fa0a4d2c724",
+        "noisy/six_equal_density-1009/manifest.json": "48f42f908d31c98e1da8456454316ff1e557c697a4b0aa32368296cd0734cc45",
+        "noisy/six_equal_density-1009/clusters/clusters.json": "6077a71577b7e44d7e58822ef4289dbc9d456b70d9c8a02174d8f4d0d56c0984",
+        "noisy/six_equal_density-2003/manifest.json": "e9442e95ff5f8545c6bc0ccd910b23870ab19fa523721c230549d6d7a74a1f77",
+        "noisy/six_equal_density-2003/clusters/clusters.json": "152fd7a0f34a754a3b5ac13357d5181b68fc2fed0992671f0177e21e1470df8c",
+        "noisy/six_equal_density-3001/manifest.json": "46adf125ec4f2333954a1023e235a48fea5cf297308a0554848ad185524b1f30",
+        "noisy/six_equal_density-3001/clusters/clusters.json": "1312c61872388101dba5349dfdf54f18e190f1c99f0b781d7e7ca31b494e2be4",
+        "noisy/six_equal_density-4001/manifest.json": "53a09d0fa97aee86a8d5dbdf2e0c55fa1f552a7a5cf9b75e303d2dd289f7eaec",
+        "noisy/six_equal_density-4001/clusters/clusters.json": "65af95ddbc6323fb01723e0278a1261978be36699b9a93a7c4b47822dc445730",
+        "noisy/six_wide_steps-1009/manifest.json": "61ed9d1953ac4dd038e12edd54f30d16d2d92ea3bb1b3194166f1706b1ea39ec",
+        "noisy/six_wide_steps-1009/clusters/clusters.json": "59c5c5512d86e79f294b875132eb90df841ff52b69c452888da40dee5784e71e",
+        "noisy/six_wide_steps-2003/manifest.json": "74f4740da5992b6a461491817e9e3f961e5589ae3b299316e8a01d58dde65183",
+        "noisy/six_wide_steps-2003/clusters/clusters.json": "8b69d6d82a96653890692d6b4481a77be9eb4e139839479b32d4dc85603a33d4",
+        "noisy/six_wide_steps-3001/manifest.json": "db0a238df519e75d080cbeda143ac871e8d5638a58021416701dad6f8c1a4d8c",
+        "noisy/six_wide_steps-3001/clusters/clusters.json": "fa87f22e38b9e0aa2c8fa7be0438175b36cc7a3c5c3858a878873db9155f41e5",
+        "noisy/six_wide_steps-4001/manifest.json": "df7994b887d4f2354a77524b811d9272c45b51df7fa9b29647e46d4d105c66e0",
+        "noisy/six_wide_steps-4001/clusters/clusters.json": "0bff971e20bab56b7721870530607317c0c26747b38ce5b589eacc661bf6e780"
+      }
+    }
+  },
+  "isolated_sphere_arc_normalization": [
+    {
+      "off_axis_degrees": 0,
+      "arc_evidence": 1.0003516820216733,
+      "expected": 1
+    },
+    {
+      "off_axis_degrees": 20,
+      "arc_evidence": 1.0990122860283935,
+      "expected": 1
+    },
+    {
+      "off_axis_degrees": 35,
+      "arc_evidence": 1.3594855477608598,
+      "expected": 1
+    },
+    {
+      "off_axis_degrees": 45,
+      "arc_evidence": 1.7205441097021175,
+      "expected": 1
+    }
+  ]
+}

@@ -170,3 +170,6 @@ The calibration assumes the configured ball radius, HSV appearance, camera
 calibration, and ground plane. Count and footprint estimates remain approximate,
 particularly for tiny fragments and strongly overlapping balls. Runtime and
 remaining proportionality errors are quantified in the final reports.
+
+Follow-up: [view-consistency diagnosis](VIEW_DIAGNOSIS.md) separates count and
+footprint drift and identifies geometric and evidence-accounting limitations.
