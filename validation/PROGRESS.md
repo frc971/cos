@@ -1,7 +1,7 @@
-Current six-pile ideal acceptance passes 898 frames across 50 runs, including
-212 frames with all six true centroids visible. Noisy qualification is running;
-the goal remains open. See [COMPLEX_PROGRESS.md](COMPLEX_PROGRESS.md) and
-`acceptance/ideal-report.json` for current evidence. The results below describe
+Current six-pile acceptance passes 1,612 frames across 92 ideal/noisy runs,
+including 424 frames with all six true centroids visible. See
+[ACCEPTANCE.md](ACCEPTANCE.md) for current results, visibility limits, the
+requirement audit, images, and C++ reproduction commands. The results below describe
 the earlier, smaller layouts only. [SEVEN_CLUSTERS.md](SEVEN_CLUSTERS.md) records
 the historical seven-pile failure at 7871743; current acceptance maxes out at six.
 

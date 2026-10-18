@@ -1,0 +1,17 @@
+{
+  "ideal": {
+    "full_view_max_residual_range_m": 0.2622,
+    "full_view_max_residual_rms_m": 0.0686,
+    "worst_range_run": "basic/four-59/group-3"
+  },
+  "noisy": {
+    "full_view_max_residual_range_m": 0.2742,
+    "full_view_max_residual_rms_m": 0.0712,
+    "worst_range_run": "staggered/six_staggered-101/group-4"
+  },
+  "six_heatmap_example": {
+    "support_min": 48.5338,
+    "support_max": 52.7993,
+    "frames": 13
+  }
+}

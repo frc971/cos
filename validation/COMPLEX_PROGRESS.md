@@ -1,14 +1,19 @@
-Complex validation in progress (maximum six piles)
-=================================================
+Complex validation through six piles
+===================================
 
-Current status: ideal qualification passes all 898 frames in 50 runs. This
+Current status: both phases pass, totaling 1,612 frames in 92 runs; 424 frames
+have all six actual centroids visible. [ACCEPTANCE.md](ACCEPTANCE.md) contains
+the final requirement audit and physical limits. The history below records
+intermediate failures and verified milestones.
+
+Ideal qualification passed all 898 frames in 50 runs. This
 includes exact full-view counts for four, five, and six piles; mixed densities;
-elongated piles; irregular layouts with held-out seeds; camera entry/return;
+elongated piles; irregular layouts with additional seeds; camera entry/return;
 and 184 isolated-ball control frames. There are 212 frames with all six actual
 centroids visible. All matched geometry meets 0.35 m centroid / 0.30 m shape
 limits, with no false piles, ID switches, or identity conflicts. Twenty-eight
-C++ tests and the evaluator controls pass. Noise qualification is pending;
-the goal remains active. Current proof is under `acceptance/`.
+C++ tests and the evaluator controls pass. Noise qualification subsequently
+passed 714 frames in 42 runs on the same binaries. Proof is under `acceptance/`.
 
 The earlier completion claim was not supported by sufficient cluster-count
 coverage. The follow-up seven-pile diagnostic found real overmerging. Current
