@@ -77,3 +77,12 @@ the same lens remap using nearest-neighbor sampling. Transparent field meshes
 are omitted from the ID pass. These labels are not written into RGB images and
 are never input to the tracker. Counts report visibility, including partial
 silhouettes and image cropping; they are not assumed to reveal hidden balls.
+
+Cluster manifests also record `cluster_centroids_m` (means of the actual generated
+centers) and per-frame `visible_cluster_centroids`. A separate one-pixel point
+pass tests these centers against opaque field depth and the camera frustum;
+the distorted projection must also lie inside the output image. Fuel is omitted
+from this pass so a ball does not hide its own pile's semantic center. As with
+the ID pass, transparent field meshes do not occlude probes. These probes never
+enter RGB or tracker input. They distinguish a visible centroid from a few
+visible fragments whose centroid is behind a field structure or outside view.

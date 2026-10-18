@@ -1,7 +1,9 @@
-Follow-up seven-pile validation **fails**: all seven reference groups are visible
-in 52 frames, but two of four seeds merge foreground piles. See
-[SEVEN_CLUSTERS.md](SEVEN_CLUSTERS.md) for measurements, images, and C++ replay.
-The results below describe the earlier, smaller layouts only.
+Current six-pile ideal acceptance passes 898 frames across 50 runs, including
+212 frames with all six true centroids visible. Noisy qualification is running;
+the goal remains open. See [COMPLEX_PROGRESS.md](COMPLEX_PROGRESS.md) and
+`acceptance/ideal-report.json` for current evidence. The results below describe
+the earlier, smaller layouts only. [SEVEN_CLUSTERS.md](SEVEN_CLUSTERS.md) records
+the historical seven-pile failure at 7871743; current acceptance maxes out at six.
 
 Completed initial validation on root@dev-orin, 2026-10-18. All tests used simulated
 RGB, exact camera/robot poses, and separately recorded ground truth. No real

@@ -1,0 +1,1 @@
+Evaluator controls passed: strict/centroid visibility, eight defects, and partial detections.

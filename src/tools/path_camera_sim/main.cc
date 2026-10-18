@@ -227,6 +227,18 @@ void Run() {
         if (!cluster_arg.empty()) manifest["gamepieces"].back()["cluster_id"] = renderer.FuelClusterIds()[i];
       }
     }
+    std::vector<std::array<double, 3>> centroids(clusters.size());
+    std::vector<std::size_t> counts(clusters.size());
+    if (!cluster_arg.empty()) {
+      for (std::size_t i = 0; i < renderer.FuelPositions().size(); ++i) {
+        const auto group = renderer.FuelClusterIds()[i];
+        ++counts[group];
+        for (int axis = 0; axis < 3; ++axis) centroids[group][axis] += renderer.FuelPositions()[i][axis];
+      }
+      for (std::size_t g = 0; g < centroids.size(); ++g)
+        if (counts[g]) for (auto& coordinate : centroids[g]) coordinate /= counts[g];
+      manifest["cluster_centroids_m"] = centroids;
+    }
     for (size_t index = 0; index < poses.size(); ++index) {
       const auto& item = poses.at(index);
       const frc::Pose3d pose = ReadPose(item);
@@ -255,6 +267,31 @@ void Run() {
           if (id > 0 && id <= visible.size()) ++visible[id - 1];
         }
         manifest["frames"].back()["visible_fuel_pixels"] = visible;
+        if (!cluster_arg.empty()) {
+          const auto camera = CameraWorldToOpenCv(pose, camera_to_robot);
+          const auto probes = renderer.Render(camera, true, &centroids);
+          std::vector<bool> centroid_visible(centroids.size(), false);
+          for (int y = 0; y < probes.rows; ++y) for (int x = 0; x < probes.cols; ++x) {
+            const auto p = probes.at<cv::Vec3b>(y, x);
+            const std::size_t id = p[2] + (p[1] << 8) + (p[0] << 16);
+            if (id > 0 && id <= centroid_visible.size()) centroid_visible[id - 1] = true;
+          }
+          // The point pass tests the undistorted frustum and opaque field depth;
+          // also require its distorted projection to remain inside the output.
+          for (std::size_t g = 0; g < centroids.size(); ++g) {
+            if (!counts[g]) { centroid_visible[g] = false; continue; }
+            const auto& c = centroids[g];
+            const Eigen::Vector4d point = camera * Eigen::Vector4d(c[0], c[1], c[2], 1);
+            std::vector<cv::Point2d> pixel;
+            cv::projectPoints(std::vector<cv::Point3d>{{point[0], point[1], point[2]}},
+                cv::Vec3d{}, cv::Vec3d{}, camera_matrix,
+                map_x.empty() ? cv::Vec<double, 5>{} : intrinsics.ToDistortionCoefficients(), pixel);
+            centroid_visible[g] = centroid_visible[g] && counts[g] &&
+                pixel[0].x >= 0 && pixel[0].x < image_size.width &&
+                pixel[0].y >= 0 && pixel[0].y < image_size.height;
+          }
+          manifest["frames"].back()["visible_cluster_centroids"] = centroid_visible;
+        }
       }
     }
     std::ofstream output(layout_dir / "manifest.json");

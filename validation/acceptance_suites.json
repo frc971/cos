@@ -1,0 +1,11 @@
+[
+  {"name":"regression","scenarios":"scenarios.json","poses":"legacy_poses.json","seeds":[7,23],"full":true},
+  {"name":"regression-dynamic","scenarios":"scenarios.json","poses":"legacy_dynamic_poses.json","seeds":[7,23],"only":["two","elongated"],"centroid_gate":true},
+  {"name":"basic","scenarios":"complex_scenarios.json","poses":"complex_poses.json","seeds":[7,23,41,59],"full":true},
+  {"name":"mixed","scenarios":"complex_mixed_scenarios.json","poses":"complex_poses.json","seeds":[7,23,41,59,101,202],"full":true},
+  {"name":"staggered","scenarios":"staggered_scenarios.json","poses":"complex_poses.json","seeds":[101,202,313,419],"full":true},
+  {"name":"dynamic","scenarios":"complex_scenarios.json","poses":"complex_dynamic_poses.json","seeds":[7,23,41,59],"only":["six"],"centroid_gate":true},
+  {"name":"mixed-dynamic","scenarios":"complex_mixed_scenarios.json","poses":"complex_dynamic_poses.json","seeds":[101,202],"centroid_gate":true},
+  {"name":"isolated-specks","scenarios":"speck_scenarios.json","poses":"complex_poses.json","seeds":[7,23,41,59],"negative":true},
+  {"name":"swept-specks","scenarios":"speck_scenarios.json","poses":"complex_dynamic_poses.json","seeds":[7,23,41,59],"negative":true}
+]

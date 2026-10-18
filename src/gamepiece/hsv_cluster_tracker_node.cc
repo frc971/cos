@@ -30,6 +30,7 @@ constexpr float kFuelRadiusM = 0.075f;
 constexpr float kCellM = 0.1f;
 constexpr float kBandwidthM = 0.3f;
 constexpr float kMergeBandwidthM = 0.4f;
+constexpr float kModeOverlapD2 = 4.6051702f;  // 90% contour for a 2D Gaussian.
 
 auto Covariance(const std::vector<cv::Point2f>& points) -> cv::Matx22f {
   cv::Point2f mean{0.0f, 0.0f};
@@ -362,11 +363,23 @@ auto HSVClusterTrackerNode::ClusterGroundPoints() -> std::vector<kmeans_cluster_
       bool overlap = a.mass == 0 || b.mass == 0 ||
           (prior[first] >= 0 && prior[first] == prior[second]);
       if (!overlap) {
-        // Smoothing can bridge compact piles; their sample ellipses must overlap.
         const auto ma = a.sum / a.mass, mb = b.sum / b.mass, delta = ma - mb;
-        const auto covariance = a.square / a.mass - ma * ma.t() +
-            b.square / b.mass - mb * mb.t() + cv::Matx22f::eye() * (2 * kFuelRadiusM * kFuelRadiusM);
-        overlap = delta.dot(covariance.inv() * delta) <= 9.0f;
+        const auto ca = a.square / a.mass - ma * ma.t() + cv::Matx22f::eye() * (kFuelRadiusM * kFuelRadiusM);
+        const auto cb = b.square / b.mass - mb * mb.t() + cv::Matx22f::eye() * (kFuelRadiusM * kFuelRadiusM);
+        // Compare footprints at the pile resolution, rather than pixel noise.
+        const auto covariance = ca + cb + cv::Matx22f::eye() *
+            (2 * (kBandwidthM * kBandwidthM - kFuelRadiusM * kFuelRadiusM));
+        overlap = delta.dot(covariance.inv() * delta) <= kModeOverlapD2;
+        if (!overlap) {
+          // Distant sampling lobes of one elongated Gaussian can still belong
+          // together. Compare their weighted classification likelihoods.
+          const float n = a.mass + b.mass;
+          const auto mean = (a.sum + b.sum) / n;
+          const auto merged = (a.square + b.square) / n - mean * mean.t() + cv::Matx22f::eye() * (kFuelRadiusM * kFuelRadiusM);
+          const double gain = 0.5 * (n * std::log(cv::determinant(merged)) - a.mass * std::log(cv::determinant(ca)) - b.mass * std::log(cv::determinant(cb))) +
+              a.mass * std::log(a.mass / n) + b.mass * std::log(b.mass / n);
+          overlap = gain <= 0;
+        }
       }
       // Resolve weak entrants at 30 cm, but require a valley at 40 cm to split
       // untracked piles: sampling bumps along a broad pile should merge.

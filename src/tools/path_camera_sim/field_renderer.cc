@@ -115,6 +115,7 @@ auto MakeProgram() -> GLuint {
     out float light;
     void main() {
       gl_Position = mvp * vec4(position, 1.0);
+      gl_PointSize = 1.0;
       vec3 n = normalize(mat3(model) * normal);
       light = 0.55 + 0.45 * abs(dot(n, normalize(vec3(-0.4, 0.3, 1.0))));
     }
@@ -372,7 +373,8 @@ FieldRenderer::~FieldRenderer() {
   eglTerminate(display_);
 }
 
-auto FieldRenderer::Render(const Eigen::Matrix4d& world_to_camera, bool fuel_labels) -> cv::Mat {
+auto FieldRenderer::Render(const Eigen::Matrix4d& world_to_camera, bool fuel_labels,
+                          const std::vector<std::array<double, 3>>* probes) -> cv::Mat {
   glBindFramebuffer(GL_FRAMEBUFFER, frame_buffer_);
   if (fuel_labels) glClearColor(0, 0, 0, 1);
   else glClearColor(0.08f, 0.08f, 0.10f, 1.0f);
@@ -385,7 +387,7 @@ auto FieldRenderer::Render(const Eigen::Matrix4d& world_to_camera, bool fuel_lab
   const GLint mvp_uniform = glGetUniformLocation(program_, "mvp");
   const GLint model_uniform = glGetUniformLocation(program_, "model");
   const GLint color_uniform = glGetUniformLocation(program_, "color");
-  auto draw_one = [&](const Draw& draw, std::size_t label = 0) {
+  auto draw_one = [&](const Draw& draw, std::size_t label = 0, GLenum mode = GL_TRIANGLES) {
     const Matrix mvp = projection_ * camera * draw.model;
     glUniformMatrix4fv(mvp_uniform, 1, GL_FALSE, mvp.data());
     glUniformMatrix4fv(model_uniform, 1, GL_FALSE, draw.model.data());
@@ -399,13 +401,21 @@ auto FieldRenderer::Render(const Eigen::Matrix4d& world_to_camera, bool fuel_lab
                           reinterpret_cast<const void*>(static_cast<uintptr_t>(draw.normal_offset)));
     glEnableVertexAttribArray(0);
     glEnableVertexAttribArray(1);
-    glDrawElements(GL_TRIANGLES, draw.index_count, draw.index_type,
+    glDrawElements(mode, draw.index_count, draw.index_type,
                    reinterpret_cast<const void*>(draw.index_offset));
   };
   for (const auto& draw : draws_) {
     if (!draw.transparent) draw_one(draw);
   }
-  for (std::size_t i = 0; i < active_fuel_draws_.size(); ++i) {
+  if (probes && !staged_fuel_draws_.empty()) for (std::size_t i = 0; i < probes->size(); ++i) {
+    // Collapsed Fuel vertices rasterize a one-pixel point, depth-tested only
+    // against the field. Fuel itself must not hide its cluster's center.
+    auto probe = staged_fuel_draws_.front();
+    probe.model.block<3, 3>(0, 0) *= 1e-6f;
+    for (int axis = 0; axis < 3; ++axis) probe.model(axis, 3) = probes->at(i)[axis];
+    draw_one(probe, i + 1, GL_POINTS);
+  }
+  else if (!probes) for (std::size_t i = 0; i < active_fuel_draws_.size(); ++i) {
     if (!active_fuel_draws_[i].transparent) draw_one(active_fuel_draws_[i], i + 1);
   }
   std::vector<const Draw*> transparent;

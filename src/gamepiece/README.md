@@ -9,6 +9,11 @@ occlusion correction excludes arcs contradicted by non-yellow pixels.
 Clustering uses a 10 cm grid and density saddles at two scales: 30 cm resolves
 weak entering peaks, while 40 cm merges sampling bumps along broad piles.
 Untracked modes remain separate across a density valley of at least 25%.
+Before merging untracked modes, their centers must fall within the 90% contour
+of their combined covariance at the pile smoothing scale, or one Gaussian must
+explain their samples better than two classified Gaussians. This preserves
+compact separated piles and joins sampling lobes of elongated piles. Modes
+inside the same tracked footprint can merge.
 Established field centroids and covariance footprints keep a separate entering
 mode from inflating an existing pile. There is no fixed cluster count, k-means
 loss-driven splitting, covariance-spike trigger, or image-ellipse merging.
@@ -66,6 +71,14 @@ retained alongside this boundary-aware report. Negative evaluator controls
 check missed piles, false piles, geometry errors, ID changes, and misplaced
 partial detections: `python3 scripts/test_gamepiece_evaluator.py`.
 
+`--centroid-gate` uses a separate simulator field-depth point pass to require
+recall while the true cluster centroid is visible. It still records every
+four-ball reference miss in `misses` and `missed_observations`, and separately
+reports `centroid_visible_misses` and `hidden_centroid_misses`. Geometry, false
+predictions, duplicate IDs, cross-pile ID reuse, and lineage gates always apply.
+This handles field-occluded fragments without forcing a pile detection from an
+RGB patch indistinguishable from one ball. Full-view suites use strict counts.
+
 Validation must graduate through four, five, and six piles. The `complex_*`,
 `staggered_scenarios.json`, and `speck_scenarios.json` fixtures include unequal
 densities, an elongated pile, irregular layouts, camera entry/return, and
@@ -73,10 +86,22 @@ isolated-ball controls. See `validation/COMPLEX_PROGRESS.md` for current evidenc
 and the status of the full goal. Historical seven-pile reports describe the
 earlier failure; current acceptance scenarios max out at six.
 
+The reproducible matrix is `validation/acceptance_suites.json`. Run
+`scripts/gamepiece_acceptance.py run --phase ideal --root ROOT` on dev-orin
+from `/root`, after copying the scripts and top-level validation JSON files into
+`/root/cluster-validation`. Download the resulting manifests, cluster JSON, and
+`ideal-phase.json`; locally run the same script with `check --phase ideal
+--root DOWNLOADED_ROOT --fixtures validation`. Copy its `ideal-report.json` back
+to ROOT, then run the noisy phase with the same binaries. The runner refuses
+noise until the ideal report passes and verifies binary/fixture hashes. Checks
+require complete case/seed/frame coverage, four/five/six observed groups, and
+actual frames with all six centroids visible. Per-suite original strict reports
+remain alongside the centroid-gated camera sweeps.
+
 Visualize any simulator run directly:
 
 ```sh
-ssh root@dev-orin 'cd /root && ./tools/hsv_cluster_visualizer --sim_run=/root/cluster-validation/acceptance-six/basic-ideal/six-7 --output_dir=/root/cluster-validation/review-six'
+ssh root@dev-orin 'cd /root && ./tools/hsv_cluster_visualizer --sim_run=/root/cluster-validation/acceptance-final/basic-ideal/six-7 --output_dir=/root/cluster-validation/review-six'
 ```
 
 Outputs include camera/field views, per-frame and overall weighted heatmaps,

@@ -1,6 +1,15 @@
 Complex validation in progress (maximum six piles)
 =================================================
 
+Current status: ideal qualification passes all 898 frames in 50 runs. This
+includes exact full-view counts for four, five, and six piles; mixed densities;
+elongated piles; irregular layouts with held-out seeds; camera entry/return;
+and 184 isolated-ball control frames. There are 212 frames with all six actual
+centroids visible. All matched geometry meets 0.35 m centroid / 0.30 m shape
+limits, with no false piles, ID switches, or identity conflicts. Twenty-eight
+C++ tests and the evaluator controls pass. Noise qualification is pending;
+the goal remains active. Current proof is under `acceptance/`.
+
 The earlier completion claim was not supported by sufficient cluster-count
 coverage. The follow-up seven-pile diagnostic found real overmerging. Current
 work follows the revised scope through six piles; seven-pile reports remain
@@ -66,3 +75,22 @@ the actual visibility of the full cluster centroid. One frame's four ID-visible
 balls appear as one overlapping RGB patch behind a field structure. An
 independent field-depth centroid probe is being added; strict pixel-count
 reports will remain alongside centroid-visibility checks. The goal remains open.
+
+Fourth milestone: raw-moment overlap was too sensitive to sampling lobes in
+broad piles. Candidate footprints are now compared at the existing 30 cm pile
+scale using the 90% 2D Gaussian contour, with a joint-Gaussian classification
+likelihood check for distant lobes of one elongated distribution. The complete
+ideal matrix passes on unchanged simulated RGB. No fixed K or output count is
+used by the tracker. Failed intermediate matrices remain in
+`evidence/geometric-ideal-matrix.json` and `distribution-ideal-matrix.json`.
+
+Visibility qualification is independent of tracker output: a separate one-pixel
+point pass tests actual generated centroids against opaque field depth and the
+frustum, with a distorted-output bounds check. All 66 mixed-sweep RGB frames are
+byte-identical before/after adding probes. Three strict-count omissions involve
+four-ball fragments whose full centroids are hidden; all visible-centroid recall
+gates pass. Original strict count reports are retained in `acceptance/reports/`.
+The tracker never reads membership labels or centroid visibility. The evaluator
+now performs partial one-to-one matching with unmatched slots; its controls
+reject missing visible piles, false piles, geometry errors, ID changes,
+duplicate IDs, cross-pile ID reuse, and misplaced partial detections.

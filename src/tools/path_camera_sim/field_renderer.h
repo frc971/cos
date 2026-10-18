@@ -28,7 +28,8 @@ class FieldRenderer {
   FieldRenderer(const FieldRenderer&) = delete;
   auto operator=(const FieldRenderer&) -> FieldRenderer& = delete;
 
-  auto Render(const Eigen::Matrix4d& world_to_camera, bool fuel_labels = false) -> cv::Mat;
+  auto Render(const Eigen::Matrix4d& world_to_camera, bool fuel_labels = false,
+              const std::vector<std::array<double, 3>>* probes = nullptr) -> cv::Mat;
   void SetFuelLayout(double entropy, uint32_t seed);
   void SetFuelClusters(const std::vector<FuelCluster>& clusters,
                        double noise_m, uint32_t seed);
