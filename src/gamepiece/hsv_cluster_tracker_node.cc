@@ -175,31 +175,25 @@ void HSVClusterTrackerNode::ProcessFrame(
       continue;
     const frc::Translation2d stored{units::meter_t{track.position.x},
                                     units::meter_t{track.position.y}};
-    const auto p = robot_pose ? (stored - robot_pose->Translation())
-                                    .RotateBy(-robot_pose->Rotation())
-                              : stored;
+    const auto robot_relative_position =
+        robot_pose ? (stored - robot_pose->Translation())
+                         .RotateBy(-robot_pose->Rotation())
+                   : stored;
     const auto center =
         camera_extrinsics_cv_.get_minor<3, 3>(0, 0).t() *
-        (cv::Vec3f{-static_cast<float>(p.Y().value()), -kFuelRadiusM,
-                   static_cast<float>(p.X().value())} -
+        (cv::Vec3f{-static_cast<float>(robot_relative_position.Y().value()),
+                   -kFuelRadiusM,
+                   static_cast<float>(robot_relative_position.X().value())} -
          cv::Vec3f{camera_extrinsics_cv_(0, 3), camera_extrinsics_cv_(1, 3),
                    camera_extrinsics_cv_(2, 3)});
     if (center[2] <= kFuelRadiusM)
       continue;
-    const float x = center[0] / center[2], y = center[1] / center[2],
-                r2 = x * x + y * y;
-    const float radial =
-        1 + r2 * (distortion_coeffs_[0] +
-                  r2 * (distortion_coeffs_[1] + r2 * distortion_coeffs_[4]));
-    const float px = camera_intrinsics_(0, 0) *
-                         (x * radial + 2 * distortion_coeffs_[2] * x * y +
-                          distortion_coeffs_[3] * (r2 + 2 * x * x)) +
-                     camera_intrinsics_(0, 2);
-    const float py =
-        camera_intrinsics_(1, 1) *
-            (y * radial + distortion_coeffs_[2] * (r2 + 2 * y * y) +
-             2 * distortion_coeffs_[3] * x * y) +
-        camera_intrinsics_(1, 2);
+    const std::vector<cv::Point3f> camera_points{
+        {center[0], center[1], center[2]}};
+    std::vector<cv::Point2f> image_points;
+    cv::projectPoints(camera_points, cv::Vec3f{}, cv::Vec3f{},
+                      camera_intrinsics_, distortion_coeffs_, image_points);
+    const float px = image_points[0].x, py = image_points[0].y;
     const float margin =
         2 * camera_intrinsics_(0, 0) * kFuelRadiusM / center[2];
     if (px >= -margin && px < frame.cols + margin && py >= -margin &&
@@ -354,7 +348,7 @@ void HSVClusterTrackerNode::ProcessFrame(
   if (ground_points.empty())
     return;
   clusters_ = ClusterGroundPoints(image_points, ground_points, ground_weights,
-                                   refined_weights, robot_pose);
+                                  refined_weights, robot_pose);
   AssignPersistentIds(clusters_, robot_pose);
   EstimateDensities(frame, clusters_, robot_pose);
 }
@@ -540,16 +534,16 @@ void HSVClusterTrackerNode::EstimateDensities(
   const auto to_canonical = [&](cv::Point2f p) {
     const frc::Translation2d point{units::meter_t{p.x}, units::meter_t{p.y}};
     const auto q = robot_pose ? robot_pose->Translation() +
-                                   point.RotateBy(robot_pose->Rotation())
-                             : point;
+                                    point.RotateBy(robot_pose->Rotation())
+                              : point;
     return cv::Point2f{static_cast<float>(q.X().value()),
                        static_cast<float>(q.Y().value())};
   };
   const auto to_robot = [&](cv::Point2f p) {
     const frc::Translation2d point{units::meter_t{p.x}, units::meter_t{p.y}};
     const auto q = robot_pose ? (point - robot_pose->Translation())
-                                   .RotateBy(-robot_pose->Rotation())
-                             : point;
+                                    .RotateBy(-robot_pose->Rotation())
+                              : point;
     return cv::Vec2f{static_cast<float>(q.X().value()),
                      static_cast<float>(q.Y().value())};
   };
@@ -736,8 +730,8 @@ void HSVClusterTrackerNode::EstimateDensities(
       }
     }
     ++clusters[sphere.owner].verified_ball_count;
-    clusters[sphere.owner].verified_ball_centers.emplace_back(
-        sphere.ground[0], sphere.ground[1]);
+    clusters[sphere.owner].verified_ball_centers.emplace_back(sphere.ground[0],
+                                                              sphere.ground[1]);
     const std::vector<cv::Point> polygon(sphere.outline.begin(),
                                          sphere.outline.end());
     cv::fillConvexPoly(explained, polygon, 255);
@@ -1114,10 +1108,9 @@ void HSVClusterTrackerNode::AssignPersistentIds(
   std::vector<std::tuple<double, std::size_t, std::size_t>> matches;
   for (std::size_t i = 0; i < clusters.size(); ++i) {
     const auto offset = *clusters[i].robot_relative_translation;
-    positions.push_back(robot_pose
-                            ? robot_pose->Translation() +
-                                  offset.RotateBy(robot_pose->Rotation())
-                            : offset);
+    positions.push_back(robot_pose ? robot_pose->Translation() +
+                                         offset.RotateBy(robot_pose->Rotation())
+                                   : offset);
     for (std::size_t id = 0; id < canonical_positions_.size(); ++id) {
       const double distance =
           positions.back().Distance(canonical_positions_[id]).value();
