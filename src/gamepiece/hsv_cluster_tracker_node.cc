@@ -50,8 +50,7 @@ auto Covariance(const std::vector<cv::Point2f>& points) -> cv::Matx22f {
 HSVClusterTrackerNode::HSVClusterTrackerNode(
     std::string_view input_path, std::string_view output_path,
     cv::Matx33d intrinsics, cv::Matx44d extrinsics,
-    const cv::Vec<double, 5>& distortion_coeffs, std::size_t image_size,
-    const float max_ground_distance_m)
+    const cv::Vec<double, 5>& distortion_coeffs, std::size_t image_size)
     : input_path_(input_path),
       output_path_(output_path),
       dependencies_({{input_path_, typeid(camera::DecodedJpegBuffer)}}),
@@ -61,14 +60,9 @@ HSVClusterTrackerNode::HSVClusterTrackerNode(
       camera_intrinsics_(intrinsics),
       distortion_coeffs_(distortion_coeffs),
       camera_extrinsics_cv_(extrinsics),
-      max_ground_distance_m_(max_ground_distance_m),
       image_size_(image_size) {
   if (image_size_ == 0) {
     throw std::invalid_argument("Image size must be positive");
-  }
-  if (!std::isfinite(max_ground_distance_m_) || max_ground_distance_m_ <= 0) {
-    throw std::invalid_argument(
-        "Maximum ground distance must be finite and positive");
   }
   if (!std::isfinite(extrinsics(2, 3)) || extrinsics(2, 3) <= 0) {
     throw std::invalid_argument(
@@ -158,16 +152,12 @@ void HSVClusterTrackerNode::ProcessFrame(const cv::Mat& frame) {
   cv::undistortPoints(thresholded_points_, thresholded_points_,
                       camera_intrinsics_, distortion_coeffs_);
   CullAboveHorizon(thresholded_points_, camera_extrinsics_cv_);
-  std::erase_if(thresholded_points_, [this](const cv::Point2f& point) {
-    const double distance = NormalizedPointOffset(point).Norm().value();
-    return !std::isfinite(distance) || distance > max_ground_distance_m_;
-  });
   if (thresholded_points_.empty()) {
     return;
   }
-  bottom_columns_ = LowestPointsByColumn(
-      thresholded_points_, frame.cols,
-      static_cast<double>(camera_intrinsics_(0, 0)));
+  bottom_columns_ =
+      LowestPointsByColumn(thresholded_points_, frame.cols,
+                           static_cast<double>(camera_intrinsics_(0, 0)));
   clusters_ = AssignPersistentIds(
       MergeOverlappingClusters(KMeans(thresholded_points_, previous_clusters)));
 }
@@ -193,8 +183,8 @@ auto HSVClusterTrackerNode::GroundPoint(const cv::Point2f& point,
     // Interpolation can extrapolate across a rolled horizon at an end column.
     const auto projected = NormalizedPointOffset(ClampToHorizon(
         {point.x, InterpolatedLowestY(bottom_columns_, point.x)}));
-    if (std::isfinite(projected.Norm().value()) &&
-        projected.Norm().value() <= max_ground_distance_m_) {
+    if (std::isfinite(projected.X().value()) &&
+        std::isfinite(projected.Y().value())) {
       offset = projected;
     }
   }
@@ -274,9 +264,8 @@ auto HSVClusterTrackerNode::KMeans(
     assigned_clusters[i] = std::move(split[0]);
     assigned_clusters.push_back(std::move(split[1]));
   }
-  std::erase_if(assigned_clusters, [](const auto& cluster) {
-    return cluster.img_points.empty();
-  });
+  std::erase_if(assigned_clusters,
+                [](const auto& cluster) { return cluster.img_points.empty(); });
   const int k = static_cast<int>(assigned_clusters.size());
   std::vector<cv::Point2f> points, scaled_points;
   std::vector<int> initial_labels;
@@ -380,13 +369,12 @@ auto HSVClusterTrackerNode::MergeOverlappingClusters(
 }
 
 auto HSVClusterTrackerNode::AssignPersistentIds(
-    std::vector<kmeans_cluster_t> clusters)
-    -> std::vector<kmeans_cluster_t> {
+    std::vector<kmeans_cluster_t> clusters) -> std::vector<kmeans_cluster_t> {
   cluster_dsu_.Clear();
   cluster_dsu_.FillSets(clusters.size());
   const std::size_t canonical_count = canonical_positions_.size();
   std::vector<std::size_t> first_cluster(canonical_count + clusters.size(),
-                                        clusters.size());
+                                         clusters.size());
   // Match only positions from earlier frames, before updating any canonical.
   for (std::size_t i = 0; i < clusters.size(); ++i) {
     auto& cluster = clusters[i];
@@ -394,7 +382,8 @@ auto HSVClusterTrackerNode::AssignPersistentIds(
     cluster.id = canonical_positions_.size();
     double nearest_distance = std::numeric_limits<double>::infinity();
     for (std::size_t id = 0; id < canonical_count; ++id) {
-      const double distance = position.Distance(canonical_positions_[id]).value();
+      const double distance =
+          position.Distance(canonical_positions_[id]).value();
       if (distance <= kIdMatchToleranceM && distance < nearest_distance) {
         cluster.id = id;
         nearest_distance = distance;
