@@ -13,10 +13,14 @@
 #include <opencv2/core.hpp>
 
 #include "control_loop/node.h"
-#include "gamepiece/ellipse.h"
 #include "utils/disjoint_set_union.h"
 
 namespace gamepiece {
+struct Ellipse {
+  cv::Point2d center;
+  cv::Size2d semi_axes;
+  double rotation = 0.0;  // radians
+};
 
 using kmeans_cluster_t = struct KMeansCluster {
   cv::Point2f
@@ -59,7 +63,7 @@ class HSVClusterTrackerNode final : public control_loop::INode {
       cv::Matx33d intrinsics, cv::Matx44d extrinsics,
       const cv::Vec<double, 5>& distortion_coeffs,
       std::size_t image_size,  // Total pixels (width * height).
-      float max_ground_distance_m = 20.0f, std::string_view pose_path = "",
+      std::string_view pose_path = "",
       DensityHistory density_history = DensityHistory::kPredict,
       bool residual_density = true);
   // Processes a CPU BGR frame; callers must serialize access with callbacks.
@@ -129,7 +133,6 @@ class HSVClusterTrackerNode final : public control_loop::INode {
   cv::Matx33f camera_intrinsics_;
   cv::Vec<float, 5> distortion_coeffs_;
   cv::Matx44f camera_extrinsics_cv_;
-  float max_ground_distance_m_;
   static constexpr float kIdMatchToleranceM = 0.9f;
   cv::Mat frame_;
   cv::Mat density_map1_, density_map2_;

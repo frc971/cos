@@ -4,12 +4,6 @@ add_executable(image_utils_test image_utils_test.cc)
 target_link_libraries(image_utils_test PRIVATE image_utils GTest::gtest_main)
 add_test(NAME image_utils_test COMMAND image_utils_test)
 
-
-add_executable(ellipse_test ellipse_test.cc)
-target_link_libraries(ellipse_test PRIVATE ellipse opencv_imgproc
-  opencv_imgcodecs GTest::gtest_main)
-add_test(NAME ellipse_test COMMAND ellipse_test)
-
 add_executable(hsv_cluster_tracker_node_test hsv_cluster_tracker_node_test.cc)
 target_link_libraries(hsv_cluster_tracker_node_test PRIVATE
   hsv_cluster_tracker_node cos::nvjpeg_decode_node opencv_imgproc

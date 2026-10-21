@@ -230,7 +230,7 @@ TEST(HSVClusterTrackerTest, RejectsOneBallButRetainsASmallPile) {
   EXPECT_EQ(tracker.GetClusters()->size(), 1U);
 }
 TEST(HSVClusterTrackerNodeTest, ProcessesPaddedDeviceFrameWithPoseAndPublishesOnce) {
-  Tracker tracker("d", "c", kSphereIntrinsics, kExtrinsics, {}, 640 * 480, 20, "pose");
+  Tracker tracker("d", "c", kSphereIntrinsics, kExtrinsics, {}, 640 * 480, "pose");
   EXPECT_EQ(tracker.GetDependencies().size(), 2U);
   const auto image = SphereImage();
   auto frame = std::make_shared<camera::DecodedJpegBuffer>();
@@ -351,7 +351,6 @@ TEST(HSVClusterTrackerTest, ProjectsOntoFuelCenterPlaneInRobotAxes) {
   EXPECT_NEAR(point.X().value(), 1.85, 1e-6);
   EXPECT_NEAR(point.Y().value(), -0.37, 1e-6);
   EXPECT_THROW(Tracker("d", "c", kIntrinsics, kExtrinsics, {}, 0), std::invalid_argument);
-  EXPECT_THROW(Tracker("d", "c", kIntrinsics, kExtrinsics, {}, 1, 0), std::invalid_argument);
 }
 TEST(HSVClusterTrackerTest, HandlesEmptyThresholdAndHorizonWithoutClusters) {
   auto tracker = MakeTracker();

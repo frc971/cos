@@ -17,7 +17,6 @@
 
 #include "absl/log/check.h"
 #include "camera/nvjpeg_decode_node.h"
-#include "gamepiece/ellipse.h"
 #include "gamepiece/image_utils.h"
 #include "localization/position.h"
 #include "utils/cv_geometry.h"
@@ -61,8 +60,8 @@ HSVClusterTrackerNode::HSVClusterTrackerNode(
     std::string_view input_path, std::string_view output_path,
     cv::Matx33d intrinsics, cv::Matx44d extrinsics,
     const cv::Vec<double, 5>& distortion_coeffs, std::size_t image_size,
-    const float max_ground_distance_m, std::string_view pose_path,
-    DensityHistory density_history, bool residual_density)
+    std::string_view pose_path, DensityHistory density_history,
+    bool residual_density)
     : temporal_density_(density_history != DensityHistory::kNone),
       predictive_density_(density_history == DensityHistory::kPredict),
       residual_density_(residual_density),
@@ -75,14 +74,9 @@ HSVClusterTrackerNode::HSVClusterTrackerNode(
               output_path_)}),
       camera_intrinsics_(intrinsics),
       distortion_coeffs_(distortion_coeffs),
-      camera_extrinsics_cv_(extrinsics),
-      max_ground_distance_m_(max_ground_distance_m) {
+      camera_extrinsics_cv_(extrinsics) {
   if (image_size == 0) {
     throw std::invalid_argument("Image size must be positive");
-  }
-  if (!std::isfinite(max_ground_distance_m_) || max_ground_distance_m_ <= 0) {
-    throw std::invalid_argument(
-        "Maximum ground distance must be finite and positive");
   }
   if (!std::isfinite(extrinsics(2, 3)) || extrinsics(2, 3) <= kFuelRadiusM) {
     throw std::invalid_argument(
@@ -335,7 +329,7 @@ void HSVClusterTrackerNode::ProcessFrame(
       const float distance = (-kFuelRadiusM - camera_extrinsics_cv_(1, 3) -
                               kFuelRadiusM * normal[1]) /
                              ray[1];
-      if (distance <= 0 || distance > max_ground_distance_m_)
+      if (distance <= 0)
         continue;
       const float fraction =
           visible_fraction(distance * rays[i] + kFuelRadiusM * camera_normal);
@@ -497,7 +491,7 @@ void HSVClusterTrackerNode::EstimateDensities(const cv::Mat& frame) {
     if (ground_ray[1] <= 1e-5f)
       return sphere;
     const auto center = height / ground_ray[1] * ray;
-    if (center[2] <= kFuelRadiusM || cv::norm(center) > max_ground_distance_m_)
+    if (center[2] <= kFuelRadiusM)
       return sphere;
     sphere.depth = center[2];
     sphere.ground = camera + cv::Vec2f{ground_ray[2], -ground_ray[0]} *
@@ -614,7 +608,7 @@ void HSVClusterTrackerNode::EstimateDensities(const cv::Mat& frame) {
       for (const int sign : {-1, 1}) {
         const float distance =
             (height - sign * kFuelRadiusM * ground_normal[1]) / ground_ray[1];
-        if (distance <= 0 || distance > max_ground_distance_m_)
+        if (distance <= 0)
           continue;
         const auto center = distance * ray + sign * kFuelRadiusM * normal;
         const int px = cvRound(center[0] / center[2] * intrinsics(0, 0) +
@@ -777,7 +771,7 @@ void HSVClusterTrackerNode::EstimateDensities(const cv::Mat& frame) {
         continue;
       const float depth =
           evidence_depth(y, x) > 0 ? evidence_depth(y, x) : cluster_depths[i];
-      if (depth <= kFuelRadiusM || depth > max_ground_distance_m_)
+      if (depth <= kFuelRadiusM)
         continue;
       auto& evidence = clusters_[i].residual_ball_evidence;
       auto& total = clusters_[i].total_ball_evidence;
