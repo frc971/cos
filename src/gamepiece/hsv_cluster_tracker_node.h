@@ -8,8 +8,8 @@
 #include <string_view>
 #include <vector>
 
-#include <frc/geometry/Translation2d.h>
 #include <frc/geometry/Pose2d.h>
+#include <frc/geometry/Translation2d.h>
 #include <opencv2/core.hpp>
 
 #include "control_loop/node.h"
@@ -25,17 +25,22 @@ using kmeans_cluster_t = struct KMeansCluster {
   std::vector<cv::Point2f> img_points;
   std::optional<frc::Translation2d> robot_relative_translation = std::nullopt;
   std::vector<cv::Point2f> ground_points;  // Robot coordinates, meters.
-  std::vector<float> ground_weights;  // Visible silhouette support in Fuel equivalents.
+  std::vector<float>
+      ground_weights;  // Visible silhouette support in Fuel equivalents.
   cv::Matx22f ground_covar{};
   float fuel_count{};
   float density{};  // Estimated visible balls / physical Gaussian area.
   float estimated_ball_count{};
-  float density_area_m2{};  // Effective Gaussian footprint, with a ball-radius floor.
+  float
+      density_area_m2{};  // Effective Gaussian footprint, with a ball-radius floor.
   std::size_t verified_ball_count{};
   std::vector<cv::Point2f> verified_ball_centers;  // Robot coordinates, meters.
-  cv::Vec2f residual_ball_evidence{};  // Unexplained area / sphere area, arc / perimeter.
-  cv::Vec2f total_ball_evidence{};  // Geometry-normalized area and edge evidence.
-  float instantaneous_ball_count{};  // Current evidence before the temporal update.
+  cv::Vec2f
+      residual_ball_evidence{};  // Unexplained area / sphere area, arc / perimeter.
+  cv::Vec2f
+      total_ball_evidence{};  // Geometry-normalized area and edge evidence.
+  float
+      instantaneous_ball_count{};  // Current evidence before the temporal update.
   float instantaneous_density_area_m2{};
   std::size_t predicted_ball_count{}, reused_ball_count{};
   std::size_t id{};  // Persistent within one tracker instance.
@@ -55,7 +60,8 @@ class HSVClusterTrackerNode final : public control_loop::INode {
       const cv::Vec<double, 5>& distortion_coeffs,
       std::size_t image_size,  // Total pixels (width * height).
       float max_ground_distance_m = 20.0f, std::string_view pose_path = "",
-      DensityHistory density_history = DensityHistory::kPredict, bool residual_density = true);
+      DensityHistory density_history = DensityHistory::kPredict,
+      bool residual_density = true);
   // Processes a CPU BGR frame; callers must serialize access with callbacks.
   void ProcessFrame(const cv::Mat& frame,
                     std::optional<frc::Pose2d> robot_pose = std::nullopt);
@@ -82,8 +88,9 @@ class HSVClusterTrackerNode final : public control_loop::INode {
   auto ClusterGroundPoints() -> std::vector<kmeans_cluster_t>;
   void AssignPersistentIds();
   void EstimateDensities(const cv::Mat& frame);
-  static auto SphereArcWeight(const cv::Matx33f& intrinsics, const cv::Vec3f& ray,
-                              const cv::Vec2f& normal, float depth) -> float;
+  static auto SphereArcWeight(const cv::Matx33f& intrinsics,
+                              const cv::Vec3f& ray, const cv::Vec2f& normal,
+                              float depth) -> float;
   struct BallTrack {
     cv::Point2f position;  // Field coordinates when pose is available.
     std::size_t observations = 1, missed = 0, age = 0;

@@ -20,12 +20,12 @@ namespace gamepiece {
 // Input x values are undistorted;
 // x_scale converts them back to approximate image pixels.
 template <typename T>
-[[nodiscard]] auto LowestPointsByColumn(const std::vector<cv::Point_<T>>& points,
-                                       int image_width,
-                                       double x_scale = 1.0)
-    -> std::vector<cv::Point_<T>> {
+[[nodiscard]] auto LowestPointsByColumn(
+    const std::vector<cv::Point_<T>>& points, int image_width,
+    double x_scale = 1.0) -> std::vector<cv::Point_<T>> {
   const int column_frequency = std::max(1, image_width / 256);
-  if (points.empty()) return {};
+  if (points.empty())
+    return {};
   int min_x = std::numeric_limits<int>::max();
   int max_x = std::numeric_limits<int>::min();
   for (const auto& point : points) {
@@ -37,7 +37,8 @@ template <typename T>
   for (const auto& point : points) {
     const int x = cvRound(point.x * x_scale);
     auto [it, inserted] = lowest_by_x.emplace(x, point.y);
-    if (!inserted) it->second = std::max(it->second, point.y);
+    if (!inserted)
+      it->second = std::max(it->second, point.y);
   }
   std::vector<cv::Point_<T>> sampled;
   for (int x = min_x; x <= max_x; x += column_frequency) {
@@ -52,8 +53,8 @@ template <typename T>
   std::vector<cv::Point_<T>> result;
   for (int x = min_x; x <= max_x; x += column_frequency) {
     const T normalized_x = static_cast<T>(x / x_scale);
-    const auto right = std::ranges::lower_bound(sampled, normalized_x, {},
-                                                &cv::Point_<T>::x);
+    const auto right =
+        std::ranges::lower_bound(sampled, normalized_x, {}, &cv::Point_<T>::x);
     if (right == sampled.begin()) {
       result.emplace_back(normalized_x, right->y);
     } else if (right == sampled.end()) {
@@ -71,13 +72,16 @@ template <typename T>
 }
 
 template <typename T>
-[[nodiscard]] auto InterpolatedLowestY(const std::vector<cv::Point_<T>>& columns,
-                                      T x) -> T {
-  const auto right = std::ranges::lower_bound(columns, x, {},
-                                              &cv::Point_<T>::x);
-  if (right == columns.begin()) return right->y;
-  if (right == columns.end()) return columns.back().y;
-  if (right->x == x) return right->y;
+[[nodiscard]] auto InterpolatedLowestY(
+    const std::vector<cv::Point_<T>>& columns, T x) -> T {
+  const auto right =
+      std::ranges::lower_bound(columns, x, {}, &cv::Point_<T>::x);
+  if (right == columns.begin())
+    return right->y;
+  if (right == columns.end())
+    return columns.back().y;
+  if (right->x == x)
+    return right->y;
   const auto left = right - 1;
   const T fraction = (x - left->x) / (right->x - left->x);
   return left->y + fraction * (right->y - left->y);
@@ -144,8 +148,7 @@ void CullAboveHorizon(std::vector<T>& points,
 template <typename T, typename MatrixT>
 [[nodiscard]] auto UndistortedPinholePointOffset(
     const cv::Point_<T>& point, float world_relative_vertical,
-    const cv::Matx<MatrixT, 4, 4>& camera_extrinsics_cv)
-    -> frc::Translation2d {
+    const cv::Matx<MatrixT, 4, 4>& camera_extrinsics_cv) -> frc::Translation2d {
   const cv::Vec4d camera_ray =
       cv::Matx44d(camera_extrinsics_cv) * cv::Vec4d{point.x, point.y, 1.0, 0.0};
   const double ray_y = camera_ray[1];

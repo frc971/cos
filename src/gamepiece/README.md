@@ -46,6 +46,10 @@ frames and re-entry. Ground covariance and
 centroid are computed from projected samples, rather than projecting an image
 mean or covariance through a nonlinear transform.
 
+Pose-noise and blind-tracking measurements are in the
+[pose sensitivity report](../../validation/pose-sensitivity/RESULTS.md), including
+relative geometry, field error, ID changes, and density stability.
+
 Build and deploy:
 
 ```sh

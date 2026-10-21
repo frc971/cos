@@ -134,7 +134,8 @@ auto HSVProjectorNode::CreateCallback()
       std::vector<Pixel> pixels_to_project;
       pixels_to_project.reserve(thresholded_points_.size());
       for (std::size_t i = 0; i < thresholded_points_.size(); ++i) {
-        pixels_to_project.emplace_back(thresholded_points_[i], lowest_points[i]);
+        pixels_to_project.emplace_back(thresholded_points_[i],
+                                       lowest_points[i]);
       }
       CullAboveHorizon(pixels_to_project, extrinsics_cv_, &Pixel::first);
       CullAboveHorizon(pixels_to_project, extrinsics_cv_, &Pixel::second);
@@ -143,13 +144,13 @@ auto HSVProjectorNode::CreateCallback()
             UndistortedPinholePointOffset(bottom, 0, extrinsics_cv_);
         const cv::Vec4d robot_to_ball_top =
             robot_to_camera *
-            cv::Vec4d{extrinsics_cv_(0, 3) - ground.Y().value(),
-                      -ball_height_m,
+            cv::Vec4d{extrinsics_cv_(0, 3) - ground.Y().value(), -ball_height_m,
                       extrinsics_cv_(2, 3) + ground.X().value(), 1};
         const double image_height =
             bottom.y - robot_to_ball_top[1] / robot_to_ball_top[2];
         if (robot_to_ball_top[2] <= 0 || !std::isfinite(image_height) ||
-            image_height <= 0) continue;
+            image_height <= 0)
+          continue;
         const double height_fraction = (bottom.y - point.y) / image_height;
         if (height_fraction < 0.5) {
           continue;  // Omit the frontmost ball's lower half.
