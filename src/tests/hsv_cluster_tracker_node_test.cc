@@ -17,14 +17,11 @@ struct HSVClusterTrackerNodeTestPeer {
   }
   static auto Run(HSVClusterTrackerNode& tracker, const std::vector<cv::Point2f>& points,
                   std::optional<frc::Pose2d> pose = std::nullopt) {
-    tracker.robot_pose_ = pose;
-    tracker.ground_points_ = points;
-    tracker.ground_weights_.assign(points.size(), 0.1f);
-    tracker.refined_weights_ = tracker.ground_weights_;
-    tracker.thresholded_points_.clear();
-    for (const auto& p : points) tracker.thresholded_points_.push_back({-p.y / p.x, 0.925f / p.x});
-    tracker.clusters_ = tracker.ClusterGroundPoints();
-    tracker.AssignPersistentIds();
+    std::vector<cv::Point2f> image_points;
+    const std::vector<float> weights(points.size(), 0.1f);
+    for (const auto& p : points) image_points.push_back({-p.y / p.x, 0.925f / p.x});
+    tracker.clusters_ = tracker.ClusterGroundPoints(image_points, points, weights, weights, pose);
+    tracker.AssignPersistentIds(tracker.clusters_, pose);
     return *tracker.GetClusters();
   }
 };

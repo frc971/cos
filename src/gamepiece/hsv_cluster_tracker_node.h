@@ -89,9 +89,16 @@ class HSVClusterTrackerNode final : public control_loop::INode {
   friend struct HSVClusterTrackerNodeTestPeer;
   [[nodiscard]] auto NormalizedPointOffset(const cv::Point2f& point) const
       -> frc::Translation2d;
-  auto ClusterGroundPoints() -> std::vector<kmeans_cluster_t>;
-  void AssignPersistentIds();
-  void EstimateDensities(const cv::Mat& frame);
+  auto ClusterGroundPoints(
+      const std::vector<cv::Point2f>& image_points,
+      const std::vector<cv::Point2f>& ground_points,
+      const std::vector<float>& ground_weights,
+      const std::vector<float>& refined_weights,
+      const std::optional<frc::Pose2d>& robot_pose) const -> hsv_clusters_t;
+  void AssignPersistentIds(hsv_clusters_t& clusters,
+                          const std::optional<frc::Pose2d>& robot_pose);
+  void EstimateDensities(const cv::Mat& frame, hsv_clusters_t& clusters,
+                        const std::optional<frc::Pose2d>& robot_pose);
   static auto SphereArcWeight(const cv::Matx33f& intrinsics,
                               const cv::Vec3f& ray, const cv::Vec2f& normal,
                               float depth) -> float;
@@ -117,11 +124,8 @@ class HSVClusterTrackerNode final : public control_loop::INode {
   std::vector<control_loop::MessageDescriptor> dependencies_;
   std::vector<control_loop::MessageDescriptor> publications_;
   std::mutex processing_mutex_;
-  std::vector<cv::Point2f> thresholded_points_;
-  std::vector<cv::Point2f> ground_points_;
-  std::vector<float> ground_weights_;
-  std::vector<float> refined_weights_;
-  std::optional<frc::Pose2d> robot_pose_;
+  // Retained for callbacks without a new pose and coordinate-mode changes.
+  std::optional<frc::Pose2d> last_robot_pose_;
   std::vector<kmeans_cluster_t> clusters_;
   // Indexed by ID; field positions when a robot pose is provided.
   // Retain positions through empty frames for re-entry matching.
@@ -135,7 +139,7 @@ class HSVClusterTrackerNode final : public control_loop::INode {
   cv::Matx44f camera_extrinsics_cv_;
   static constexpr float kIdMatchToleranceM = 0.9f;
   cv::Mat frame_;
-  cv::Mat density_map1_, density_map2_;
+  cv::Mat density_map1_, density_map2_;  // Cached calibration maps by image size.
   frc::Translation2d extrinsics_offset_;
 };
 

@@ -100,7 +100,7 @@ auto HSVClusterTrackerNode::CreateCallback()
       return;
     }
     std::optional<frc::Pose2d> pose =
-        pose_path_.empty() ? std::nullopt : robot_pose_;
+        pose_path_.empty() ? std::nullopt : last_robot_pose_;
     if (!pose_path_.empty()) {
       const auto* estimate =
           context->GetMessage<localization::PositionEstimateMessage>(
@@ -162,12 +162,8 @@ auto HSVClusterTrackerNode::RobotRelativeOffset(const cv::Point2f& point) const
 
 void HSVClusterTrackerNode::ProcessFrame(
     const cv::Mat& frame, std::optional<frc::Pose2d> robot_pose) {
-  if (robot_pose && (!std::isfinite(robot_pose->X().value()) ||
-                     !std::isfinite(robot_pose->Y().value()) ||
-                     !std::isfinite(robot_pose->Rotation().Radians().value())))
-    throw std::invalid_argument("Robot pose must be finite");
   // Switching coordinate frames invalidates the old ID map.
-  if (robot_pose.has_value() != robot_pose_.has_value()) {
+  if (robot_pose.has_value() != last_robot_pose_.has_value()) {
     canonical_positions_.clear();
     canonical_covariances_.clear();
     ball_tracks_.clear();
@@ -176,7 +172,7 @@ void HSVClusterTrackerNode::ProcessFrame(
   for (auto& track : ball_tracks_) {
     ++track.age;
     if (frame.empty())
-      continue;  // A missing sensor frame is not negative evidence.
+      continue;
     const frc::Translation2d stored{units::meter_t{track.position.x},
                                     units::meter_t{track.position.y}};
     const auto p = robot_pose ? (stored - robot_pose->Translation())
@@ -214,18 +210,15 @@ void HSVClusterTrackerNode::ProcessFrame(
                 [](const auto& t) { return t.missed > 8 || t.age > 1000; });
   for (auto& state : density_states_)
     ++state.missed;
-  robot_pose_ = robot_pose;
+  last_robot_pose_ = robot_pose;
   clusters_.clear();
-  thresholded_points_.clear();
-  ground_points_.clear();
-  ground_weights_.clear();
-  refined_weights_.clear();
   if (frame.empty())
     return;
+  std::vector<cv::Point2f> image_points, ground_points;
+  std::vector<float> ground_weights, refined_weights;
   HSVThreshold(frame, hsv_color_range.first, hsv_color_range.second,
-               minimum_saturation, thresholded_points_, hsv_image_,
-               hsv_masked_);
-  if (thresholded_points_.empty())
+               minimum_saturation, image_points, hsv_image_, hsv_masked_);
+  if (image_points.empty())
     return;
   // Every silhouette tangent constrains a sphere center, without separating balls.
   // For unit ray u and inward perpendicular v, center = t*u + radius*v.
@@ -233,7 +226,7 @@ void HSVClusterTrackerNode::ProcessFrame(
   std::vector<std::vector<cv::Point>> contours;
   cv::findContours(hsv_masked_, contours, cv::RETR_EXTERNAL,
                    cv::CHAIN_APPROX_NONE);
-  thresholded_points_.clear();
+  image_points.clear();
   const cv::Matx33f rotation = camera_extrinsics_cv_.get_minor<3, 3>(0, 0);
   cv::Mat1f inside, outside;
   cv::distanceTransform(hsv_masked_, inside, cv::DIST_L2, 3);
@@ -337,14 +330,14 @@ void HSVClusterTrackerNode::ProcessFrame(
       const auto offset = frc::Translation2d{units::meter_t{center[2]},
                                              units::meter_t{-center[0]}} +
                           extrinsics_offset_;
-      const auto position = robot_pose_
-                                ? robot_pose_->Translation() +
-                                      offset.RotateBy(robot_pose_->Rotation())
+      const auto position = robot_pose
+                                ? robot_pose->Translation() +
+                                      offset.RotateBy(robot_pose->Rotation())
                                 : offset;
       const cv::Point2f ground{static_cast<float>(position.X().value()),
                                static_cast<float>(position.Y().value())};
-      if (robot_pose_ && (ground.x < 4.6f || ground.x > 11.94f ||
-                          ground.y < 0.0f || ground.y > 8.07f))
+      if (robot_pose && (ground.x < 4.6f || ground.x > 11.94f ||
+                         ground.y < 0.0f || ground.y > 8.07f))
         continue;
       // Inverse angular perimeter balances near/far silhouettes; hidden arcs
       // contribute no mass, so fuel_count estimates visible support, not inventory.
@@ -352,17 +345,18 @@ void HSVClusterTrackerNode::ProcessFrame(
           distance /
           (2 * std::numbers::pi_v<float> * kFuelRadiusM *
            std::sqrt(camera_intrinsics_(0, 0) * camera_intrinsics_(1, 1)));
-      thresholded_points_.push_back(normalized[i]);
-      ground_points_.push_back(ground);
-      ground_weights_.push_back(weight);
-      refined_weights_.push_back(fraction > 0 ? weight / fraction : 0.0f);
+      image_points.push_back(normalized[i]);
+      ground_points.push_back(ground);
+      ground_weights.push_back(weight);
+      refined_weights.push_back(fraction > 0 ? weight / fraction : 0.0f);
     }
   }
-  if (ground_points_.empty())
+  if (ground_points.empty())
     return;
-  clusters_ = ClusterGroundPoints();
-  AssignPersistentIds();
-  EstimateDensities(frame);
+  clusters_ = ClusterGroundPoints(image_points, ground_points, ground_weights,
+                                   refined_weights, robot_pose);
+  AssignPersistentIds(clusters_, robot_pose);
+  EstimateDensities(frame, clusters_, robot_pose);
 }
 
 auto HSVClusterTrackerNode::SphereArcWeight(const cv::Matx33f& intrinsics,
@@ -377,8 +371,10 @@ auto HSVClusterTrackerNode::SphereArcWeight(const cv::Matx33f& intrinsics,
           cv::norm(ray));
 }
 
-void HSVClusterTrackerNode::EstimateDensities(const cv::Mat& frame) {
-  if (clusters_.empty())
+void HSVClusterTrackerNode::EstimateDensities(
+    const cv::Mat& frame, hsv_clusters_t& clusters,
+    const std::optional<frc::Pose2d>& robot_pose) {
+  if (clusters.empty())
     return;
   constexpr int kOutline = 32;
   static const auto circle = [] {
@@ -418,7 +414,7 @@ void HSVClusterTrackerNode::EstimateDensities(const cv::Mat& frame) {
   const cv::Vec3f camera_position{camera_extrinsics_cv_(0, 3),
                                   camera_extrinsics_cv_(1, 3),
                                   camera_extrinsics_cv_(2, 3)};
-  for (const auto& c : clusters_) {
+  for (const auto& c : clusters) {
     const auto& p = *c.robot_relative_translation;
     const auto position =
         rotation.t() *
@@ -543,17 +539,17 @@ void HSVClusterTrackerNode::EstimateDensities(const cv::Mat& frame) {
   std::vector<Sphere> candidates;
   const auto to_canonical = [&](cv::Point2f p) {
     const frc::Translation2d point{units::meter_t{p.x}, units::meter_t{p.y}};
-    const auto q = robot_pose_ ? robot_pose_->Translation() +
-                                     point.RotateBy(robot_pose_->Rotation())
-                               : point;
+    const auto q = robot_pose ? robot_pose->Translation() +
+                                   point.RotateBy(robot_pose->Rotation())
+                             : point;
     return cv::Point2f{static_cast<float>(q.X().value()),
                        static_cast<float>(q.Y().value())};
   };
   const auto to_robot = [&](cv::Point2f p) {
     const frc::Translation2d point{units::meter_t{p.x}, units::meter_t{p.y}};
-    const auto q = robot_pose_ ? (point - robot_pose_->Translation())
-                                     .RotateBy(-robot_pose_->Rotation())
-                               : point;
+    const auto q = robot_pose ? (point - robot_pose->Translation())
+                                   .RotateBy(-robot_pose->Rotation())
+                             : point;
     return cv::Vec2f{static_cast<float>(q.X().value()),
                      static_cast<float>(q.Y().value())};
   };
@@ -648,7 +644,7 @@ void HSVClusterTrackerNode::EstimateDensities(const cv::Mat& frame) {
   std::vector<cv::Vec2f> centers;
   std::vector<cv::Matx22f> inverse_footprints;
   std::vector<float> cluster_depths;
-  for (const auto& c : clusters_) {
+  for (const auto& c : clusters) {
     const auto& p = *c.robot_relative_translation;
     centers.emplace_back(p.X().value(), p.Y().value());
     inverse_footprints.push_back(
@@ -659,8 +655,8 @@ void HSVClusterTrackerNode::EstimateDensities(const cv::Mat& frame) {
          (cv::Vec3f{-point[1], -kFuelRadiusM, point[0]} - camera_position))[2]);
   }
   const auto owner = [&](const cv::Vec2f& point, float limit) {
-    std::size_t result = clusters_.size();
-    for (std::size_t i = 0; i < clusters_.size(); ++i) {
+    std::size_t result = clusters.size();
+    for (std::size_t i = 0; i < clusters.size(); ++i) {
       const auto d = point - centers[i];
       const float distance = d.dot(inverse_footprints[i] * d);
       if (distance < limit) {
@@ -680,7 +676,7 @@ void HSVClusterTrackerNode::EstimateDensities(const cv::Mat& frame) {
   cv::Mat1i evidence_owner(mask.size(), -1);
   for (const auto& sphere : candidates) {
     const auto i = owner(sphere.ground, 16);
-    if (i == clusters_.size())
+    if (i == clusters.size())
       continue;
     std::vector<cv::Point> polygon(sphere.outline.begin(),
                                    sphere.outline.end());
@@ -701,13 +697,13 @@ void HSVClusterTrackerNode::EstimateDensities(const cv::Mat& frame) {
     const bool predicted =
         sphere.track != std::numeric_limits<std::size_t>::max();
     sphere.owner = owner(sphere.ground, 9);
-    if (sphere.owner == clusters_.size() ||
+    if (sphere.owner == clusters.size() ||
         std::ranges::any_of(verified, [&](const auto& other) {
           return cv::norm(sphere.pixel - other.pixel) < 2.5;
         }))
       continue;
     if (predicted)
-      ++clusters_[sphere.owner].predicted_ball_count;
+      ++clusters[sphere.owner].predicted_ball_count;
     if (!predicted && sphere.score < .30f)
       continue;
     float unique = 0;
@@ -729,7 +725,7 @@ void HSVClusterTrackerNode::EstimateDensities(const cv::Mat& frame) {
         ++track.observations;
         track.missed = track.age = 0;
         sphere.ground = to_robot(track.position);
-        ++clusters_[sphere.owner].reused_ball_count;
+        ++clusters[sphere.owner].reused_ball_count;
       } else {
         const auto position =
             to_canonical({sphere.ground[0], sphere.ground[1]});
@@ -739,8 +735,8 @@ void HSVClusterTrackerNode::EstimateDensities(const cv::Mat& frame) {
           ball_tracks_.push_back({position});
       }
     }
-    ++clusters_[sphere.owner].verified_ball_count;
-    clusters_[sphere.owner].verified_ball_centers.emplace_back(
+    ++clusters[sphere.owner].verified_ball_count;
+    clusters[sphere.owner].verified_ball_centers.emplace_back(
         sphere.ground[0], sphere.ground[1]);
     const std::vector<cv::Point> polygon(sphere.outline.begin(),
                                          sphere.outline.end());
@@ -767,14 +763,14 @@ void HSVClusterTrackerNode::EstimateDensities(const cv::Mat& frame) {
       const auto i = evidence_owner(y, x) >= 0
                          ? static_cast<std::size_t>(evidence_owner(y, x))
                          : owner(plane_point, 16);
-      if (i == clusters_.size())
+      if (i == clusters.size())
         continue;
       const float depth =
           evidence_depth(y, x) > 0 ? evidence_depth(y, x) : cluster_depths[i];
       if (depth <= kFuelRadiusM)
         continue;
-      auto& evidence = clusters_[i].residual_ball_evidence;
-      auto& total = clusters_[i].total_ball_evidence;
+      auto& evidence = clusters[i].residual_ball_evidence;
+      auto& total = clusters[i].total_ball_evidence;
       const float fx = intrinsics(0, 0), fy = intrinsics(1, 1),
                   norm = cv::norm(ray);
       if (area) {
@@ -793,7 +789,7 @@ void HSVClusterTrackerNode::EstimateDensities(const cv::Mat& frame) {
           evidence[1] += weight;
       }
     }
-  for (auto& c : clusters_) {
+  for (auto& c : clusters) {
     c.instantaneous_ball_count =
         residual_density_
             ? c.verified_ball_count +
@@ -810,7 +806,7 @@ void HSVClusterTrackerNode::EstimateDensities(const cv::Mat& frame) {
         if (track.missed == 0 || track.missed > 3)
           continue;
         const auto point = to_robot(track.position);
-        if (owner(point, 9) == static_cast<std::size_t>(&c - clusters_.data()))
+        if (owner(point, 9) == static_cast<std::size_t>(&c - clusters.data()))
           footprint.emplace_back(point[0], point[1]);
       }
     if (footprint.size() >= 3)
@@ -826,7 +822,7 @@ void HSVClusterTrackerNode::EstimateDensities(const cv::Mat& frame) {
     c.estimated_ball_count = c.instantaneous_ball_count;
     if (temporal_density_) {
       const float angle =
-          robot_pose_ ? robot_pose_->Rotation().Radians().value() : 0;
+          robot_pose ? robot_pose->Rotation().Radians().value() : 0;
       const cv::Matx22f field_rotation{std::cos(angle), -std::sin(angle),
                                        std::sin(angle), std::cos(angle)};
       covariance = field_rotation * covariance * field_rotation.t();
@@ -865,11 +861,15 @@ void HSVClusterTrackerNode::EstimateDensities(const cv::Mat& frame) {
   }
 }
 
-auto HSVClusterTrackerNode::ClusterGroundPoints()
-    -> std::vector<kmeans_cluster_t> {
+auto HSVClusterTrackerNode::ClusterGroundPoints(
+    const std::vector<cv::Point2f>& image_points,
+    const std::vector<cv::Point2f>& ground_points,
+    const std::vector<float>& ground_weights,
+    const std::vector<float>& refined_weights,
+    const std::optional<frc::Pose2d>& robot_pose) const -> hsv_clusters_t {
   // A fixed physical bandwidth groups piles rather than individual ball silhouettes.
-  cv::Point2f origin = ground_points_.front(), maximum = origin;
-  for (const auto& p : ground_points_) {
+  cv::Point2f origin = ground_points.front(), maximum = origin;
+  for (const auto& p : ground_points) {
     origin.x = std::min(origin.x, p.x);
     origin.y = std::min(origin.y, p.y);
     maximum.x = std::max(maximum.x, p.x);
@@ -882,13 +882,13 @@ auto HSVClusterTrackerNode::ClusterGroundPoints()
       static_cast<int>((maximum.y - origin.y + 1.5f) / kCellM) + 1;
   cv::Mat1f density(height, width, 0.0f);
   std::vector<int> cells;
-  for (std::size_t i = 0; i < ground_points_.size(); ++i) {
-    const auto p = (ground_points_[i] - origin) / kCellM;
+  for (std::size_t i = 0; i < ground_points.size(); ++i) {
+    const auto p = (ground_points[i] - origin) / kCellM;
     const int cell = static_cast<int>(p.y) * width + static_cast<int>(p.x);
     cells.push_back(cell);
     // Verified outlines carry geometry; retain weak votes for partial entrants.
     density(cell / width, cell % width) +=
-        std::max(refined_weights_[i], 0.1f * ground_weights_[i]);
+        std::max(refined_weights[i], 0.1f * ground_weights[i]);
   }
   cv::Mat1f coarse;
   cv::GaussianBlur(density, coarse, {}, kMergeBandwidthM / kCellM);
@@ -956,8 +956,8 @@ auto HSVClusterTrackerNode::ClusterGroundPoints()
     if (basin[cells[i]] < 0)
       continue;
     auto& m = moments[basin[cells[i]]];
-    const float w = std::max(refined_weights_[i], 0.1f * ground_weights_[i]);
-    const cv::Vec2f p{ground_points_[i].x, ground_points_[i].y};
+    const float w = std::max(refined_weights[i], 0.1f * ground_weights[i]);
+    const cv::Vec2f p{ground_points[i].x, ground_points[i].y};
     m.mass += w;
     m.sum += w * p;
     m.square += w * (p * p.t());
@@ -1050,11 +1050,11 @@ auto HSVClusterTrackerNode::ClusterGroundPoints()
       raw_weights.emplace_back();
     }
     auto& cluster = result[indices[root]];
-    cluster.img_points.push_back(thresholded_points_[i]);
-    cluster.ground_points.push_back(ground_points_[i]);
-    cluster.ground_weights.push_back(refined_weights_[i]);
-    raw_weights[indices[root]].push_back(ground_weights_[i]);
-    cluster.fuel_count += ground_weights_[i];
+    cluster.img_points.push_back(image_points[i]);
+    cluster.ground_points.push_back(ground_points[i]);
+    cluster.ground_weights.push_back(refined_weights[i]);
+    raw_weights[indices[root]].push_back(ground_weights[i]);
+    cluster.fuel_count += ground_weights[i];
   }
   for (std::size_t index = 0; index < result.size(); ++index) {
     auto& c = result[index];
@@ -1085,21 +1085,21 @@ auto HSVClusterTrackerNode::ClusterGroundPoints()
     }
     auto position =
         frc::Translation2d{units::meter_t{center.x}, units::meter_t{center.y}};
-    if (robot_pose_)
-      position = (position - robot_pose_->Translation())
-                     .RotateBy(-robot_pose_->Rotation());
+    if (robot_pose)
+      position = (position - robot_pose->Translation())
+                     .RotateBy(-robot_pose->Rotation());
     c.robot_relative_translation = position;
     // Store public samples and covariance in robot coordinates.
-    if (robot_pose_) {
-      const float a = -robot_pose_->Rotation().Radians().value();
+    if (robot_pose) {
+      const float a = -robot_pose->Rotation().Radians().value();
       const cv::Matx22f rotation{std::cos(a), -std::sin(a), std::sin(a),
                                  std::cos(a)};
       c.ground_covar = rotation * c.ground_covar * rotation.t();
       for (auto& p : c.ground_points) {
         const auto q =
             rotation *
-            cv::Vec2f{p.x - static_cast<float>(robot_pose_->X().value()),
-                      p.y - static_cast<float>(robot_pose_->Y().value())};
+            cv::Vec2f{p.x - static_cast<float>(robot_pose->X().value()),
+                      p.y - static_cast<float>(robot_pose->Y().value())};
         p = {q[0], q[1]};
       }
     }
@@ -1108,14 +1108,15 @@ auto HSVClusterTrackerNode::ClusterGroundPoints()
   return result;
 }
 
-void HSVClusterTrackerNode::AssignPersistentIds() {
+void HSVClusterTrackerNode::AssignPersistentIds(
+    hsv_clusters_t& clusters, const std::optional<frc::Pose2d>& robot_pose) {
   std::vector<frc::Translation2d> positions;
   std::vector<std::tuple<double, std::size_t, std::size_t>> matches;
-  for (std::size_t i = 0; i < clusters_.size(); ++i) {
-    const auto offset = *clusters_[i].robot_relative_translation;
-    positions.push_back(robot_pose_
-                            ? robot_pose_->Translation() +
-                                  offset.RotateBy(robot_pose_->Rotation())
+  for (std::size_t i = 0; i < clusters.size(); ++i) {
+    const auto offset = *clusters[i].robot_relative_translation;
+    positions.push_back(robot_pose
+                            ? robot_pose->Translation() +
+                                  offset.RotateBy(robot_pose->Rotation())
                             : offset);
     for (std::size_t id = 0; id < canonical_positions_.size(); ++id) {
       const double distance =
@@ -1126,25 +1127,25 @@ void HSVClusterTrackerNode::AssignPersistentIds() {
   }
   std::vector<cv::Matx22f> covariances;
   const float angle =
-      robot_pose_ ? robot_pose_->Rotation().Radians().value() : 0.0f;
+      robot_pose ? robot_pose->Rotation().Radians().value() : 0.0f;
   const cv::Matx22f rotation{std::cos(angle), -std::sin(angle), std::sin(angle),
                              std::cos(angle)};
-  for (const auto& cluster : clusters_)
+  for (const auto& cluster : clusters)
     covariances.push_back(rotation * cluster.ground_covar * rotation.t());
   std::ranges::sort(matches);
   std::vector<bool> used(canonical_positions_.size(), false),
-      assigned(clusters_.size(), false);
+      assigned(clusters.size(), false);
   for (const auto& [distance, i, id] : matches) {
     if (used[id] || assigned[i])
       continue;
-    clusters_[i].id = id;
+    clusters[i].id = id;
     used[id] = assigned[i] = true;
     canonical_positions_[id] = positions[i];
     canonical_covariances_[id] = covariances[i];
   }
-  for (std::size_t i = 0; i < clusters_.size(); ++i)
+  for (std::size_t i = 0; i < clusters.size(); ++i)
     if (!assigned[i]) {
-      clusters_[i].id = canonical_positions_.size();
+      clusters[i].id = canonical_positions_.size();
       canonical_positions_.push_back(positions[i]);
       canonical_covariances_.push_back(covariances[i]);
     }
