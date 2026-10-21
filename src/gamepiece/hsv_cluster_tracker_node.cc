@@ -173,7 +173,6 @@ void HSVClusterTrackerNode::ProcessFrame(
     density_states_.clear();
   }
   for (auto& track : ball_tracks_) {
-    ++track.age;
     if (frame.empty())
       continue;
     const frc::Translation2d stored{units::meter_t{track.position.x},
@@ -203,7 +202,7 @@ void HSVClusterTrackerNode::ProcessFrame(
         py < frame.rows + margin)
       ++track.missed;
   }
-  std::erase_if(ball_tracks_, [](const auto& t) { return t.missed > 8 });
+  std::erase_if(ball_tracks_, [](const auto& t) { return t.missed > 8; });
   for (auto& state : density_states_)
     ++state.missed;
   last_robot_pose_ = robot_pose;
@@ -553,7 +552,7 @@ void HSVClusterTrackerNode::EstimateDensities(
       const auto ground = to_robot(ball_tracks_[i].position);
       const auto center =
           rotation.t() *
-          (cv::Vec3f{-ground[1], -kFuelRadiusM, ground[0]} - camera_position);
+          (cv::Vec3f{-ground[1], -kFuelRadiusM, ground[0]} - camera_position_);
       if (center[2] <= kFuelRadiusM)
         continue;
       const cv::Point2f pixel{
@@ -645,7 +644,7 @@ void HSVClusterTrackerNode::EstimateDensities(
     const auto& point = centers.back();
     cluster_depths.push_back(
         (rotation.t() *
-         (cv::Vec3f{-point[1], -kFuelRadiusM, point[0]} - camera_position))[2]);
+         (cv::Vec3f{-point[1], -kFuelRadiusM, point[0]} - camera_position_))[2]);
   }
   const auto owner = [&](const cv::Vec2f& point, float limit) {
     std::size_t result = clusters.size();

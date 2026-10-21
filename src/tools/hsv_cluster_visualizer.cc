@@ -83,6 +83,7 @@ auto ClusterColor(std::size_t id) -> cv::Scalar {
 // Top-down field view in WPILib axes: +X right along the field, +Y up.
 constexpr double kFieldPixelsPerMeter = 80.0;
 constexpr double kFieldEllipseAlpha = 0.3;
+constexpr double kFuelRadiusM = 0.075;
 
 auto FieldPoint(const double x_m, const double y_m) -> cv::Point2f {
   return {static_cast<float>(x_m * kFieldPixelsPerMeter),
@@ -126,7 +127,7 @@ auto DrawRobot(cv::Mat& canvas, const frc::Pose2d& pose,
            cv::LINE_AA);
 }
 
-auto ProjectedPointCounts(
+auto ProjectedCircleCounts(
                           const gamepiece::hsv_clusters_t& clusters,
                           const frc::Pose2d& pose, cv::Size size) -> cv::Mat1f {
   cv::Mat1f counts(size, 0.0f);
@@ -142,29 +143,32 @@ auto ProjectedPointCounts(
       }
     }
   }
+  // Spread each weighted center over a filled ball footprint, preserving mass.
+  const int radius = std::lround(kFuelRadiusM * kFieldPixelsPerMeter);
+  cv::Mat1f disk(2 * radius + 1, 2 * radius + 1, 0.0f);
+  cv::circle(disk, {radius, radius}, radius, 1.0, cv::FILLED);
+  disk /= cv::sum(disk)[0];
+  cv::filter2D(counts, counts, -1, disk, {-1, -1}, 0, cv::BORDER_CONSTANT);
   return counts;
 }
 
-auto PointHeatmap(const cv::Mat& base, const cv::Mat1f& counts,
+auto CircleHeatmap(const cv::Mat& base, const cv::Mat1f& counts,
                   const std::string& caption) -> cv::Mat {
-  // Smooth over 5 cm, then use log density to keep sparse projections visible.
-  cv::Mat1f density, intensity;
-  cv::GaussianBlur(counts, density, {}, 0.05 * kFieldPixelsPerMeter,
-                   0.05 * kFieldPixelsPerMeter, cv::BORDER_CONSTANT);
+  cv::Mat1f intensity;
   double peak = 0;
-  cv::minMaxLoc(density, nullptr, &peak);
-  cv::log(density + 1.0f, intensity);
+  cv::minMaxLoc(counts, nullptr, &peak);
+  cv::log(counts + 1.0f, intensity);
   cv::Mat1b levels;
   intensity.convertTo(levels, CV_8U, peak > 0 ? 255.0 / std::log1p(peak) : 0);
   cv::Mat colors, blended, heatmap = base.clone();
   cv::applyColorMap(levels, colors, cv::COLORMAP_TURBO);
   cv::addWeighted(colors, 0.85, base, 0.15, 0, blended);
-  blended.copyTo(heatmap, density > 0.001f);
+  blended.copyTo(heatmap, counts > 0.001f);
   cv::putText(heatmap, caption, {20, 30}, cv::FONT_HERSHEY_SIMPLEX, 0.7,
               cv::Scalar{255, 255, 255}, 2, cv::LINE_AA);
   cv::putText(heatmap,
-              cv::format("%.1f visible Fuel support | 5 cm smoothing",
-                         cv::sum(counts)[0]),
+              cv::format("%.1f visible Fuel support | filled circles, r = %.1f cm",
+                         cv::sum(counts)[0], 100 * kFuelRadiusM),
               {20, 58}, cv::FONT_HERSHEY_SIMPLEX, 0.6,
               cv::Scalar{255, 255, 255}, 1, cv::LINE_AA);
   cv::Mat1b ramp(16, 256);
@@ -640,7 +644,7 @@ auto main(int argc, char** argv) -> int {
     cv::Mat field_overlay = field_base.clone();
     std::map<std::size_t, std::vector<std::pair<cv::RotatedRect, cv::Scalar>>>
         field_ellipses;
-    cv::Mat1f overall_point_counts(field_base.size(), 0.0f);
+    cv::Mat1f overall_circle_counts(field_base.size(), 0.0f);
     std::size_t heatmap_frames = 0;
     auto next_frame = Async(pool, [first_frame] { return first_frame; });
     for (std::size_t frame_index = 0; frame_index < frame_count;
@@ -764,18 +768,18 @@ auto main(int argc, char** argv) -> int {
                                : pose_updated ? (sim.is_null() ? "cached pose"
                                                                : "simulated pose")
                                               : "no tags, pose held");
-        const cv::Mat1f point_counts =
-            ProjectedPointCounts(clusters, *robot_pose, field_base.size());
-        overall_point_counts += point_counts;
+        const cv::Mat1f circle_counts =
+            ProjectedCircleCounts(clusters, *robot_pose, field_base.size());
+        overall_circle_counts += circle_counts;
         ++heatmap_frames;
         const auto heatmap_path = output_directory /
                                   (input_path.stem().string() + "_heatmap.png");
         if (panel_indices.contains(frame_index)) {
           heatmap_panel_paths.push_back(heatmap_path);
         }
-        pending.push_back(Async(pool, [field_base, point_counts, field_caption,
+        pending.push_back(Async(pool, [field_base, circle_counts, field_caption,
                                       pose = *robot_pose, path = heatmap_path] {
-          cv::Mat heatmap = PointHeatmap(field_base, point_counts, field_caption);
+          cv::Mat heatmap = CircleHeatmap(field_base, circle_counts, field_caption);
           DrawRobot(heatmap, pose, cv::Scalar{255, 255, 255});
           CHECK(cv::imwrite(path.string(), heatmap));
           return cv::Mat{};
@@ -867,8 +871,8 @@ auto main(int argc, char** argv) -> int {
       CHECK(cv::imwrite((output_directory / "field_overlay.png").string(),
                         field_overlay));
       CHECK(cv::imwrite((output_directory / "overall_heatmap.png").string(),
-                        PointHeatmap(field_base, overall_point_counts,
-                                     "Overall projected points | " +
+                        CircleHeatmap(field_base, overall_circle_counts,
+                                     "Overall projected circles | " +
                                          std::to_string(heatmap_frames) + " frames")));
     }
     if (!panel_frames.empty()) {
