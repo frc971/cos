@@ -400,13 +400,19 @@ auto main(int argc, char** argv) -> int {
   std::vector<std::string> positional;
   std::string frames_directory(kDefaultFramesDirectory);
   std::string poses_path;
+  std::string tracker_poses_path;
+  bool json_only = false;
   std::string sim_run;
   std::string output_dir;
   int start_frame = -1;
   int end_frame = -1;
   for (int i = 1; i < argc; ++i) {
     const std::string_view arg(argv[i]);
-    if (arg == "--density-no-history") {
+    if (arg == "--json-only") {
+      json_only = true;
+    } else if (arg.starts_with("--tracker-poses=")) {
+      tracker_poses_path = arg.substr(16);
+    } else if (arg == "--density-no-history") {
       density_history = gamepiece::DensityHistory::kNone;
     } else if (arg == "--density-filter-only") {
       density_history = gamepiece::DensityHistory::kFilter;
@@ -450,7 +456,7 @@ auto main(int argc, char** argv) -> int {
            "<output-directory> <frame.jpg>...]\n"
            "Or: hsv_cluster_visualizer --sim_run=RUN_OR_MANIFEST "
            "[--output_dir=DIR] [--density-no-history | --density-filter-only] "
-           "[--density-total-count]\n"
+           "[--density-total-count] [--tracker-poses=FILE] [--json-only]\n"
            "With no positional arguments, uses the default calibration and "
            "output; with no range either, runs the sample frame.\n"
            "Calibration uses nested camera JSON (degrees) or flat BOS JSON "
@@ -458,6 +464,11 @@ auto main(int argc, char** argv) -> int {
     return 1;
   }
   try {
+    // Override only tracker input; retain the reference pose for evaluation.
+    // Each filename maps to {x, y, yaw}; null explicitly disables pose.
+    const auto tracker_poses = tracker_poses_path.empty()
+                                   ? nlohmann::json()
+                                   : ReadJson(tracker_poses_path);
     nlohmann::json sim;
     std::filesystem::path sim_directory;
     if (!sim_run.empty()) {
@@ -597,7 +608,7 @@ auto main(int argc, char** argv) -> int {
     gamepiece::HSVClusterTrackerNode tracker(
         "decoded", "clusters", camera_matrix,
         utils::EigenToCvMat(camera_pose.ToMatrix()), distortion,
-        first_frame.total(), 20.0f, "", density_history, residual_density);
+        first_frame.total(), "", density_history, residual_density);
     const std::size_t frame_count = input_paths.size();
     cv::Mat map_x, map_y;
     cv::initUndistortRectifyMap(camera_matrix, distortion, cv::Mat(),
@@ -676,14 +687,23 @@ auto main(int argc, char** argv) -> int {
           pose_updated = true;
         }
       }
+      auto tracker_pose = robot_pose;
+      if (!tracker_poses_path.empty()) {
+        const auto& pose = tracker_poses.at(input_path.filename().string());
+        tracker_pose.reset();
+        if (!pose.is_null()) tracker_pose.emplace(
+            units::meter_t{pose.at("x").get<double>()},
+            units::meter_t{pose.at("y").get<double>()},
+            frc::Rotation2d{units::radian_t{pose.at("yaw").get<double>()}});
+      }
       const auto tracking_start = std::chrono::steady_clock::now();
-      tracker.ProcessFrame(frame, robot_pose);
+      tracker.ProcessFrame(frame, tracker_pose);
       const double tracking_ms = std::chrono::duration<double, std::milli>(
           std::chrono::steady_clock::now() - tracking_start).count();
       const auto& clusters = *tracker.GetClusters();
       const auto output_path =
           output_directory / (input_path.stem().string() + "_clusters.png");
-      pending.push_back(Async(pool, [frame, clusters, camera_matrix, map_x, map_y,
+      if (!json_only) pending.push_back(Async(pool, [frame, clusters, camera_matrix, map_x, map_y,
                                     pitch = camera_pose.Rotation().Y().value(),
                                     input_path, output_path,
                                     panel = (use_range || !sim.is_null()) &&
@@ -705,7 +725,7 @@ auto main(int argc, char** argv) -> int {
       }));
       // Per-frame field view uses the camera view's cluster colors; the
       // all-frames overlay keeps one median-area ellipse per ID, colored by time.
-      if (robot_pose.has_value()) {
+      if (!json_only && robot_pose.has_value()) {
         cv::Mat field = field_base.clone();
         const cv::Scalar frame_color =
             HueColor(static_cast<int>(frame_index * 120 / frame_count));
@@ -819,6 +839,9 @@ auto main(int argc, char** argv) -> int {
                             density_history == gamepiece::DensityHistory::kFilter ? "filter" : "none"},
                         {"density_count_model", residual_density ? "residual" : "total"},
                         {"tracking_time_ms", tracking_ms},
+                        {"tracker_pose", tracker_pose ? nlohmann::json{
+                            {"x", tracker_pose->X().value()}, {"y", tracker_pose->Y().value()},
+                            {"yaw", tracker_pose->Rotation().Radians().value()}} : nlohmann::json(nullptr)},
                         {"robot_pose", robot_pose ? nlohmann::json{
                             {"x", robot_pose->X().value()}, {"y", robot_pose->Y().value()},
                             {"yaw", robot_pose->Rotation().Radians().value()}} : nlohmann::json{}},
@@ -831,7 +854,7 @@ auto main(int argc, char** argv) -> int {
       auto thumbnail = result.get();
       if (!thumbnail.empty()) panel_frames.push_back(std::move(thumbnail));
     }
-    if (robot_pose.has_value()) {
+    if (!json_only && robot_pose.has_value()) {
       for (auto& [id, ellipses] : field_ellipses) {
         // Select an observed ellipse; even counts use the upper median.
         const auto median = ellipses.begin() + ellipses.size() / 2;
