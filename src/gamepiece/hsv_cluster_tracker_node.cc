@@ -90,6 +90,9 @@ HSVClusterTrackerNode::HSVClusterTrackerNode(
   extrinsics_offset_ = frc::Translation2d{units::meter_t{extrinsics(0, 3)},
                                           units::meter_t{extrinsics(1, 3)}};
   utils::ChangeBasis(camera_extrinsics_cv_, utils::Basis::kWpiToCv);
+  camera_position_ =
+      cv::Vec3f{camera_extrinsics_cv_(0, 3), camera_extrinsics_cv_(1, 3),
+                camera_extrinsics_cv_(2, 3)};
 }
 
 auto HSVClusterTrackerNode::CreateCallback()
@@ -200,8 +203,7 @@ void HSVClusterTrackerNode::ProcessFrame(
         py < frame.rows + margin)
       ++track.missed;
   }
-  std::erase_if(ball_tracks_,
-                [](const auto& t) { return t.missed > 8 || t.age > 1000; });
+  std::erase_if(ball_tracks_, [](const auto& t) { return t.missed > 8 });
   for (auto& state : density_states_)
     ++state.missed;
   last_robot_pose_ = robot_pose;
@@ -405,16 +407,13 @@ void HSVClusterTrackerNode::EstimateDensities(
   intrinsics(0, 2) -= crop.x;
   intrinsics(1, 2) -= crop.y;
   float minimum_radius = std::numeric_limits<float>::max();
-  const cv::Vec3f camera_position{camera_extrinsics_cv_(0, 3),
-                                  camera_extrinsics_cv_(1, 3),
-                                  camera_extrinsics_cv_(2, 3)};
   for (const auto& c : clusters) {
     const auto& p = *c.robot_relative_translation;
     const auto position =
         rotation.t() *
         (cv::Vec3f{-static_cast<float>(p.Y().value()), -kFuelRadiusM,
                    static_cast<float>(p.X().value())} -
-         camera_position);
+         camera_position_);
     if (position[2] > kFuelRadiusM)
       minimum_radius =
           std::min(minimum_radius, focal * kFuelRadiusM / position[2]);
@@ -717,7 +716,7 @@ void HSVClusterTrackerNode::EstimateDensities(
                           static_cast<float>(
                               std::min<std::size_t>(8, track.observations + 1));
         ++track.observations;
-        track.missed = track.age = 0;
+        track.missed = 0;
         sphere.ground = to_robot(track.position);
         ++clusters[sphere.owner].reused_ball_count;
       } else {

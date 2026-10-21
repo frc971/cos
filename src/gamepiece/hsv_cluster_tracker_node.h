@@ -89,22 +89,22 @@ class HSVClusterTrackerNode final : public control_loop::INode {
   friend struct HSVClusterTrackerNodeTestPeer;
   [[nodiscard]] auto NormalizedPointOffset(const cv::Point2f& point) const
       -> frc::Translation2d;
-  auto ClusterGroundPoints(
-      const std::vector<cv::Point2f>& image_points,
-      const std::vector<cv::Point2f>& ground_points,
-      const std::vector<float>& ground_weights,
-      const std::vector<float>& refined_weights,
-      const std::optional<frc::Pose2d>& robot_pose) const -> hsv_clusters_t;
+  auto ClusterGroundPoints(const std::vector<cv::Point2f>& image_points,
+                           const std::vector<cv::Point2f>& ground_points,
+                           const std::vector<float>& ground_weights,
+                           const std::vector<float>& refined_weights,
+                           const std::optional<frc::Pose2d>& robot_pose) const
+      -> hsv_clusters_t;
   void AssignPersistentIds(hsv_clusters_t& clusters,
-                          const std::optional<frc::Pose2d>& robot_pose);
+                           const std::optional<frc::Pose2d>& robot_pose);
   void EstimateDensities(const cv::Mat& frame, hsv_clusters_t& clusters,
-                        const std::optional<frc::Pose2d>& robot_pose);
+                         const std::optional<frc::Pose2d>& robot_pose);
   static auto SphereArcWeight(const cv::Matx33f& intrinsics,
                               const cv::Vec3f& ray, const cv::Vec2f& normal,
                               float depth) -> float;
   struct BallTrack {
     cv::Point2f position;  // Field coordinates when pose is available.
-    std::size_t observations = 1, missed = 0, age = 0;
+    std::size_t observations = 1, missed = 0;
   };
   struct DensityState {
     float count = 0, innovation = 0;
@@ -137,9 +137,11 @@ class HSVClusterTrackerNode final : public control_loop::INode {
   cv::Matx33f camera_intrinsics_;
   cv::Vec<float, 5> distortion_coeffs_;
   cv::Matx44f camera_extrinsics_cv_;
+  cv::Vec3f camera_position_;
   static constexpr float kIdMatchToleranceM = 0.9f;
   cv::Mat frame_;
-  cv::Mat density_map1_, density_map2_;  // Cached calibration maps by image size.
+  cv::Mat density_map1_,
+      density_map2_;  // Cached calibration maps by image size.
   frc::Translation2d extrinsics_offset_;
 };
 
