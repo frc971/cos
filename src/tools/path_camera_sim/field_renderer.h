@@ -12,6 +12,13 @@
 
 namespace path_camera_sim {
 
+struct FuelCluster {
+  std::array<double, 2> center_m;
+  double density;
+  std::array<double, 2> covariance_m2;
+  double rotation_rad;
+};
+
 class FieldRenderer {
  public:
   FieldRenderer(const std::filesystem::path& field_directory,
@@ -23,6 +30,8 @@ class FieldRenderer {
 
   auto Render(const Eigen::Matrix4d& world_to_camera) -> cv::Mat;
   void SetFuelLayout(double entropy, uint32_t seed);
+  void SetFuelClusters(const std::vector<FuelCluster>& clusters,
+                       double noise_m, uint32_t seed);
   auto FuelPositions() const -> const std::vector<std::array<double, 3>>&;
 
  private:
