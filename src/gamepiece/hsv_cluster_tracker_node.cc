@@ -250,10 +250,6 @@ void HSVClusterTrackerNode::ProcessFrame(
                       camera_center_to_sphere_cone_intersection[2],
                   y = camera_center_to_sphere_cone_intersection[1] /
                       camera_center_to_sphere_cone_intersection[2];
-      const float ux = x * camera_intrinsics_(0, 0) + camera_intrinsics_(0, 2);
-      const float uy = y * camera_intrinsics_(1, 1) + camera_intrinsics_(1, 2);
-      if (ux < 2 || ux >= frame.cols - 2 || uy < 2 || uy >= frame.rows - 2)
-        continue;
       const float radius2 = x * x + y * y;
       const float radial =
           1 + radius2 * (distortion_coeffs_[0] +
@@ -303,16 +299,11 @@ void HSVClusterTrackerNode::ProcessFrame(
     }
     const auto clipped = [&](std::size_t i) {
       const auto& p = pixels[i];
-      const float ux =
-          normalized[i].x * camera_intrinsics_(0, 0) + camera_intrinsics_(0, 2);
-      const float uy =
-          normalized[i].y * camera_intrinsics_(1, 1) + camera_intrinsics_(1, 2);
       return p.x < 1 || p.x >= frame.cols - 1 || p.y < 1 ||
-             p.y >= frame.rows - 1 || ux < 1 || ux >= frame.cols - 1 ||
-             uy < 1 || uy >= frame.rows - 1;
+             p.y >= frame.rows - 1;
     };
     for (std::size_t i = 0; i < rays.size(); ++i) {
-      // reject vertical portions of tangent on image edges
+      // A contour along the sensor boundary is not a sphere tangent.
       const size_t before = (i + rays.size() - 4) % rays.size(),
                    after = (i + 4) % rays.size();
       if (clipped(i) || clipped(before) || clipped(after))
