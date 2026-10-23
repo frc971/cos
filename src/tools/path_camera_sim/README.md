@@ -12,7 +12,7 @@ cd /root
 ./tools/path_camera_sim \
   --poses=/path/to/poses.json \
   --camera_config=constants/second_bot/left_camera.json \
-  --output_dir=sim-output
+  --output_dir=/root/debug-output/path-camera-sim
 ```
 
 The pose file is a JSON array or an object containing a `poses` array:
@@ -40,3 +40,49 @@ at 0 all 456 pieces keep their staged positions; at 1 each survivor has up to
 removal chance. The placement and random sampling follow BOS's Fuel generator.
 The staged Fuel meshes are already embedded in `model.glb`, so no separate
 gamepiece asset is required.
+
+To replace staged Fuel with Gaussian clusters, pass a JSON array:
+
+```sh
+./tools/path_camera_sim --poses=/path/to/poses.json \
+  --fuel_clusters='[{"center_m":[5,3],"density":20,"covariance_m2":[0.5,0.08],"rotation_rad":0.7},{"center_m":[8,5],"density":10,"covariance_m2":[0.2,0.2],"rotation_rad":0}]' \
+  --fuel_noise=0.1 --fuel_seed=7
+```
+
+Each center uses WPILib field meters. Density is the peak balls per square meter
+of the Gaussian before noise; the two positive covariance values are variances
+along its principal axes in square meters (standard deviations are their square
+roots). Rotation is counterclockwise from field +X, in radians. Each cluster
+samples `round(2*pi*density*sqrt(v1*v2))` balls. `--fuel_noise` adds independent
+Gaussian displacement to X and Y, with standard deviation in meters (default 0).
+Balls outside the field boundary are discarded; overlaps and obstacles are not
+resolved. At most 100000 balls are allowed. Density 0 or an empty array produces
+no balls. Use `--fuel_seed` for repeatable layouts.
+
+Cluster mode writes one run directly to `--output_dir`, with cluster parameters,
+noise, seed, and generated positions in its manifest. It cannot be combined with
+`--fuel_entropy`, which selects the staged/scattered comparison mode.
+
+Each manifest embeds the camera calibration and lens-distortion setting.
+Feed a run directly to `tools/hsv_cluster_visualizer --sim_run=/root/debug-output/path-camera-sim/entropic`
+to generate cluster views and projected-point heatmaps using its exact poses.
+Simulator output defaults to `/root/debug-output/path-camera-sim`. Visualizer
+output defaults to `/root/debug-output/<run-name>/<layout>/clusters`.
+Pass `--output_dir=DIR` to override either output directory.
+
+For ground-truth validation, `--fuel_truth` adds `cluster_id` to generated Fuel
+entries in cluster mode and `visible_fuel_pixels` to each frame. A separate
+unlit integer-ID pass preserves opaque field/Fuel depth occlusion and applies
+the same lens remap using nearest-neighbor sampling. Transparent field meshes
+are omitted from the ID pass. These labels are not written into RGB images and
+are never input to the tracker. Counts report visibility, including partial
+silhouettes and image cropping; they are not assumed to reveal hidden balls.
+
+Cluster manifests also record `cluster_centroids_m` (means of the actual generated
+centers) and per-frame `visible_cluster_centroids`. A separate one-pixel point
+pass tests these centers against opaque field depth and the camera frustum;
+the distorted projection must also lie inside the output image. Fuel is omitted
+from this pass so a ball does not hide its own pile's semantic center. As with
+the ID pass, transparent field meshes do not occlude probes. These probes never
+enter RGB or tracker input. They distinguish a visible centroid from a few
+visible fragments whose centroid is behind a field structure or outside view.

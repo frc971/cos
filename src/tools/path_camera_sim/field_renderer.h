@@ -12,6 +12,13 @@
 
 namespace path_camera_sim {
 
+struct FuelCluster {
+  std::array<double, 2> center_m;
+  double density;
+  std::array<double, 2> covariance_m2;
+  double rotation_rad;
+};
+
 class FieldRenderer {
  public:
   FieldRenderer(const std::filesystem::path& field_directory,
@@ -21,8 +28,12 @@ class FieldRenderer {
   FieldRenderer(const FieldRenderer&) = delete;
   auto operator=(const FieldRenderer&) -> FieldRenderer& = delete;
 
-  auto Render(const Eigen::Matrix4d& world_to_camera) -> cv::Mat;
+  auto Render(const Eigen::Matrix4d& world_to_camera, bool fuel_labels = false,
+              const std::vector<std::array<double, 3>>* probes = nullptr) -> cv::Mat;
   void SetFuelLayout(double entropy, uint32_t seed);
+  void SetFuelClusters(const std::vector<FuelCluster>& clusters,
+                       double noise_m, uint32_t seed);
+  auto FuelClusterIds() const -> const std::vector<std::size_t>& { return fuel_cluster_ids_; }
   auto FuelPositions() const -> const std::vector<std::array<double, 3>>&;
 
  private:
@@ -44,6 +55,7 @@ class FieldRenderer {
   std::vector<Draw> staged_fuel_draws_;
   std::vector<Draw> active_fuel_draws_;
   std::vector<std::array<double, 3>> fuel_positions_;
+  std::vector<std::size_t> fuel_cluster_ids_;
   float field_length_ = 0;
   float field_width_ = 0;
   EGLDisplay display_ = EGL_NO_DISPLAY;
