@@ -229,20 +229,27 @@ void HSVClusterTrackerNode::ProcessFrame(
   // Verify tangent-derived sphere centers against the entire visible outline.
   // This also estimates the visible perimeter fraction for occlusion weighting.
   const auto visible_fraction = [&](const cv::Vec3f& center) {
-    const float norm = cv::norm(center);
-    const auto axis = center / norm;
-    auto first = axis.cross(cv::Vec3f{0, 1, 0});
-    first /= cv::norm(first);
-    const auto second = axis.cross(first);
-    const float sine = kFuelRadiusM / norm, cosine = std::sqrt(1 - sine * sine);
+    const float camera_to_center_distance = cv::norm(center);
+    const auto camera_to_center = center / camera_to_center_distance;
+    auto outline_basis_u = camera_to_center.cross(cv::Vec3f{0, 1, 0});
+    outline_basis_u /= cv::norm(outline_basis_u);
+    const auto outline_basis_v = camera_to_center.cross(outline_basis_u);
+    const float sine_of_angular_radius =
+        kFuelRadiusM / camera_to_center_distance;
+    const float cosine_of_angular_radius =
+        std::sqrt(1 - sine_of_angular_radius * sine_of_angular_radius);
     int supported = 0, accessible = 0, hidden = 0;
     constexpr int kSamples = 32;
     for (int j = 0; j < kSamples; ++j) {
       const float angle = 2 * std::numbers::pi_v<float> * j / kSamples;
-      const auto direction = cosine * axis + sine * (std::cos(angle) * first +
-                                                     std::sin(angle) * second);
-      const float x = direction[0] / direction[2],
-                  y = direction[1] / direction[2];
+      const auto camera_center_to_sphere_cone_intersection =
+          cosine_of_angular_radius * camera_to_center +
+          sine_of_angular_radius * (std::cos(angle) * outline_basis_u +
+                                    std::sin(angle) * outline_basis_v);
+      const float x = camera_center_to_sphere_cone_intersection[0] /
+                      camera_center_to_sphere_cone_intersection[2],
+                  y = camera_center_to_sphere_cone_intersection[1] /
+                      camera_center_to_sphere_cone_intersection[2];
       const float ux = x * camera_intrinsics_(0, 0) + camera_intrinsics_(0, 2);
       const float uy = y * camera_intrinsics_(1, 1) + camera_intrinsics_(1, 2);
       if (ux < 2 || ux >= frame.cols - 2 || uy < 2 || uy >= frame.rows - 2)
@@ -272,12 +279,19 @@ void HSVClusterTrackerNode::ProcessFrame(
     // Clipped arcs cannot contradict a candidate; verify the accessible outline.
     // Only arcs inside yellow or outside the image can be occluded. An arc
     // outside yellow is a fitting error and must not increase estimated mass.
-    return supported >= 4 && supported >= 0.25f * accessible
+    constexpr int minimum_supported_points = 4;
+    constexpr float minimum_supported_to_accessible_ratio = 0.25;
+    return supported >= minimum_supported_points &&
+                   supported >=
+                       minimum_supported_to_accessible_ratio * accessible
                ? static_cast<float>(accessible - hidden) / kSamples
                : 0.0f;
   };
   for (const auto& contour : contours) {
-    if (contour.size() < 12 || cv::contourArea(contour) < 8)
+    constexpr size_t minimum_contour_track_length = 12;
+    constexpr float minimum_contour_area = 8;
+    if (contour.size() < minimum_contour_track_length ||
+        cv::contourArea(contour) < minimum_contour_area)
       continue;
     std::vector<cv::Point2f> pixels(contour.begin(), contour.end()), normalized;
     cv::undistortPoints(pixels, normalized, camera_intrinsics_,
@@ -298,20 +312,19 @@ void HSVClusterTrackerNode::ProcessFrame(
              uy < 1 || uy >= frame.rows - 1;
     };
     for (std::size_t i = 0; i < rays.size(); ++i) {
-      // Image clipping is not a sphere tangent. The simulator's distortion
-      // remap can also clip the source. Check the whole tangent stencil.
-      const auto before = (i + rays.size() - 4) % rays.size(),
-                 after = (i + 4) % rays.size();
+      // reject vertical portions of tangent on image edges
+      const size_t before = (i + rays.size() - 4) % rays.size(),
+                   after = (i + 4) % rays.size();
       if (clipped(i) || clipped(before) || clipped(after))
         continue;
-      const auto tangent = rays[after] - rays[before];
+      const cv::Vec3f tangent = rays[after] - rays[before];
       auto normal = tangent.cross(rays[i]);
       const float length = cv::norm(normal);
       if (length < 1e-6f)
         continue;
-      const auto camera_normal = normal / length;
+      const cv::Vec3f camera_normal = normal / length;
       normal = rotation * camera_normal;
-      const auto ray = rotation * rays[i];
+      const cv::Vec3f ray = rotation * rays[i];
       if (ray[1] <= 1e-5f)
         continue;
       const float distance = (-kFuelRadiusM - camera_extrinsics_cv_(1, 3) -
@@ -321,14 +334,16 @@ void HSVClusterTrackerNode::ProcessFrame(
         continue;
       const float fraction =
           visible_fraction(distance * rays[i] + kFuelRadiusM * camera_normal);
-      const auto center = distance * ray + kFuelRadiusM * normal;
-      const auto offset = frc::Translation2d{units::meter_t{center[2]},
-                                             units::meter_t{-center[0]}} +
-                          extrinsics_offset_;
-      const auto position = robot_pose
-                                ? robot_pose->Translation() +
-                                      offset.RotateBy(robot_pose->Rotation())
-                                : offset;
+      const cv::Vec3f camera_relative_center =
+          distance * ray + kFuelRadiusM * normal;
+      const frc::Translation2d offset =
+          frc::Translation2d{units::meter_t{camera_relative_center[2]},
+                             units::meter_t{-camera_relative_center[0]}} +
+          extrinsics_offset_;
+      const frc::Translation2d position =
+          robot_pose ? robot_pose->Translation() +
+                           offset.RotateBy(robot_pose->Rotation())
+                     : offset;
       const cv::Point2f ground{static_cast<float>(position.X().value()),
                                static_cast<float>(position.Y().value())};
       if (robot_pose && (ground.x < 4.6f || ground.x > 11.94f ||
@@ -484,16 +499,19 @@ void HSVClusterTrackerNode::EstimateDensities(
     sphere.depth = center[2];
     sphere.ground = camera + cv::Vec2f{ground_ray[2], -ground_ray[0]} *
                                  (height / ground_ray[1]);
-    const auto axis = center / cv::norm(center);
-    auto first = axis.cross(cv::Vec3f{0, 1, 0});
-    first /= cv::norm(first);
-    const auto second = axis.cross(first);
-    const float sine = kFuelRadiusM / cv::norm(center),
-                cosine = std::sqrt(1 - sine * sine);
+    const auto camera_to_center = center / cv::norm(center);
+    auto outline_basis_u = camera_to_center.cross(cv::Vec3f{0, 1, 0});
+    outline_basis_u /= cv::norm(outline_basis_u);
+    const auto outline_basis_v = camera_to_center.cross(outline_basis_u);
+    const float sine_of_angular_radius = kFuelRadiusM / cv::norm(center);
+    const float cosine_of_angular_radius =
+        std::sqrt(1 - sine_of_angular_radius * sine_of_angular_radius);
     std::array<cv::Point2f, kOutline> outline;
     for (int i = 0; i < kOutline; ++i) {
       const auto direction =
-          cosine * axis + sine * (circle[i][0] * first + circle[i][1] * second);
+          cosine_of_angular_radius * camera_to_center +
+          sine_of_angular_radius *
+              (circle[i][0] * outline_basis_u + circle[i][1] * outline_basis_v);
       outline[i] = {
           direction[0] / direction[2] * intrinsics(0, 0) + intrinsics(0, 2),
           direction[1] / direction[2] * intrinsics(1, 1) + intrinsics(1, 2)};
@@ -643,25 +661,29 @@ void HSVClusterTrackerNode::EstimateDensities(
         (c.ground_covar + cv::Matx22f::eye() * 0.03f).inv());
     const auto& point = centers.back();
     cluster_depths.push_back(
-        (rotation.t() *
-         (cv::Vec3f{-point[1], -kFuelRadiusM, point[0]} - camera_position_))[2]);
+        (rotation.t() * (cv::Vec3f{-point[1], -kFuelRadiusM, point[0]} -
+                         camera_position_))[2]);
   }
   const auto owner = [&](const cv::Vec2f& point, float limit) {
-    std::size_t result = clusters.size();
+    std::size_t cluster_index = clusters.size();
     for (std::size_t i = 0; i < clusters.size(); ++i) {
       const auto d = point - centers[i];
       const float distance = d.dot(inverse_footprints[i] * d);
       if (distance < limit) {
         limit = distance;
-        result = i;
+        cluster_index = i;
       }
     }
-    return result;
+    return cluster_index;
   };
   std::ranges::sort(candidates, [](const auto& a, const auto& b) {
-    const bool pa = a.track != std::numeric_limits<std::size_t>::max();
-    const bool pb = b.track != std::numeric_limits<std::size_t>::max();
-    return pa != pb ? pa : a.score > b.score;
+    const bool candidate_a_is_tracked =
+        a.track != std::numeric_limits<std::size_t>::max();
+    const bool candidate_b_is_tracked =
+        b.track != std::numeric_limits<std::size_t>::max();
+    return candidate_a_is_tracked != candidate_b_is_tracked
+               ? candidate_a_is_tracked
+               : a.score > b.score;
   });
   std::vector<Sphere> verified;
   cv::Mat1f evidence_depth(mask.size(), 0.0f);
@@ -966,47 +988,59 @@ auto HSVClusterTrackerNode::ClusterGroundPoints(
         const int neighbor = ny * width + nx;
         if (basin[neighbor] < 0)
           continue;
-        const auto first = modes.Find(basin[cell]),
-                   second = modes.Find(basin[neighbor]);
-        if (first == second)
+        const auto mode_a = modes.Find(basin[cell]);
+        const auto mode_b = modes.Find(basin[neighbor]);
+        if (mode_a == mode_b)
           continue;
-        const int pa = peak_cell[first], pb = peak_cell[second];
-        const float separation = kCellM * std::hypot(pa % width - pb % width,
-                                                     pa / width - pb / width);
+        const int peak_cell_a = peak_cell[mode_a];
+        const int peak_cell_b = peak_cell[mode_b];
+        const float separation =
+            kCellM * std::hypot(peak_cell_a % width - peak_cell_b % width,
+                                peak_cell_a / width - peak_cell_b / width);
         // A new density mode beyond an established pile's 2-sigma footprint
         // must not inflate that pile merely because its visible mass is small.
         const bool different_piles =
-            prior[first] != prior[second] &&
-            (prior[first] >= 0 || prior[second] >= 0) &&
+            prior[mode_a] != prior[mode_b] &&
+            (prior[mode_a] >= 0 || prior[mode_b] >= 0) &&
             separation >= 2 * kBandwidthM;
-        const auto a = moments[first], b = moments[second];
-        bool overlap = a.mass == 0 || b.mass == 0 ||
-                       (prior[first] >= 0 && prior[first] == prior[second]);
+        const auto moments_a = moments[mode_a];
+        const auto moments_b = moments[mode_b];
+        bool overlap = moments_a.mass == 0 || moments_b.mass == 0 ||
+                       (prior[mode_a] >= 0 && prior[mode_a] == prior[mode_b]);
         if (!overlap) {
-          const auto ma = a.sum / a.mass, mb = b.sum / b.mass, delta = ma - mb;
-          const auto ca = a.square / a.mass - ma * ma.t() +
-                          cv::Matx22f::eye() * (kFuelRadiusM * kFuelRadiusM);
-          const auto cb = b.square / b.mass - mb * mb.t() +
-                          cv::Matx22f::eye() * (kFuelRadiusM * kFuelRadiusM);
+          const auto mean_a = moments_a.sum / moments_a.mass;
+          const auto mean_b = moments_b.sum / moments_b.mass;
+          const auto mean_delta = mean_a - mean_b;
+          const auto covariance_a =
+              moments_a.square / moments_a.mass - mean_a * mean_a.t() +
+              cv::Matx22f::eye() * (kFuelRadiusM * kFuelRadiusM);
+          const auto covariance_b =
+              moments_b.square / moments_b.mass - mean_b * mean_b.t() +
+              cv::Matx22f::eye() * (kFuelRadiusM * kFuelRadiusM);
           // Compare footprints at the pile resolution, rather than pixel noise.
           const auto covariance =
-              ca + cb +
+              covariance_a + covariance_b +
               cv::Matx22f::eye() * (2 * (kBandwidthM * kBandwidthM -
                                          kFuelRadiusM * kFuelRadiusM));
-          overlap = delta.dot(covariance.inv() * delta) <= kModeOverlapD2;
+          overlap =
+              mean_delta.dot(covariance.inv() * mean_delta) <= kModeOverlapD2;
           if (!overlap) {
             // Distant sampling lobes of one elongated Gaussian can still belong
             // together. Compare their weighted classification likelihoods.
-            const float n = a.mass + b.mass;
-            const auto mean = (a.sum + b.sum) / n;
+            const float combined_mass = moments_a.mass + moments_b.mass;
+            const auto combined_mean =
+                (moments_a.sum + moments_b.sum) / combined_mass;
             const auto merged =
-                (a.square + b.square) / n - mean * mean.t() +
+                (moments_a.square + moments_b.square) / combined_mass -
+                combined_mean * combined_mean.t() +
                 cv::Matx22f::eye() * (kFuelRadiusM * kFuelRadiusM);
-            const double gain = 0.5 * (n * std::log(cv::determinant(merged)) -
-                                       a.mass * std::log(cv::determinant(ca)) -
-                                       b.mass * std::log(cv::determinant(cb))) +
-                                a.mass * std::log(a.mass / n) +
-                                b.mass * std::log(b.mass / n);
+            const double gain =
+                0.5 *
+                    (combined_mass * std::log(cv::determinant(merged)) -
+                     moments_a.mass * std::log(cv::determinant(covariance_a)) -
+                     moments_b.mass * std::log(cv::determinant(covariance_b))) +
+                moments_a.mass * std::log(moments_a.mass / combined_mass) +
+                moments_b.mass * std::log(moments_b.mass / combined_mass);
             overlap = gain <= 0;
           }
         }
@@ -1014,18 +1048,21 @@ auto HSVClusterTrackerNode::ClusterGroundPoints(
         // untracked piles: sampling bumps along a broad pile should merge.
         if (!different_piles && overlap &&
             std::min(merge_value(cell), merge_value(neighbor)) >=
-                0.75f * std::min(merge_value(pa), merge_value(pb))) {
-          const bool keep_first_peak = peak[first] >= peak[second];
-          const float merged_peak = std::max(peak[first], peak[second]);
-          const int merged_cell = keep_first_peak ? pa : pb;
+                0.75f * std::min(merge_value(peak_cell_a),
+                                 merge_value(peak_cell_b))) {
+          const bool keep_mode_a_peak = peak[mode_a] >= peak[mode_b];
+          const float merged_peak = std::max(peak[mode_a], peak[mode_b]);
+          const int merged_cell = keep_mode_a_peak ? peak_cell_a : peak_cell_b;
           const int merged_prior =
-              prior[first] >= 0 ? prior[first] : prior[second];
-          modes.Union(first, second);
-          const auto root = modes.Find(first);
-          peak[root] = merged_peak;
-          peak_cell[root] = merged_cell;
-          prior[root] = merged_prior;
-          moments[root] = {a.mass + b.mass, a.sum + b.sum, a.square + b.square};
+              prior[mode_a] >= 0 ? prior[mode_a] : prior[mode_b];
+          modes.Union(mode_a, mode_b);
+          const auto merged_root = modes.Find(mode_a);
+          peak[merged_root] = merged_peak;
+          peak_cell[merged_root] = merged_cell;
+          prior[merged_root] = merged_prior;
+          moments[merged_root] = {moments_a.mass + moments_b.mass,
+                                  moments_a.sum + moments_b.sum,
+                                  moments_a.square + moments_b.square};
         }
       }
   }
