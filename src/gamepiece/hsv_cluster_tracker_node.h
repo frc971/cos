@@ -24,7 +24,7 @@ struct Ellipse {
 
 using kmeans_cluster_t = struct KMeansCluster {
   cv::Point2f
-      centroid;  // Undistorted, focal-length-normalized image coordinates (x/z, y/z).
+      centroid;  // Focal-length-normalized image coordinates (x/z, y/z).
   cv::Matx22f covar{};  // Covariance of img_points in normalized coordinates.
   std::vector<cv::Point2f> img_points;
   std::optional<frc::Translation2d> robot_relative_translation = std::nullopt;
@@ -61,7 +61,6 @@ class HSVClusterTrackerNode final : public control_loop::INode {
   HSVClusterTrackerNode(
       std::string_view input_path, std::string_view output_path,
       cv::Matx33d intrinsics, cv::Matx44d extrinsics,
-      const cv::Vec<double, 5>& distortion_coeffs,
       std::size_t image_size,  // Total pixels (width * height).
       std::string_view pose_path = "",
       DensityHistory density_history = DensityHistory::kPredict,
@@ -135,13 +134,10 @@ class HSVClusterTrackerNode final : public control_loop::INode {
   cv::Mat3b hsv_image_;
   cv::Mat1b hsv_masked_;
   cv::Matx33f camera_intrinsics_;
-  cv::Vec<float, 5> distortion_coeffs_;
   cv::Matx44f camera_extrinsics_cv_;
   cv::Vec3f camera_position_;
   static constexpr float kIdMatchToleranceM = 0.9f;
   cv::Mat frame_;
-  cv::Mat density_map1_,
-      density_map2_;  // Cached calibration maps by image size.
   frc::Translation2d extrinsics_offset_;
 };
 

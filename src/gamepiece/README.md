@@ -74,7 +74,7 @@ in simulated field views show generated centers for visual comparison.
 
 Fetch each suite's manifests and `clusters/clusters.json` (preserving folders),
 then run `scripts/evaluate_gamepiece_validation.py SUITE --output=REPORT.json`
-with Python NumPy and SciPy. It checks every frame's count, one-to-one lineage,
+with Python NumPy, SciPy, and OpenCV. It checks every frame's count, one-to-one lineage,
 centroid, and covariance against visible generated centers. Fixed gates are no
 misses/extras/ID switches, every matched centroid error ≤0.35 m, and every
 covariance Bures shape distance ≤0.30 m (p95 values are also reported). The latter measures ellipse spread and orientation in
@@ -82,14 +82,24 @@ meters; it cannot be passed just by matching centroids. Samples with fewer than
 four visible balls are below the evaluator's pile visibility threshold. Empty
 runs must yield no clusters. `--allow-partial` also permits predictions matching
 true piles with 1–3 visible balls, checks their location and IDs, and still
-requires every pile with at least four visible balls. Strict count reports are
+requires every pile with at least four visible balls, except when at least 2/3
+of the pile's generated balls are off-screen. The coverage test uses projected
+sphere silhouettes, counts partial silhouettes as on-screen, and ignores
+occlusion; a hidden ball inside the sensor still counts toward coverage.
+An exempt pile remains available for matching and geometry measurements but
+cannot contribute a miss. The same rule applies to pose-sensitivity reports.
+`ignored_offscreen_observations` records exempt pile/frame pairs and
+`ignored_offscreen_misses` records the misses actually suppressed. Evaluation
+needs `gamepieces_in_frame` flags or render calibration and reference poses;
+`render_camera_calibration` preserves true rendering calibration when replay
+calibration differs. These fields never enter the tracker. Strict count reports are
 retained alongside this boundary-aware report. Negative evaluator controls
 check missed piles, false piles, geometry errors, ID changes, and misplaced
 partial detections: `python3 scripts/test_gamepiece_evaluator.py`.
 
 `--centroid-gate` uses a separate simulator field-depth point pass to require
 recall while the true cluster centroid is visible. It still records every
-four-ball reference miss in `misses` and `missed_observations`, and separately
+nonexempt four-ball reference miss in `misses` and `missed_observations`, and separately
 reports `centroid_visible_misses` and `hidden_centroid_misses`. Geometry, false
 predictions, duplicate IDs, cross-pile ID reuse, and lineage gates always apply.
 This handles field-occluded fragments without forcing a pile detection from an
@@ -123,5 +133,8 @@ ssh root@dev-orin 'cd /root && ./tools/hsv_cluster_visualizer --sim_run=/root/cl
 Outputs include camera/field views, per-frame and overall weighted heatmaps,
 comparison panels, and JSON with ground covariance, visible support, ball count
 evidence, and `density`. Colored rings in field views mark verified spheres.
-Lens distortion follows the manifest's calibration settings. Frame
-processing uses exact simulated poses, never inferred ground-truth ball positions.
+The cluster tracker and camera annotations use the input pixels directly with
+pinhole intrinsics; the tracker has no distortion parameter or rectification stage.
+The simulator can still render lens distortion for validation. AprilTag localization
+retains its own calibration. Frame processing uses exact simulated poses, never
+inferred ground-truth ball positions.

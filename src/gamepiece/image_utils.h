@@ -15,6 +15,10 @@
 
 namespace gamepiece {
 
+// Pixels within distance 2 under OpenCV's DIST_L2, mask-size-3 metric.
+// Includes foreground pixels and treats the sensor boundary as unobserved.
+void DilateTwoPixelL2(const cv::Mat1b& mask, cv::Mat1b& nearby);
+
 // Finds the lowest mask point on columns spaced at 1/256 of the image width
 // (at least one pixel) and fills empty columns by linear interpolation.
 // Input x values are undistorted;

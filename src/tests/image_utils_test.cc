@@ -7,6 +7,18 @@
 namespace gamepiece {
 namespace {
 
+TEST(ImageUtilsTest, TwoPixelDilationMatchesDistanceTransformAtSensorEdges) {
+  cv::RNG rng(71);
+  for (const auto size : {cv::Size{1, 1}, cv::Size{1, 40}, cv::Size{40, 1}, cv::Size{128, 96}})
+    for (const float threshold : {0.f, .02f, .5f, .98f, 1.f}) {
+      cv::Mat1f noise(size), distance; rng.fill(noise, cv::RNG::UNIFORM, 0, 1);
+      cv::Mat1b mask = noise < threshold, nearby;
+      DilateTwoPixelL2(mask, nearby);
+      cv::distanceTransform(255-mask, distance, cv::DIST_L2, 3);
+      EXPECT_EQ(cv::countNonZero(nearby != (distance <= 2)), 0);
+    }
+}
+
 template <typename T>
 class ImageUtilsTest : public testing::Test {
  protected:

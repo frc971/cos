@@ -11,7 +11,6 @@
 #include <tuple>
 #include <utility>
 
-#include <opencv2/calib3d.hpp>
 #include <opencv2/core/cuda.hpp>
 #include <opencv2/imgproc.hpp>
 
@@ -35,6 +34,15 @@ constexpr float kModeOverlapD2 = 4.6051702f;  // 90% contour for a 2D Gaussian.
 constexpr float kResidualAreaBalls = 4.305261f, kResidualArcBalls = 4.437539f;
 constexpr float kCountAnchor = .432812f, kCountArea = 1.423993f,
                 kCountArc = 0.0f;
+constexpr int kOutline = 32;
+const auto kCircle = [] {
+  std::array<cv::Vec2f, kOutline> points;
+  for (int i = 0; i < kOutline; ++i) {
+    const float a = 2 * std::numbers::pi_v<float> * i / kOutline;
+    points[i] = {std::cos(a), std::sin(a)};
+  }
+  return points;
+}();
 
 auto Covariance(const std::vector<cv::Point2f>& points) -> cv::Matx22f {
   cv::Point2f mean{0.0f, 0.0f};
@@ -58,8 +66,7 @@ auto Covariance(const std::vector<cv::Point2f>& points) -> cv::Matx22f {
 
 HSVClusterTrackerNode::HSVClusterTrackerNode(
     std::string_view input_path, std::string_view output_path,
-    cv::Matx33d intrinsics, cv::Matx44d extrinsics,
-    const cv::Vec<double, 5>& distortion_coeffs, std::size_t image_size,
+    cv::Matx33d intrinsics, cv::Matx44d extrinsics, std::size_t image_size,
     std::string_view pose_path, DensityHistory density_history,
     bool residual_density)
     : temporal_density_(density_history != DensityHistory::kNone),
@@ -73,7 +80,6 @@ HSVClusterTrackerNode::HSVClusterTrackerNode(
           {control_loop::MessageDescriptor::Publication<hsv_clusters_t>(
               output_path_)}),
       camera_intrinsics_(intrinsics),
-      distortion_coeffs_(distortion_coeffs),
       camera_extrinsics_cv_(extrinsics) {
   if (image_size == 0) {
     throw std::invalid_argument("Image size must be positive");
@@ -173,6 +179,7 @@ void HSVClusterTrackerNode::ProcessFrame(
     density_states_.clear();
   }
   for (auto& track : ball_tracks_) {
+    // TODO move
     if (frame.empty())
       continue;
     const frc::Translation2d stored{units::meter_t{track.position.x},
@@ -190,12 +197,10 @@ void HSVClusterTrackerNode::ProcessFrame(
                    camera_extrinsics_cv_(2, 3)});
     if (center[2] <= kFuelRadiusM)
       continue;
-    const std::vector<cv::Point3f> camera_points{
-        {center[0], center[1], center[2]}};
-    std::vector<cv::Point2f> image_points;
-    cv::projectPoints(camera_points, cv::Vec3f{}, cv::Vec3f{},
-                      camera_intrinsics_, distortion_coeffs_, image_points);
-    const float px = image_points[0].x, py = image_points[0].y;
+    const float px = center[0] / center[2] * camera_intrinsics_(0, 0) +
+                     camera_intrinsics_(0, 2);
+    const float py = center[1] / center[2] * camera_intrinsics_(1, 1) +
+                     camera_intrinsics_(1, 2);
     const float margin =
         2 * camera_intrinsics_(0, 0) * kFuelRadiusM / center[2];
     if (px >= -margin && px < frame.cols + margin && py >= -margin &&
@@ -211,9 +216,11 @@ void HSVClusterTrackerNode::ProcessFrame(
     return;
   std::vector<cv::Point2f> image_points, ground_points;
   std::vector<float> ground_weights, refined_weights;
-  HSVThreshold(frame, hsv_color_range.first, hsv_color_range.second,
-               minimum_saturation, image_points, hsv_image_, hsv_masked_);
-  if (image_points.empty())
+  cv::cvtColor(frame, hsv_image_, cv::COLOR_BGR2HSV);
+  cv::inRange(hsv_image_,
+              cv::Scalar{hsv_color_range.first, minimum_saturation, 0},
+              cv::Scalar{hsv_color_range.second, 255, 255}, hsv_masked_);
+  if (!cv::countNonZero(hsv_masked_))
     return;
   // Every silhouette tangent constrains a sphere center, without separating balls.
   // For unit ray u and inward perpendicular v, center = t*u + radius*v.
@@ -221,11 +228,10 @@ void HSVClusterTrackerNode::ProcessFrame(
   std::vector<std::vector<cv::Point>> contours;
   cv::findContours(hsv_masked_, contours, cv::RETR_EXTERNAL,
                    cv::CHAIN_APPROX_NONE);
-  image_points.clear();
   const cv::Matx33f rotation = camera_extrinsics_cv_.get_minor<3, 3>(0, 0);
-  cv::Mat1f inside, outside;
-  cv::distanceTransform(hsv_masked_, inside, cv::DIST_L2, 3);
-  cv::distanceTransform(255 - hsv_masked_, outside, cv::DIST_L2, 3);
+  cv::Mat1b near_inside, near_outside;
+  DilateTwoPixelL2(hsv_masked_, near_inside);
+  DilateTwoPixelL2(255 - hsv_masked_, near_outside);
   // Verify tangent-derived sphere centers against the entire visible outline.
   // This also estimates the visible perimeter fraction for occlusion weighting.
   const auto visible_fraction = [&](const cv::Vec3f& center) {
@@ -239,37 +245,25 @@ void HSVClusterTrackerNode::ProcessFrame(
     const float cosine_of_angular_radius =
         std::sqrt(1 - sine_of_angular_radius * sine_of_angular_radius);
     int supported = 0, accessible = 0, hidden = 0;
-    constexpr int kSamples = 32;
-    for (int j = 0; j < kSamples; ++j) {
-      const float angle = 2 * std::numbers::pi_v<float> * j / kSamples;
+    for (int j = 0; j < kOutline; ++j) {
       const auto camera_center_to_sphere_cone_intersection =
           cosine_of_angular_radius * camera_to_center +
-          sine_of_angular_radius * (std::cos(angle) * outline_basis_u +
-                                    std::sin(angle) * outline_basis_v);
+          sine_of_angular_radius * (kCircle[j][0] * outline_basis_u +
+                                    kCircle[j][1] * outline_basis_v);
       const float x = camera_center_to_sphere_cone_intersection[0] /
                       camera_center_to_sphere_cone_intersection[2],
                   y = camera_center_to_sphere_cone_intersection[1] /
                       camera_center_to_sphere_cone_intersection[2];
-      const float radius2 = x * x + y * y;
-      const float radial =
-          1 + radius2 * (distortion_coeffs_[0] +
-                         radius2 * (distortion_coeffs_[1] +
-                                    radius2 * distortion_coeffs_[4]));
-      const float dx = x * radial + 2 * distortion_coeffs_[2] * x * y +
-                       distortion_coeffs_[3] * (radius2 + 2 * x * x);
-      const float dy = y * radial +
-                       distortion_coeffs_[2] * (radius2 + 2 * y * y) +
-                       2 * distortion_coeffs_[3] * x * y;
       const int px =
-          cvRound(dx * camera_intrinsics_(0, 0) + camera_intrinsics_(0, 2));
+          cvRound(x * camera_intrinsics_(0, 0) + camera_intrinsics_(0, 2));
       const int py =
-          cvRound(dy * camera_intrinsics_(1, 1) + camera_intrinsics_(1, 2));
+          cvRound(y * camera_intrinsics_(1, 1) + camera_intrinsics_(1, 2));
       if (px < 0 || px >= frame.cols || py < 0 || py >= frame.rows)
         continue;
       ++accessible;
-      if (std::max(inside(py, px), outside(py, px)) <= 2.0f)
+      if (near_inside(py, px) && near_outside(py, px))
         ++supported;
-      if (inside(py, px) > 2.0f)
+      if (!near_outside(py, px))
         ++hidden;
     }
     // Clipped arcs cannot contradict a candidate; verify the accessible outline.
@@ -280,7 +274,7 @@ void HSVClusterTrackerNode::ProcessFrame(
     return supported >= minimum_supported_points &&
                    supported >=
                        minimum_supported_to_accessible_ratio * accessible
-               ? static_cast<float>(accessible - hidden) / kSamples
+               ? static_cast<float>(accessible - hidden) / kOutline
                : 0.0f;
   };
   for (const auto& contour : contours) {
@@ -289,16 +283,19 @@ void HSVClusterTrackerNode::ProcessFrame(
     if (contour.size() < minimum_contour_track_length ||
         cv::contourArea(contour) < minimum_contour_area)
       continue;
-    std::vector<cv::Point2f> pixels(contour.begin(), contour.end()), normalized;
-    cv::undistortPoints(pixels, normalized, camera_intrinsics_,
-                        distortion_coeffs_);
+    std::vector<cv::Point2f> normalized;
+    normalized.reserve(contour.size());
+    for (const auto& p : contour)
+      normalized.emplace_back(
+          (p.x - camera_intrinsics_(0, 2)) / camera_intrinsics_(0, 0),
+          (p.y - camera_intrinsics_(1, 2)) / camera_intrinsics_(1, 1));
     std::vector<cv::Vec3f> rays;
     for (const auto& p : normalized) {
       const cv::Vec3f ray{p.x, p.y, 1};
       rays.push_back(ray / cv::norm(ray));
     }
     const auto clipped = [&](std::size_t i) {
-      const auto& p = pixels[i];
+      const auto& p = contour[i];
       return p.x < 1 || p.x >= frame.cols - 1 || p.y < 1 ||
              p.y >= frame.rows - 1;
     };
@@ -377,30 +374,14 @@ void HSVClusterTrackerNode::EstimateDensities(
     const std::optional<frc::Pose2d>& robot_pose) {
   if (clusters.empty())
     return;
-  constexpr int kOutline = 32;
-  static const auto circle = [] {
-    std::array<cv::Vec2f, kOutline> points;
-    for (int i = 0; i < kOutline; ++i) {
-      const float a = 2 * std::numbers::pi_v<float> * i / kOutline;
-      points[i] = {std::cos(a), std::sin(a)};
-    }
-    return points;
-  }();
   auto intrinsics = camera_intrinsics_;
   float focal = std::sqrt(intrinsics(0, 0) * intrinsics(1, 1));
   const float height = -camera_extrinsics_cv_(1, 3) - kFuelRadiusM;
   const auto rotation = camera_extrinsics_cv_.get_minor<3, 3>(0, 0);
   const cv::Vec2f camera{static_cast<float>(extrinsics_offset_.X().value()),
                          static_cast<float>(extrinsics_offset_.Y().value())};
-  cv::Mat image, hsv, gray;
-  if (density_map1_.size() != frame.size())
-    cv::initUndistortRectifyMap(intrinsics, distortion_coeffs_, cv::Mat(),
-                                intrinsics, frame.size(), CV_16SC2,
-                                density_map1_, density_map2_);
-  cv::remap(frame, image, density_map1_, density_map2_, cv::INTER_LINEAR);
-  cv::cvtColor(image, hsv, cv::COLOR_BGR2HSV);
-  cv::Mat1b mask, edges;
-  cv::inRange(hsv, cv::Scalar{18, 100, 0}, cv::Scalar{30, 255, 255}, mask);
+  cv::Mat image = frame, gray;
+  cv::Mat1b mask = hsv_masked_, edges;
   auto crop = cv::boundingRect(mask);
   if (crop.empty())
     return;
@@ -440,13 +421,14 @@ void HSVClusterTrackerNode::EstimateDensities(
   gray.setTo(0, mask == 0);
   cv::GaussianBlur(gray, gray, {3, 3}, 0.7);
   cv::Canny(gray, edges, 20, 40);
-  cv::Mat1f gx, gy, edge_distance, outside;
+  cv::Mat1f gx, gy, edge_distance;
+  cv::Mat1b near_mask;
   cv::Sobel(gray, gx, CV_32F, 1, 0);
   cv::Sobel(gray, gy, CV_32F, 0, 1);
   cv::Mat1i labels;
   cv::distanceTransform(255 - edges, edge_distance, labels, cv::DIST_L2, 5,
                         cv::DIST_LABEL_PIXEL);
-  cv::distanceTransform(255 - mask, outside, cv::DIST_L2, 3);
+  DilateTwoPixelL2(mask, near_mask);
   std::vector<cv::Vec2f> edge_normals(cv::countNonZero(edges) + 1);
   std::vector<cv::Point> edge_pixels(edge_normals.size());
   cv::Mat1f votes(mask.size(), 0.0f);
@@ -458,16 +440,21 @@ void HSVClusterTrackerNode::EstimateDensities(
                               const cv::Vec2f& normal) {
     return SphereArcWeight(intrinsics, ray, normal, depth);
   };
-  for (int y = 0; y < edges.rows; ++y)
+  for (int y = 0; y < edges.rows; ++y) {
+    const auto* edges_row = edges[y];
+    const auto* gx_row = gx[y];
+    const auto* gy_row = gy[y];
+    const auto* labels_row = labels[y];
     for (int x = 0; x < edges.cols; ++x)
-      if (edges(y, x)) {
-        const float magnitude = std::hypot(gx(y, x), gy(y, x));
+      if (edges_row[x]) {
+        const float magnitude = std::hypot(gx_row[x], gy_row[x]);
         if (magnitude < 1e-5f)
           continue;
-        edge_normals[labels(y, x)] = {gx(y, x) / magnitude,
-                                      gy(y, x) / magnitude};
-        edge_pixels[labels(y, x)] = {x, y};
+        edge_normals[labels_row[x]] = {gx_row[x] / magnitude,
+                                       gy_row[x] / magnitude};
+        edge_pixels[labels_row[x]] = {x, y};
       }
+  }
   struct Sphere {
     cv::Point2f pixel;
     cv::Vec2f ground;
@@ -501,8 +488,8 @@ void HSVClusterTrackerNode::EstimateDensities(
     for (int i = 0; i < kOutline; ++i) {
       const auto direction =
           cosine_of_angular_radius * camera_to_center +
-          sine_of_angular_radius *
-              (circle[i][0] * outline_basis_u + circle[i][1] * outline_basis_v);
+          sine_of_angular_radius * (kCircle[i][0] * outline_basis_u +
+                                    kCircle[i][1] * outline_basis_v);
       outline[i] = {
           direction[0] / direction[2] * intrinsics(0, 0) + intrinsics(0, 2),
           direction[1] / direction[2] * intrinsics(1, 1) + intrinsics(1, 2)};
@@ -521,7 +508,7 @@ void HSVClusterTrackerNode::EstimateDensities(
         continue;
       }
       ++accessible;
-      bad += outside(p.y, p.x) > 2;
+      bad += !near_mask(p.y, p.x);
       const auto tangent =
           outline[(i + 1) % kOutline] - outline[(i + kOutline - 1) % kOutline];
       const auto normal = edge_normals[labels(p.y, p.x)];
@@ -574,6 +561,8 @@ void HSVClusterTrackerNode::EstimateDensities(
       Sphere best = score(pixel);
       for (int dy = -1; dy <= 1; ++dy)
         for (int dx = -1; dx <= 1; ++dx) {
+          if (dx == 0 && dy == 0)
+            continue;
           auto trial = score(pixel + cv::Point2f{static_cast<float>(dx),
                                                  static_cast<float>(dy)});
           if (trial.score > best.score)
@@ -588,15 +577,20 @@ void HSVClusterTrackerNode::EstimateDensities(
       candidates.push_back(std::move(best));
     }
   // Birth proposals use edges not explained by supported predictions.
-  for (int y = 0; y < edges.rows; ++y)
+  for (int y = 0; y < edges.rows; ++y) {
+    const auto* edges_row = edges[y];
+    const auto* predicted_edges_row = predicted_edges[y];
+    const auto* gx_row = gx[y];
+    const auto* gy_row = gy[y];
+    const auto* labels_row = labels[y];
     for (int x = 0; x < edges.cols; ++x) {
-      if (!edges(y, x) || predicted_edges(y, x) ||
-          std::hypot(gx(y, x), gy(y, x)) < 1e-5f)
+      if (!edges_row[x] || predicted_edges_row[x] ||
+          std::hypot(gx_row[x], gy_row[x]) < 1e-5f)
         continue;
       auto ray = ray_at(x, y);
       ray /= cv::norm(ray);
-      const cv::Vec3f tangent{-gy(y, x) / intrinsics(0, 0),
-                              gx(y, x) / intrinsics(1, 1), 0};
+      const cv::Vec3f tangent{-gy_row[x] / intrinsics(0, 0),
+                              gx_row[x] / intrinsics(1, 1), 0};
       auto normal = tangent.cross(ray);
       normal /= cv::norm(normal);
       const auto ground_ray = rotation * ray, ground_normal = rotation * normal;
@@ -614,20 +608,22 @@ void HSVClusterTrackerNode::EstimateDensities(
                                intrinsics(1, 2));
         if (px >= 0 && px < votes.cols && py >= 0 && py < votes.rows)
           votes(py, px) +=
-              arc_weight(center[2], ray_at(x, y), edge_normals[labels(y, x)]);
+              arc_weight(center[2], ray_at(x, y), edge_normals[labels_row[x]]);
       }
     }
+  }
   cv::Mat1f smooth;
   cv::GaussianBlur(votes, smooth, {}, 1.25);
-  for (int y = 1; y + 1 < votes.rows; ++y)
+  for (int y = 1; y + 1 < votes.rows; ++y) {
+    const auto* smooth_row = smooth[y];
     for (int x = 1; x + 1 < votes.cols; ++x) {
-      if (smooth(y, x) <
+      if (smooth_row[x] <
           0.05f / (2 * std::numbers::pi_v<float> * 1.25f * 1.25f))
         continue;
       bool peak = true;
       for (int dy = -1; dy <= 1; ++dy)
         for (int dx = -1; dx <= 1; ++dx)
-          if (smooth(y + dy, x + dx) > smooth(y, x))
+          if (smooth(y + dy, x + dx) > smooth_row[x])
             peak = false;
       if (!peak)
         continue;
@@ -642,6 +638,7 @@ void HSVClusterTrackerNode::EstimateDensities(
       if (best.score >= 0.20f)
         candidates.push_back(std::move(best));
     }
+  }
   std::vector<cv::Vec2f> centers;
   std::vector<cv::Matx22f> inverse_footprints;
   std::vector<float> cluster_depths;
@@ -754,9 +751,16 @@ void HSVClusterTrackerNode::EstimateDensities(
   // A zero-intercept predictor uses only image evidence not already explained
   // by verified spheres. Partial balls contribute even without a complete arc;
   // spheres with no image evidence cannot add a correction.
-  for (int y = 0; y < mask.rows; ++y)
+  for (int y = 0; y < mask.rows; ++y) {
+    const auto* mask_row = mask[y];
+    const auto* edges_row = edges[y];
+    const auto* evidence_owner_row = evidence_owner[y];
+    const auto* evidence_depth_row = evidence_depth[y];
+    const auto* explained_row = explained[y];
+    const auto* explained_edges_row = explained_edges[y];
+    const auto* labels_row = labels[y];
     for (int x = 0; x < mask.cols; ++x) {
-      const bool area = mask(y, x), arc = edges(y, x);
+      const bool area = mask_row[x], arc = edges_row[x];
       if (!area && !arc)
         continue;
       const auto ray = ray_at(x, y), ground_ray = rotation * ray;
@@ -765,13 +769,13 @@ void HSVClusterTrackerNode::EstimateDensities(
       const auto plane_point =
           camera +
           cv::Vec2f{ground_ray[2], -ground_ray[0]} * (height / ground_ray[1]);
-      const auto i = evidence_owner(y, x) >= 0
-                         ? static_cast<std::size_t>(evidence_owner(y, x))
+      const auto i = evidence_owner_row[x] >= 0
+                         ? static_cast<std::size_t>(evidence_owner_row[x])
                          : owner(plane_point, 16);
       if (i == clusters.size())
         continue;
       const float depth =
-          evidence_depth(y, x) > 0 ? evidence_depth(y, x) : cluster_depths[i];
+          evidence_depth_row[x] > 0 ? evidence_depth_row[x] : cluster_depths[i];
       if (depth <= kFuelRadiusM)
         continue;
       auto& evidence = clusters[i].residual_ball_evidence;
@@ -783,17 +787,18 @@ void HSVClusterTrackerNode::EstimateDensities(
                              (std::numbers::pi_v<float> * kFuelRadiusM *
                               kFuelRadiusM * fx * fy * norm);
         total[0] += weight;
-        if (!explained(y, x))
+        if (!explained_row[x])
           evidence[0] += weight;
       }
       if (arc) {
-        const auto normal = edge_normals[labels(y, x)];
+        const auto normal = edge_normals[labels_row[x]];
         const float weight = arc_weight(depth, ray, normal);
         total[1] += weight;
-        if (!explained_edges(y, x))
+        if (!explained_edges_row[x])
           evidence[1] += weight;
       }
     }
+  }
   for (auto& c : clusters) {
     c.instantaneous_ball_count =
         residual_density_

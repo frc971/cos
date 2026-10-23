@@ -29,7 +29,6 @@
 #include <frc/geometry/Pose3d.h>
 #include <frc/geometry/Rotation3d.h>
 #include <nlohmann/json.hpp>
-#include <opencv2/calib3d.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
@@ -303,7 +302,7 @@ auto DrawClusterIndex(cv::Mat& image, const std::size_t cluster_index,
               cv::Scalar{255, 255, 255}, kTextThickness, cv::LINE_AA);
 }
 
-// Convert normalized geometry to the undistorted image's pixel coordinates.
+// Convert normalized geometry to the input image's pixel coordinates.
 auto PixelCluster(const gamepiece::kmeans_cluster_t& cluster,
                   const cv::Mat& camera_matrix) -> gamepiece::kmeans_cluster_t {
   const cv::Matx33f intrinsics(camera_matrix);
@@ -324,11 +323,9 @@ auto PixelCluster(const gamepiece::kmeans_cluster_t& cluster,
 auto AnnotateFrame(const cv::Mat& frame,
                    const std::vector<gamepiece::kmeans_cluster_t>& clusters,
                    const cv::Mat& camera_matrix,
-                   const cv::Mat& map_x, const cv::Mat& map_y,
                    const double pitch)
     -> cv::Mat {
-  cv::Mat visualization;
-  cv::remap(frame, visualization, map_x, map_y, cv::INTER_LINEAR);
+  cv::Mat visualization = frame.clone();
 
   for (std::size_t cluster_index = 0; cluster_index < clusters.size();
        ++cluster_index) {
@@ -406,6 +403,7 @@ auto main(int argc, char** argv) -> int {
   std::string poses_path;
   std::string tracker_poses_path;
   bool json_only = false;
+  bool dump_cluster_samples = false;
   std::string sim_run;
   std::string output_dir;
   int start_frame = -1;
@@ -414,6 +412,8 @@ auto main(int argc, char** argv) -> int {
     const std::string_view arg(argv[i]);
     if (arg == "--json-only") {
       json_only = true;
+    } else if (arg == "--dump-cluster-samples") {
+      dump_cluster_samples = true;
     } else if (arg.starts_with("--tracker-poses=")) {
       tracker_poses_path = arg.substr(16);
     } else if (arg == "--density-no-history") {
@@ -460,7 +460,8 @@ auto main(int argc, char** argv) -> int {
            "<output-directory> <frame.jpg>...]\n"
            "Or: hsv_cluster_visualizer --sim_run=RUN_OR_MANIFEST "
            "[--output_dir=DIR] [--density-no-history | --density-filter-only] "
-           "[--density-total-count] [--tracker-poses=FILE] [--json-only]\n"
+           "[--density-total-count] [--tracker-poses=FILE] [--json-only] "
+           "[--dump-cluster-samples]\n"
            "With no positional arguments, uses the default calibration and "
            "output; with no range either, runs the sample frame.\n"
            "Calibration uses nested camera JSON (degrees) or flat BOS JSON "
@@ -521,11 +522,6 @@ auto main(int argc, char** argv) -> int {
                                     0,
                                     0,
                                     1};
-    cv::Vec<double, 5> distortion{
-        intrinsics.value("k1", 0.0), intrinsics.value("k2", 0.0),
-        intrinsics.value("p1", 0.0), intrinsics.value("p2", 0.0),
-        intrinsics.value("k3", 0.0)};
-    if (!sim.is_null() && !sim.value("apply_distortion", true)) distortion = {};
     const frc::Pose3d camera_pose(
         units::meter_t{extrinsics.at("translation_x").get<double>()},
         units::meter_t{extrinsics.at("translation_y").get<double>()},
@@ -611,13 +607,9 @@ auto main(int argc, char** argv) -> int {
         << "Cannot decode frame: " << input_paths.front();
     gamepiece::HSVClusterTrackerNode tracker(
         "decoded", "clusters", camera_matrix,
-        utils::EigenToCvMat(camera_pose.ToMatrix()), distortion,
+        utils::EigenToCvMat(camera_pose.ToMatrix()),
         first_frame.total(), "", density_history, residual_density);
     const std::size_t frame_count = input_paths.size();
-    cv::Mat map_x, map_y;
-    cv::initUndistortRectifyMap(camera_matrix, distortion, cv::Mat(),
-                               camera_matrix, first_frame.size(), CV_16SC2,
-                               map_x, map_y);
     const std::size_t workers = std::min<std::size_t>(6, frame_count);
     control_loop::ThreadPool pool(workers);
     std::deque<std::future<cv::Mat>> pending;
@@ -707,13 +699,13 @@ auto main(int argc, char** argv) -> int {
       const auto& clusters = *tracker.GetClusters();
       const auto output_path =
           output_directory / (input_path.stem().string() + "_clusters.png");
-      if (!json_only) pending.push_back(Async(pool, [frame, clusters, camera_matrix, map_x, map_y,
+      if (!json_only) pending.push_back(Async(pool, [frame, clusters, camera_matrix,
                                     pitch = camera_pose.Rotation().Y().value(),
                                     input_path, output_path,
                                     panel = (use_range || !sim.is_null()) &&
                                             panel_indices.contains(frame_index)] {
         const cv::Mat visualization = AnnotateFrame(
-            frame, clusters, cv::Mat(camera_matrix), map_x, map_y, pitch);
+            frame, clusters, cv::Mat(camera_matrix), pitch);
         const std::string caption = input_path.filename().string() + " | " +
                                     std::to_string(clusters.size()) + " clusters";
         cv::putText(visualization, caption, {20, 40}, cv::FONT_HERSHEY_SIMPLEX,
@@ -836,6 +828,15 @@ auto main(int argc, char** argv) -> int {
              {"covariance",
               {{cluster.covar(0, 0), cluster.covar(0, 1)},
                {cluster.covar(1, 0), cluster.covar(1, 1)}}}});
+        if (dump_cluster_samples) {
+          auto samples = nlohmann::json::array();
+          for (std::size_t i = 0; i < cluster.img_points.size(); ++i)
+            samples.push_back({cluster.img_points[i].x, cluster.img_points[i].y,
+                               normalized_cluster.ground_points[i].x,
+                               normalized_cluster.ground_points[i].y,
+                               normalized_cluster.ground_weights[i]});
+          cluster_data.back()["samples_px_robot_m_weight"] = std::move(samples);
+        }
       }
       frames.push_back({{"input", input_path.string()},
                         {"output", output_path.string()},
