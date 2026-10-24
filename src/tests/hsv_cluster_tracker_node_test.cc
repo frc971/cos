@@ -12,6 +12,7 @@
 
 namespace gamepiece {
 struct HSVClusterTrackerNodeTestPeer {
+  static auto Pose(const HSVClusterTrackerNode& tracker) { return tracker.last_robot_pose_; }
   static auto ArcWeight(const cv::Matx33f& K, const cv::Vec3f& ray, const cv::Vec2f& normal, float depth) {
     return HSVClusterTrackerNode::SphereArcWeight(K, ray, normal, depth);
   }
@@ -156,6 +157,29 @@ TEST(HSVClusterTrackerTest, DensityHistoryFollowsRemovalAndAddition) {
   const float before = settle(5, 8), after = settle(3, 6);
   EXPECT_LT(after, .65f * before); EXPECT_NEAR(after, 9, 4.5);
   EXPECT_GT(settle(5, 6), .85f * before);
+}
+TEST(HSVClusterTrackerNodeTest, PullsLatestNetworkTablesPoseOnlyWhenProcessingAFrame) {
+  auto instance = nt::NetworkTableInstance::Create();
+  {
+    Tracker tracker("d", "c", kIntrinsics, kExtrinsics, 128 * 96, "",
+                    gamepiece::DensityHistory::kPredict, true, "/test/Pose", instance);
+    auto publisher = instance.GetStructTopic<frc::Pose3d>("/test/Pose").Publish();
+    const auto callback = tracker.CreateCallback();
+    const auto frame = [&] {
+      auto context = std::make_shared<control_loop::ContextInternal>(Clock::now(), nullptr, std::stop_token{}, 0);
+      context->SetMessage("d", nullptr); callback(context);
+    };
+    EXPECT_EQ(tracker.GetDependencies().size(), 1U);
+    frame(); EXPECT_FALSE(gamepiece::HSVClusterTrackerNodeTestPeer::Pose(tracker));
+    for (int x : {1, 2}) publisher.Set(frc::Pose3d{units::meter_t{x}, 3_m, 0_m, frc::Rotation3d{}});
+    frame(); ASSERT_TRUE(gamepiece::HSVClusterTrackerNodeTestPeer::Pose(tracker));
+    EXPECT_DOUBLE_EQ(gamepiece::HSVClusterTrackerNodeTestPeer::Pose(tracker)->X().value(), 2);
+    publisher.Set(frc::Pose3d{4_m, 5_m, 0_m, frc::Rotation3d{0_rad, 0_rad, 0.7_rad}});
+    EXPECT_DOUBLE_EQ(gamepiece::HSVClusterTrackerNodeTestPeer::Pose(tracker)->X().value(), 2);
+    frame(); EXPECT_DOUBLE_EQ(gamepiece::HSVClusterTrackerNodeTestPeer::Pose(tracker)->X().value(), 4);
+    EXPECT_NEAR(gamepiece::HSVClusterTrackerNodeTestPeer::Pose(tracker)->Rotation().Radians().value(), .7, 1e-9);
+  }
+  nt::NetworkTableInstance::Destroy(instance);
 }
 TEST(HSVClusterTrackerNodeTest, WaitsForBothDependenciesAndPublishesPaddedFramesOnce) {
   const auto image = SphereImage();

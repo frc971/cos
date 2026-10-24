@@ -46,9 +46,10 @@ ABSL_FLAG(std::vector<std::string>, localization_configs, {}, "Three correspondi
 ABSL_FLAG(std::string, gamepiece_log, "", "Timestamped color JPEG folder");
 ABSL_FLAG(std::string, gamepiece_config, "constants/gamepiece/camera.json", "Color camera JSON");
 ABSL_FLAG(std::string, poses, "", "JSON array of {timestamp, x, y, yaw}; seconds, field meters, radians");
+ABSL_FLAG(std::string, ground_truth, "", "Optional JSON array of {timestamp, clusters:[{x,y,density,in_frame_fraction}]}; field meters");
 ABSL_FLAG(std::string, output_dir, "/root/debug-output/hsv-cluster-pipeline", "New or empty output folder");
 ABSL_FLAG(int, timeout_seconds, 300, "Maximum replay duration including drain");
-ABSL_FLAG(bool, self_test, false, "Only run input/interpolation unit tests; no hardware needed");
+ABSL_FLAG(bool, self_test, false, "Only run input/accuracy unit tests; no hardware needed");
 
 namespace {
 namespace fs = std::filesystem;
@@ -157,6 +158,107 @@ struct Stats {
   }
 };
 
+// Rectangular Hungarian assignment; dummy columns allow unmatched truth clusters.
+auto Assign(const std::vector<std::vector<double>>& costs) -> std::vector<int> {
+  const int n = costs.size(), m = n ? costs.front().size() : 0;
+  std::vector<double> u(n + 1), v(m + 1);
+  std::vector<int> owner(m + 1), previous(m + 1), assignment(n, -1);
+  for (int i = 1; i <= n; ++i) {
+    owner[0] = i; int column = 0;
+    std::vector<double> best(m + 1, INFINITY);
+    std::vector<bool> used(m + 1);
+    do {
+      used[column] = true;
+      const int row = owner[column]; int next = 0; double delta = INFINITY;
+      for (int j = 1; j <= m; ++j) if (!used[j]) {
+        const double cost = costs[row - 1][j - 1] - u[row] - v[j];
+        if (cost < best[j]) { best[j] = cost; previous[j] = column; }
+        if (best[j] < delta) { delta = best[j]; next = j; }
+      }
+      for (int j = 0; j <= m; ++j)
+        if (used[j]) { u[owner[j]] += delta; v[j] -= delta; } else best[j] -= delta;
+      column = next;
+    } while (owner[column]);
+    do { const int next = previous[column]; owner[column] = owner[next]; column = next; } while (column);
+  }
+  for (int j = 1; j <= m; ++j) if (owner[j]) assignment[owner[j] - 1] = j - 1;
+  return assignment;
+}
+
+class Accuracy {
+ public:
+  explicit Accuracy(const Json& truth) {
+    if (!truth.is_array() || truth.empty()) throw std::invalid_argument("Ground truth must be a nonempty array");
+    for (const auto& frame : truth) {
+      const double timestamp = frame.at("timestamp");
+      const auto& clusters = frame.at("clusters");
+      if (!std::isfinite(timestamp) || !clusters.is_array() || !truth_.emplace(timestamp, clusters).second)
+        throw std::invalid_argument("Ground truth needs unique finite timestamps and cluster arrays");
+      for (const auto& c : clusters) {
+        const double x = c.at("x"), y = c.at("y"), density = c.at("density"), fraction = c.value("in_frame_fraction", 1.0);
+        if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(density) || density < 0 ||
+            !std::isfinite(fraction) || fraction < 0 || fraction > 1)
+          throw std::invalid_argument("Invalid ground truth cluster");
+      }
+    }
+  }
+  auto At(double timestamp) const -> const Json& {
+    auto next = truth_.lower_bound(timestamp - 1e-6);
+    if (next == truth_.end() || std::abs(next->first - timestamp) > 1e-6)
+      throw std::invalid_argument("Ground truth does not cover color timestamp " + std::to_string(timestamp));
+    return next->second;
+  }
+  void Add(double timestamp, const gamepiece::hsv_clusters_t& clusters, const frc::Pose2d& pose) {
+    std::vector<Json> targets;
+    for (const auto& c : At(timestamp)) {
+      if (c.value("in_frame_fraction", 1.0) <= 1.0 / 3) { ++excluded_; continue; }
+      targets.push_back(c);
+    }
+    ++frames_; expected_ += targets.size();
+    // A dummy costs more than every valid match combined: maximize recall first.
+    const double dummy = targets.size() + 1;
+    std::vector<std::vector<double>> costs(targets.size(), std::vector<double>(clusters.size() + targets.size(), dummy));
+    for (std::size_t i = 0; i < targets.size(); ++i) for (std::size_t j = 0; j < clusters.size(); ++j) {
+      const auto center = pose.Translation() + clusters[j].robot_relative_translation->RotateBy(pose.Rotation());
+      const double error = std::hypot(center.X().value() - targets[i].at("x").get<double>(),
+                                      center.Y().value() - targets[i].at("y").get<double>());
+      costs[i][j] = error <= .9 ? error : 2 * dummy;
+    }
+    const auto assignment = Assign(costs);
+    std::vector<std::pair<double, double>> densities;
+    for (std::size_t i = 0; i < targets.size(); ++i) {
+      const auto j = static_cast<std::size_t>(assignment[i]);
+      if (j >= clusters.size()) { ++missed_; continue; }
+      errors_.push_back(costs[i][j]);
+      densities.emplace_back(targets[i].at("density"), clusters[j].density);
+    }
+    for (std::size_t i = 0; i < densities.size(); ++i) for (std::size_t j = 0; j < i; ++j) {
+      const auto [a, predicted_a] = densities[i]; const auto [b, predicted_b] = densities[j];
+      if (std::abs(a - b) <= 1e-9 * std::max({1.0, a, b})) continue;
+      ++pairs_; incorrect_ += (a - b) * (predicted_a - predicted_b) <= 0;
+    }
+  }
+  auto Report() const -> Json {
+    Json median = nullptr, deviation = nullptr;
+    if (!errors_.empty()) {
+      auto sorted = errors_; std::ranges::sort(sorted);
+      const auto n = sorted.size(); median = (sorted[(n - 1) / 2] + sorted[n / 2]) / 2;
+      double mean = 0, variance = 0;
+      for (double e : sorted) mean += e / n;
+      for (double e : sorted) variance += (e - mean) * (e - mean) / n;
+      deviation = std::sqrt(variance);
+    }
+    return {{"frames", frames_}, {"expected_cluster_observations", expected_}, {"missed_clusters", missed_},
+        {"offscreen_excluded", excluded_}, {"matched_clusters", errors_.size()}, {"centroid_error_median_m", median},
+        {"centroid_error_stddev_m", deviation}, {"incorrect_density_pairs", incorrect_}, {"density_pairs", pairs_},
+        {"density_order_error_fraction", pairs_ ? Json(double(incorrect_) / pairs_) : Json(nullptr)}};
+  }
+ private:
+  std::map<double, Json> truth_;
+  std::vector<double> errors_;
+  std::size_t frames_ = 0, expected_ = 0, missed_ = 0, excluded_ = 0, pairs_ = 0, incorrect_ = 0;
+};
+
 auto FieldPoint(double x, double y) -> cv::Point2f {
   return {static_cast<float>(x * kScale), static_cast<float>((localization::kApriltagLayout.GetFieldWidth().value() - y) * kScale)};
 }
@@ -261,6 +363,9 @@ auto RunReplay() -> int {
     throw std::invalid_argument("Provide --localization_logs=DIR1,DIR2,DIR3 --localization_configs=JSON1,JSON2,JSON3 --gamepiece_log=DIR --poses=JSON");
   folders.push_back(absl::GetFlag(FLAGS_gamepiece_log)); configs.push_back(absl::GetFlag(FLAGS_gamepiece_config));
   const Poses poses(ReadJson(absl::GetFlag(FLAGS_poses)));
+  std::unique_ptr<Accuracy> accuracy;
+  if (!absl::GetFlag(FLAGS_ground_truth).empty())
+    accuracy = std::make_unique<Accuracy>(ReadJson(absl::GetFlag(FLAGS_ground_truth)));
   std::array<std::vector<double>, 4> times;
   std::array<Stats, 4> stats;
   std::array<cv::Size, 4> sizes;
@@ -279,6 +384,7 @@ auto RunReplay() -> int {
     if (std::ranges::count_if(stream, [&](double t) { return t >= begin && t <= end; }) < 2)
       throw std::invalid_argument("Need at least two frames per camera in the shared interval");
   poses.At(times[3].front()); poses.At(times[3].back());
+  if (accuracy) for (double timestamp : times[3]) accuracy->At(timestamp);
   const fs::path output = absl::GetFlag(FLAGS_output_dir);
   if (fs::exists(output) && !fs::is_empty(output)) throw std::invalid_argument("Output directory must be new or empty");
   fs::create_directories(output);
@@ -353,6 +459,7 @@ auto RunReplay() -> int {
       tracker_seconds += std::chrono::duration<double>(now - started).count(); ++tracker_frames;
     }
     overlays.Add(clusters->value, pose->pose.ToPose2d());
+    if (accuracy) accuracy->Add(frame->timestamp + offset, clusters->value, pose->pose.ToPose2d());
     std::scoped_lock lock(mutex);
     stats[3].Complete(frame->timestamp, std::chrono::duration<double>(now - context->start).count(), begin, end);
     completion.notify_one();
@@ -392,6 +499,7 @@ auto RunReplay() -> int {
     LOG(INFO) << folders[i] << ": " << report.dump();
   }
   summary["passed"] = passed;
+  if (accuracy) { summary["accuracy"] = accuracy->Report(); LOG(INFO) << "Accuracy: " << summary["accuracy"].dump(); }
   overlays.Write(output);
   std::ofstream result(output / "summary.json"); result << summary.dump(2) << '\n'; result.flush(); CHECK(result.good());
   LOG(INFO) << "Replay " << (passed ? "passed" : "failed") << "; tracker FPS=" << summary["tracker_fps"];
@@ -418,6 +526,50 @@ TEST(PoseReplayTest, RejectsMalformedNonfiniteAndUnorderedSamples) {
   const Poses single(Json::array({sample}));
   EXPECT_DOUBLE_EQ(single.At(1).X().value(), 0);
   EXPECT_THROW(single.At(NAN), std::out_of_range);
+}
+TEST(AccuracyTest, MatchesOneToOneBeforeMinimizingDistance) {
+  EXPECT_EQ(Assign({{.1, .8, 3, 3}, {.2, 6, 3, 3}}), (std::vector<int>{1, 0}));
+  EXPECT_TRUE(Assign({}).empty());
+}
+TEST(AccuracyTest, ReportsFieldErrorsMissesVisibilityAndDensityInversions) {
+  Accuracy accuracy(Json::parse(R"([{"timestamp":10,"clusters":[
+    {"x":2,"y":9,"density":10},{"x":2,"y":12,"density":20},
+    {"x":100,"y":100,"density":30},{"x":50,"y":50,"density":40,"in_frame_fraction":0.3333333333333333}]}])"));
+  gamepiece::hsv_clusters_t clusters(2);
+  clusters[0].robot_relative_translation = frc::Translation2d{6_m, 0_m}; clusters[0].density = 3;
+  clusters[1].robot_relative_translation = frc::Translation2d{9.6_m, 0_m}; clusters[1].density = 2;
+  accuracy.Add(10, clusters, frc::Pose2d{2_m, 3_m, frc::Rotation2d{units::radian_t{std::numbers::pi / 2}}});
+  const auto r = accuracy.Report();
+  EXPECT_EQ(r.at("expected_cluster_observations"), 3); EXPECT_EQ(r.at("missed_clusters"), 1);
+  EXPECT_EQ(r.at("offscreen_excluded"), 1); EXPECT_EQ(r.at("matched_clusters"), 2);
+  EXPECT_NEAR(r.at("centroid_error_median_m").get<double>(), .3, 1e-9);
+  EXPECT_NEAR(r.at("centroid_error_stddev_m").get<double>(), .3, 1e-9);
+  EXPECT_EQ(r.at("incorrect_density_pairs"), 1); EXPECT_EQ(r.at("density_pairs"), 1);
+  EXPECT_EQ(r.at("density_order_error_fraction"), 1);
+}
+TEST(AccuracyTest, DistinguishesUnmeasuredErrorsAndDensityTies) {
+  Accuracy accuracy(Json::parse(R"([{"timestamp":0,"clusters":[
+    {"x":0,"y":0,"density":10},{"x":3,"y":0,"density":20}]}])"));
+  accuracy.Add(0, {}, {});
+  EXPECT_TRUE(accuracy.Report().at("centroid_error_median_m").is_null());
+  EXPECT_TRUE(accuracy.Report().at("density_order_error_fraction").is_null());
+  gamepiece::hsv_clusters_t clusters(2);
+  for (int i = 0; i < 2; ++i) {
+    clusters[i].robot_relative_translation = frc::Translation2d{units::meter_t{3.0 * i}, 0_m}; clusters[i].density = 1;
+  }
+  accuracy.Add(0, clusters, {});
+  EXPECT_EQ(accuracy.Report().at("incorrect_density_pairs"), 1);
+  Accuracy equal(Json::parse(R"([{"timestamp":0,"clusters":[
+    {"x":0,"y":0,"density":10},{"x":3,"y":0,"density":10}]}])"));
+  equal.Add(0, clusters, {}); EXPECT_EQ(equal.Report().at("density_pairs"), 0);
+}
+TEST(AccuracyTest, RejectsInvalidOrMissingTruth) {
+  const Json frame{{"timestamp", 1}, {"clusters", Json::array()}};
+  EXPECT_THROW(Accuracy(Json::array()), std::invalid_argument);
+  EXPECT_THROW(Accuracy(Json::array({frame, frame})), std::invalid_argument);
+  Accuracy accuracy(Json::array({frame})); EXPECT_THROW(accuracy.At(2), std::invalid_argument);
+  auto invalid = frame; invalid["clusters"] = Json::array({{{"x", 0}, {"y", 0}, {"density", -1}}});
+  EXPECT_THROW(Accuracy(Json::array({invalid})), std::invalid_argument);
 }
 }  // namespace
 
