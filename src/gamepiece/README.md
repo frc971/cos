@@ -1,4 +1,6 @@
-The tracker thresholds yellow Fuel (hue 18–30, saturation ≥100) and projects
+The tracker thresholds Fuel with two ORed OpenCV HSV ranges: yellow (hue 18–35,
+saturation ≥120) and shaded orange (hue 10–17, saturation ≥190), with no value
+cutoff. These ranges were tuned on the live gamepiece feed. It projects
 silhouette tangents of 7.5 cm radius spheres onto the field. Pile geometry uses
 contour evidence; a separate density pass verifies individual sphere arcs and
 measures residual image evidence. Outline consistency rejects unreliable geometry

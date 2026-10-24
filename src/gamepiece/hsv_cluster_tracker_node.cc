@@ -24,8 +24,8 @@
 namespace gamepiece {
 namespace {
 
-constexpr std::pair<int, int> hsv_color_range{18, 30};
-constexpr int minimum_saturation{100};
+constexpr std::pair<int, int> hsv_color_range{18, 35};
+constexpr int minimum_saturation{120};
 constexpr float kFuelRadiusM = 0.075f;
 constexpr float kCellM = 0.1f;
 constexpr float kBandwidthM = 0.3f;
@@ -255,6 +255,10 @@ void HSVClusterTrackerNode::ProcessFrame(
   cv::inRange(hsv_image_,
               cv::Scalar{hsv_color_range.first, minimum_saturation, 0},
               cv::Scalar{hsv_color_range.second, 255, 255}, hsv_masked_);
+  // Shaded Fuel shifts orange; require stronger saturation to reject plywood.
+  cv::inRange(hsv_image_, cv::Scalar{10, 190, 0}, cv::Scalar{17, 255, 255},
+              hsv_orange_mask_);
+  cv::bitwise_or(hsv_masked_, hsv_orange_mask_, hsv_masked_);
   if (!cv::countNonZero(hsv_masked_))
     return;
   // Every silhouette tangent constrains a sphere center, without separating balls.

@@ -141,6 +141,7 @@ class HSVClusterTrackerNode final : public control_loop::INode {
 
   cv::Mat3b hsv_image_;
   cv::Mat1b hsv_masked_;
+  cv::Mat1b hsv_orange_mask_;
   cv::Matx33f camera_intrinsics_;
   cv::Matx44f camera_extrinsics_cv_;
   cv::Vec3f camera_position_;
