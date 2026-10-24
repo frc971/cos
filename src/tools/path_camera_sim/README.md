@@ -4,13 +4,18 @@ Renders the 2026 field's 3D meshes from robot poses using the calibrated camera.
 The renderer uses headless OpenGL ES 3 on dev-orin; it requires a working EGL
 display and GPU. The field model is the official AdvantageScope 2026 asset in
 `constants/field-cad` (see its `LICENSE`). Staged Fuel is omitted, matching
-BOS when no gamepieces are configured. The tool writes `frame_000000.png`,
-etc., and `manifest.json`.
+BOS when no gamepieces are configured. The tool writes timestamped PNGs and
+`manifest.json`. `--fps` sets the frame rate (default 30); filenames are elapsed
+seconds starting at zero, with six decimal places: `0.000000.png`,
+`0.033333.png`, `0.066667.png`, etc. The manifest records `fps` and each frame's
+unrounded `timestamp` in seconds. FPS must be finite, positive, and at most
+1000000 to keep filenames unique at microsecond precision.
 
 ```sh
 cd /root
 ./tools/path_camera_sim \
   --poses=/path/to/poses.json \
+  --fps=30 \
   --camera_config=constants/second_bot/left_camera.json \
   --output_dir=/root/debug-output/path-camera-sim
 ```
@@ -41,11 +46,20 @@ removal chance. The placement and random sampling follow BOS's Fuel generator.
 The staged Fuel meshes are already embedded in `model.glb`, so no separate
 gamepiece asset is required.
 
-To replace staged Fuel with Gaussian clusters, pass a JSON array:
+To replace staged Fuel with Gaussian clusters, put a JSON array in `clusters.json`:
+
+```json
+[
+  {"center_m":[5,3],"density":20,"covariance_m2":[0.5,0.08],"rotation_rad":0.7},
+  {"center_m":[8,5],"density":10,"covariance_m2":[0.2,0.2],"rotation_rad":0}
+]
+```
+
+Pass the file path with `--fuel_clusters`:
 
 ```sh
 ./tools/path_camera_sim --poses=/path/to/poses.json \
-  --fuel_clusters='[{"center_m":[5,3],"density":20,"covariance_m2":[0.5,0.08],"rotation_rad":0.7},{"center_m":[8,5],"density":10,"covariance_m2":[0.2,0.2],"rotation_rad":0}]' \
+  --fuel_clusters=clusters.json \
   --fuel_noise=0.1 --fuel_seed=7
 ```
 
@@ -62,6 +76,33 @@ no balls. Use `--fuel_seed` for repeatable layouts.
 Cluster mode writes one run directly to `--output_dir`, with cluster parameters,
 noise, seed, and generated positions in its manifest. It cannot be combined with
 `--fuel_entropy`, which selects the staged/scattered comparison mode.
+
+The simulator renders one frame per pose; FPS sets timestamps and does not
+resample the path or pace rendering. To render 50 frames spanning the whole
+Quato path, sample its pose array uniformly, keeping both endpoints:
+
+```sh
+python3 - <<'PY'
+import json
+from pathlib import Path
+root = Path('/root/debug-output/quato-input')
+poses = json.loads((root / 'Quato.poses.json').read_text())['poses']
+sample = [poses[round(i * (len(poses) - 1) / 49)] for i in range(50)]
+(root / 'Quato-50.poses.json').write_text(json.dumps({'poses': sample}))
+PY
+./tools/path_camera_sim \
+  --poses=/root/debug-output/quato-input/Quato-50.poses.json \
+  --fps=30 \
+  --camera_config=constants/second_bot/left_camera.json \
+  --fuel_clusters=/root/debug-output/quato-input/clusters.json \
+  --fuel_seed=7 --fuel_noise=0.1 \
+  --output_dir=/root/debug-output/quato-50-30fps
+```
+
+Run from `/root` on dev-orin. The original Quato pose file was found at
+`root@build-server:/home/yasen/cos-worktrees/materials/Quato.poses.json`.
+Its 351 poses cover seven path segments. The original, the sampled 50-pose file,
+and an example `clusters.json` have been copied to the input directory above.
 
 Each manifest embeds the camera calibration and lens-distortion setting.
 Feed a run directly to `tools/hsv_cluster_visualizer --sim_run=/root/debug-output/path-camera-sim/entropic`

@@ -12,12 +12,15 @@ target_sources(cos.uvc_camera_node
       uvc_camera_config.h
       uvc_camera_node.h
 )
-target_link_libraries(cos.uvc_camera_node PRIVATE
-  uvc
-  absl::log
-  nlohmann_json::nlohmann_json
-  wpilibc
-  cos::rio_clock
+target_link_libraries(cos.uvc_camera_node
+  PUBLIC
+    cos::logging_types
+  PRIVATE
+    uvc
+    absl::log
+    nlohmann_json::nlohmann_json
+    wpilibc
+    cos::rio_clock
 )
 
 set(TEGRA_MMAPI_ROOT
@@ -90,6 +93,7 @@ target_compile_options(cos.nvjpeg_decode_node PRIVATE
 )
 target_link_libraries(cos.nvjpeg_decode_node
   PUBLIC
+    cos::logging_types
     CUDA::cudart
     CUDA::nvjpeg
     cos::cuda_utils
@@ -117,6 +121,7 @@ target_include_directories(cos.nvjpeg_fd_decode_node PRIVATE
 target_compile_definitions(cos.nvjpeg_fd_decode_node PRIVATE TEGRA_ACCELERATE)
 target_link_libraries(cos.nvjpeg_fd_decode_node
   PUBLIC
+    cos::logging_types
     cos::jetson_mmjpeg
     absl::log
   PRIVATE
@@ -136,6 +141,7 @@ target_sources(cos.cpu_decode_node
       jpeg_buffer.h
 )
 target_link_libraries(cos.cpu_decode_node PUBLIC
+  cos::logging_types
   JPEG::JPEG
   absl::log
 )
@@ -173,11 +179,14 @@ target_sources(cos.uvc_disk_camera_node
       jpeg_buffer.h
       uvc_disk_camera_node.h
 )
-target_link_libraries(cos.uvc_disk_camera_node PRIVATE
-  absl::log
-  cos::control_loop
-  cos::rio_clock
-  cos::stop
+target_link_libraries(cos.uvc_disk_camera_node
+  PUBLIC
+    cos::logging_types
+  PRIVATE
+    absl::log
+    cos::control_loop
+    cos::rio_clock
+    cos::stop
 )
 
 add_library(cos.get_earliest_timestamp)

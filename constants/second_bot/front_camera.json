@@ -5,8 +5,8 @@
   "height": 800,
   "width": 1280,
   "fps": 120,
-  "exposure_time_ms": 157,
-  "auto_exposure": true,
+  "exposure_time_ms": 2,
+  "auto_exposure": false,
   "max_payload_size": 1600,
   "max_frame_size": 2048589,
   "extrinsics": {

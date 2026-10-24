@@ -24,6 +24,7 @@ target_sources(cos.cpu_apriltag_detector_node
       tag_detections.h
 )
 target_link_libraries(cos.cpu_apriltag_detector_node PUBLIC
+  cos::logging_types
   apriltag
   ${OpenCV_LIBS}
   nlohmann_json::nlohmann_json
@@ -31,6 +32,7 @@ target_link_libraries(cos.cpu_apriltag_detector_node PUBLIC
 )
 target_link_libraries(cos.nvidia_apriltag_detector_node
   PUBLIC
+    cos::logging_types
     ${OpenCV_LIBS}
     vpi
     cos::nvjpeg_fd_decode_node

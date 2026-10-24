@@ -12,6 +12,7 @@ target_sources(cos.jpeg_buffer_log_node
 target_link_libraries(cos.jpeg_buffer_log_node
   PUBLIC
     cos::connect_to_rio
+    cos::logging_types
   PRIVATE
     absl::log
 )
@@ -23,4 +24,4 @@ target_sources(cos.wpilog_writer
   PUBLIC FILE_SET HEADERS BASE_DIRS ${PROJECT_SOURCE_DIR}/src
   FILES log_registration.h wpilog_writer.h
 )
-target_link_libraries(cos.wpilog_writer PUBLIC wpiutil wpimath ntcore)
+target_link_libraries(cos.wpilog_writer PUBLIC cos::logging_types)

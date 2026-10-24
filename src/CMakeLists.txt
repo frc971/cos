@@ -1,9 +1,13 @@
 include_directories(SYSTEM
-  ${CMAKE_SYSROOT}/usr/include/wpimath
-  ${CMAKE_SYSROOT}/usr/include/wpiutil
-  ${CMAKE_SYSROOT}/usr/include/ntcore
-  ${CMAKE_SYSROOT}/usr/include/eigen3
   ${PROJECT_SOURCE_DIR}/third_party/json/include
+)
+
+add_library(cos.logging_types INTERFACE)
+add_library(cos::logging_types ALIAS cos.logging_types)
+target_link_libraries(cos.logging_types INTERFACE
+  wpiutil
+  wpimath
+  ntcore
 )
 
 add_subdirectory(utils)

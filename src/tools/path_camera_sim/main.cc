@@ -27,6 +27,7 @@
 #include "tools/path_camera_sim/field_renderer.h"
 
 ABSL_FLAG(std::string, poses, "", "JSON file containing localization poses");
+ABSL_FLAG(double, fps, 30.0, "Frame rate used for timestamp filenames in seconds");
 ABSL_FLAG(std::string, camera_config, "constants/second_bot/left_camera.json",
           "Camera configuration with intrinsics and extrinsics");
 ABSL_FLAG(std::string, field_dir, "constants/field-cad",
@@ -39,7 +40,7 @@ ABSL_FLAG(double, fuel_entropy, -1.0,
           "Render staged Fuel and a second layout at this entropy (0 to 1)");
 ABSL_FLAG(uint32_t, fuel_seed, 0, "Seed for randomized Fuel layouts");
 ABSL_FLAG(std::string, fuel_clusters, "",
-          "JSON array of {center_m:[x,y], density:balls/m^2, "
+          "JSON file containing an array of {center_m:[x,y], density:balls/m^2, "
           "covariance_m2:[v1,v2], rotation_rad:angle}; replaces staged Fuel");
 ABSL_FLAG(double, fuel_noise, 0.0,
           "Additional isotropic position noise standard deviation in meters for --fuel_clusters");
@@ -54,7 +55,7 @@ auto ReadJson(const std::filesystem::path& path) -> nlohmann::json {
 
 auto ReadFuelClusters(const nlohmann::json& document)
     -> std::vector<path_camera_sim::FuelCluster> {
-  if (!document.is_array()) throw std::runtime_error("--fuel_clusters must be a JSON array");
+  if (!document.is_array()) throw std::runtime_error("--fuel_clusters file must contain a JSON array");
   std::vector<path_camera_sim::FuelCluster> clusters;
   for (const auto& item : document) {
     for (const auto* key : {"center_m", "covariance_m2"}) {
@@ -148,9 +149,12 @@ void BuildDistortionMaps(const cv::Size& size, const cv::Matx33d& intrinsics,
 }
 
 void Run() {
+  const double fps = absl::GetFlag(FLAGS_fps);
+  if (!std::isfinite(fps) || fps <= 0.0 || fps > 1e6)
+    throw std::runtime_error("--fps must be finite and in (0, 1000000]");
   const std::string cluster_arg = absl::GetFlag(FLAGS_fuel_clusters);
   const auto cluster_json = cluster_arg.empty() ? nlohmann::json::array()
-                                               : nlohmann::json::parse(cluster_arg);
+                                               : ReadJson(cluster_arg);
   const auto clusters = ReadFuelClusters(cluster_json);
   const double noise = absl::GetFlag(FLAGS_fuel_noise);
   if (!std::isfinite(noise) || noise < 0.0 || (cluster_arg.empty() && noise != 0.0))
@@ -211,6 +215,7 @@ void Run() {
       {"poses", poses_path},
       {"field_model", (std::filesystem::path(field_dir) / "model.glb").string()},
       {"resolution", {image_size.width, image_size.height}},
+      {"fps", fps},
       {"frames", nlohmann::json::array()}};
     if (!cluster_arg.empty()) {
       manifest["fuel_clusters"] = cluster_json;
@@ -250,12 +255,14 @@ void Run() {
         image = std::move(distorted);
       }
       std::ostringstream filename;
-      filename << "frame_" << std::setw(6) << std::setfill('0') << index << ".png";
+      const double timestamp = static_cast<double>(index) / fps;
+      filename << std::fixed << std::setprecision(6) << timestamp << ".png";
       const auto path = layout_dir / filename.str();
       if (!cv::imwrite(path.string(), image)) {
         throw std::runtime_error("Cannot write " + path.string());
       }
       manifest["frames"].push_back({{"file", filename.str()},
+                                     {"timestamp", timestamp},
                                      {"robot_pose", item}});
       if (absl::GetFlag(FLAGS_fuel_truth)) {
         cv::Mat labels = renderer.Render(CameraWorldToOpenCv(pose, camera_to_robot), true);
