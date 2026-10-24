@@ -7,6 +7,15 @@ is retained at reduced weight for finding piles whose full outlines are not
 yet visible. Verification considers the part of an outline inside the image;
 occlusion correction excludes arcs contradicted by non-yellow pixels.
 
+`second_bot_main` runs the `gamepiece` serial camera from
+`constants/second_bot/color.json` through BGR decoding, this tracker, and
+`DensestClusterRioStreamerNode` at `/COS/DensestCluster` (stream port 5804).
+The camera mount uses `constants/gamepiece/chopped_mount.json` geometry.
+The three grayscale cameras continue to localize with AprilTags. The tracker
+snapshots `/Robot/Pose` and publishes that same pose in the frame context for
+the sender via `EnablePoseOutput`, so selection and field coordinates agree.
+Until a robot pose is received, valid color frames publish empty target arrays.
+
 Clustering uses a 10 cm grid and density saddles at two scales: 30 cm resolves
 weak entering peaks, while 40 cm merges sampling bumps along broad piles.
 Untracked modes remain separate across a density valley of at least 25%.

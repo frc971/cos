@@ -26,7 +26,7 @@ struct Ellipse {
 
 using kmeans_cluster_t = struct KMeansCluster {
   cv::Point2f
-      centroid;  // Focal-length-normalized image coordinates (x/z, y/z).
+      centroid;         // Focal-length-normalized image coordinates (x/z, y/z).
   cv::Matx22f covar{};  // Covariance of img_points in normalized coordinates.
   std::vector<cv::Point2f> img_points;
   std::optional<frc::Translation2d> robot_relative_translation = std::nullopt;
@@ -66,14 +66,16 @@ class HSVClusterTrackerNode final : public control_loop::INode {
       std::size_t image_size,  // Total pixels (width * height).
       std::string_view pose_path = "",
       DensityHistory density_history = DensityHistory::kPredict,
-      bool residual_density = true,
-      std::string_view pose_topic = "/Robot/Pose",
-      nt::NetworkTableInstance instance = nt::NetworkTableInstance::GetDefault());
+      bool residual_density = true, std::string_view pose_topic = "/Drive/Pose",
+      nt::NetworkTableInstance instance =
+          nt::NetworkTableInstance::GetDefault());
   // Processes a CPU BGR frame; callers must serialize access with callbacks.
   void ProcessFrame(const cv::Mat& frame,
                     std::optional<frc::Pose2d> robot_pose = std::nullopt);
   [[nodiscard]] auto GetClusters() const
       -> const std::vector<kmeans_cluster_t>*;
+  // Configure before registering the node; shares the exact frame pose with senders.
+  void EnablePoseOutput(std::string_view output_path);
   // Generic ray intersection with the Fuel center plane. Silhouette-corrected
   // retained samples are in each cluster's ground_points.
   [[nodiscard]] auto RobotRelativeOffset(const cv::Point2f& point) const
@@ -123,6 +125,7 @@ class HSVClusterTrackerNode final : public control_loop::INode {
   std::string input_path_;
   std::string output_path_;
   std::string pose_path_;
+  std::string pose_output_path_;
   nt::StructSubscriber<frc::Pose3d> pose_subscriber_;
   std::vector<std::function<void(const control_loop::Context&)>> callbacks_;
   std::vector<control_loop::MessageDescriptor> dependencies_;

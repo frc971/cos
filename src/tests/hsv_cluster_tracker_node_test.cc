@@ -9,6 +9,7 @@
 #include <cuda_runtime_api.h>
 #include "localization/position.h"
 #include "camera/nvjpeg_decode_node.h"
+#include "streamer/densest_cluster_rio_streamer_node.h"
 
 namespace gamepiece {
 struct HSVClusterTrackerNodeTestPeer {
@@ -163,11 +164,18 @@ TEST(HSVClusterTrackerNodeTest, PullsLatestNetworkTablesPoseOnlyWhenProcessingAF
   {
     Tracker tracker("d", "c", kIntrinsics, kExtrinsics, 128 * 96, "",
                     gamepiece::DensityHistory::kPredict, true, "/test/Pose", instance);
+    tracker.EnablePoseOutput("frame/pose");
+    EXPECT_EQ(tracker.GetPublications().size(), 2U);
     auto publisher = instance.GetStructTopic<frc::Pose3d>("/test/Pose").Publish();
     const auto callback = tracker.CreateCallback();
     const auto frame = [&] {
       auto context = std::make_shared<control_loop::ContextInternal>(Clock::now(), nullptr, std::stop_token{}, 0);
-      context->SetMessage("d", nullptr); callback(context);
+      context->SetMessage("d", nullptr); callback(context); callback(context);
+      EXPECT_TRUE(context->Exists("frame/pose"));
+      const auto* output = context->GetMessage<localization::PositionEstimateMessage>("frame/pose");
+      const auto pose = gamepiece::HSVClusterTrackerNodeTestPeer::Pose(tracker);
+      if (pose) { ASSERT_NE(output, nullptr); EXPECT_EQ(output->pose.ToPose2d(), *pose); }
+      else EXPECT_EQ(output, nullptr);
     };
     EXPECT_EQ(tracker.GetDependencies().size(), 1U);
     frame(); EXPECT_FALSE(gamepiece::HSVClusterTrackerNodeTestPeer::Pose(tracker));
@@ -191,6 +199,11 @@ TEST(HSVClusterTrackerNodeTest, WaitsForBothDependenciesAndPublishesPaddedFrames
                         image.cols * 3U, image.rows, cudaMemcpyHostToDevice), cudaSuccess);
   for (bool pose_first : {false, true}) {
     Tracker tracker("d", "c", kSphereIntrinsics, kExtrinsics, 640 * 480, "pose");
+    tracker.EnablePoseOutput("frame/pose");
+    streamer::DensestClusterRioStreamerNode sender("c", "frame/pose", "/test/DensestCluster");
+    auto subscriber = nt::NetworkTableInstance::GetDefault().GetDoubleArrayTopic("/test/DensestCluster")
+        .Subscribe({}, {.sendAll = true, .keepDuplicates = true});
+    tracker.RegisterCallback(sender.CreateCallback());
     auto context = std::make_shared<control_loop::ContextInternal>(Clock::now(), nullptr, std::stop_token{}, 0);
     auto pose = std::make_shared<localization::PositionEstimateMessage>();
     pose->pose = frc::Pose3d{2_m, 4_m, 0_m, frc::Rotation3d{}};
@@ -203,6 +216,12 @@ TEST(HSVClusterTrackerNodeTest, WaitsForBothDependenciesAndPublishesPaddedFrames
     const auto* output = context->GetMessage<control_loop::ValueMessage<gamepiece::hsv_clusters_t>>("c");
     ASSERT_NE(output, nullptr); ASSERT_EQ(output->value.size(), 1U);
     EXPECT_GT(output->value.front().density, 0);
+    const auto samples = subscriber.ReadQueue();
+    ASSERT_EQ(samples.size(), 1U); ASSERT_EQ(samples[0].value.size(), 10U);
+    for (double value : samples[0].value) EXPECT_TRUE(std::isfinite(value));
+    const auto center = *output->value.front().robot_relative_translation + pose->pose.ToPose2d().Translation();
+    EXPECT_NEAR(samples[0].value[0], center.X().value(), 1e-6);
+    EXPECT_NEAR(samples[0].value[1], center.Y().value(), 1e-6);
   }
   auto tracker = MakeTracker(); int calls = 0; tracker.RegisterCallback([&](const auto&) { ++calls; });
   auto context = std::make_shared<control_loop::ContextInternal>(Clock::now(), nullptr, std::stop_token{}, 0);

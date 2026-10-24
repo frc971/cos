@@ -106,6 +106,17 @@ HSVClusterTrackerNode::HSVClusterTrackerNode(
                 camera_extrinsics_cv_(2, 3)};
 }
 
+void HSVClusterTrackerNode::EnablePoseOutput(std::string_view output_path) {
+  if (output_path.empty() || output_path == input_path_ ||
+      output_path == output_path_ || output_path == pose_path_ ||
+      !pose_output_path_.empty()) {
+    throw std::invalid_argument("Tracker pose output requires a distinct path");
+  }
+  pose_output_path_ = output_path;
+  publications_.push_back(control_loop::MessageDescriptor::Publication<
+      localization::PositionEstimateMessage>(pose_output_path_));
+}
+
 auto HSVClusterTrackerNode::CreateCallback()
     -> std::function<void(const control_loop::Context&)> {
   return [this](const control_loop::Context& context) -> void {
@@ -150,6 +161,15 @@ auto HSVClusterTrackerNode::CreateCallback()
           output_path_,
           std::make_shared<control_loop::ValueMessage<hsv_clusters_t>>(
               clusters_));
+    }
+    if (!pose_output_path_.empty()) {
+      std::shared_ptr<localization::PositionEstimateMessage> estimate;
+      if (pose) {
+        estimate = std::make_shared<localization::PositionEstimateMessage>();
+        estimate->pose = frc::Pose3d{*pose};
+        if (frame) estimate->timestamp = frame->timestamp;
+      }
+      context->SetMessage(pose_output_path_, std::move(estimate));
     }
     processing_lock.unlock();
     for (const auto& callback : callbacks_) {

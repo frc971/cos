@@ -16,7 +16,7 @@ add_test(NAME image_utils_test COMMAND image_utils_test)
 
 add_executable(hsv_cluster_tracker_node_test hsv_cluster_tracker_node_test.cc)
 target_link_libraries(hsv_cluster_tracker_node_test PRIVATE
-  hsv_cluster_tracker_node cos::nvjpeg_decode_node opencv_imgproc
+  hsv_cluster_tracker_node cos::nvjpeg_decode_node cos::densest_cluster_rio_streamer_node opencv_imgproc
   GTest::gtest_main)
 add_test(NAME hsv_cluster_tracker_node_test COMMAND hsv_cluster_tracker_node_test)
 
