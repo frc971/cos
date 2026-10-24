@@ -7,6 +7,7 @@
 #include <fstream>
 #include <functional>
 #include <iterator>
+#include <numbers>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -114,6 +115,7 @@ auto MakeProgram() -> GLuint {
     out float light;
     void main() {
       gl_Position = mvp * vec4(position, 1.0);
+      gl_PointSize = 1.0;
       vec3 n = normalize(mat3(model) * normal);
       light = 0.55 + 0.45 * abs(dot(n, normalize(vec3(-0.4, 0.3, 1.0))));
     }
@@ -121,10 +123,11 @@ auto MakeProgram() -> GLuint {
   constexpr char fragment[] = R"(#version 300 es
     precision highp float;
     uniform vec4 color;
+    uniform bool fuel_labels;
     in float light;
     out vec4 pixel;
     void main() {
-      pixel = vec4(pow(max(color.rgb * light, vec3(0.0)), vec3(1.0 / 2.2)), color.a);
+      pixel = fuel_labels ? color : vec4(pow(max(color.rgb * light, vec3(0.0)), vec3(1.0 / 2.2)), color.a);
     }
   )";
   const GLuint v = MakeShader(GL_VERTEX_SHADER, vertex);
@@ -291,6 +294,7 @@ void FieldRenderer::SetFuelLayout(double entropy, uint32_t seed) {
     throw std::runtime_error("Fuel entropy must be between 0 and 1");
   active_fuel_draws_.clear();
   fuel_positions_.clear();
+  fuel_cluster_ids_.clear();
   std::mt19937 random(seed);
   std::uniform_real_distribution<double> removal_score(0.0, 1.0);
   std::normal_distribution<double> displacement(0.0, 2.0);
@@ -313,6 +317,43 @@ void FieldRenderer::SetFuelLayout(double entropy, uint32_t seed) {
   }
 }
 
+void FieldRenderer::SetFuelClusters(const std::vector<FuelCluster>& clusters,
+                                   double noise_m, uint32_t seed) {
+  if (!std::isfinite(noise_m) || noise_m < 0.0)
+    throw std::runtime_error("--fuel_noise must be finite and nonnegative");
+  active_fuel_draws_.clear();
+  fuel_positions_.clear();
+  fuel_cluster_ids_.clear();
+  std::mt19937 random(seed);
+  std::normal_distribution<double> normal;
+  for (std::size_t cluster_id = 0; cluster_id < clusters.size(); ++cluster_id) {
+    const auto& cluster = clusters[cluster_id];
+    const double sx = std::sqrt(cluster.covariance_m2[0]);
+    const double sy = std::sqrt(cluster.covariance_m2[1]);
+    const double count = std::round(2.0 * std::numbers::pi * cluster.density * sx * sy);
+    if (!std::isfinite(count) || count > 100000 - fuel_positions_.size())
+      throw std::runtime_error("Fuel clusters exceed the 100000-ball limit");
+    if (count > 0 && staged_fuel_draws_.empty())
+      throw std::runtime_error("Field model has no staged Fuel mesh");
+    const double c = std::cos(cluster.rotation_rad);
+    const double s = std::sin(cluster.rotation_rad);
+    for (size_t i = 0; i < static_cast<size_t>(count); ++i) {
+      const double u = sx * normal(random);
+      const double v = sy * normal(random);
+      const double x = cluster.center_m[0] + c * u - s * v + noise_m * normal(random);
+      const double y = cluster.center_m[1] + s * u + c * v + noise_m * normal(random);
+      if (x < 0.075 || x > field_length_ - 0.075 ||
+          y < 0.075 || y > field_width_ - 0.075) continue;
+      Draw fuel = staged_fuel_draws_.front();
+      fuel.model(0, 3) = x;
+      fuel.model(1, 3) = y;
+      fuel_positions_.push_back({x, y, fuel.model(2, 3)});
+      fuel_cluster_ids_.push_back(cluster_id);
+      active_fuel_draws_.push_back(std::move(fuel));
+    }
+  }
+}
+
 auto FieldRenderer::FuelPositions() const -> const std::vector<std::array<double, 3>>& {
   return fuel_positions_;
 }
@@ -332,36 +373,50 @@ FieldRenderer::~FieldRenderer() {
   eglTerminate(display_);
 }
 
-auto FieldRenderer::Render(const Eigen::Matrix4d& world_to_camera) -> cv::Mat {
+auto FieldRenderer::Render(const Eigen::Matrix4d& world_to_camera, bool fuel_labels,
+                          const std::vector<std::array<double, 3>>* probes) -> cv::Mat {
   glBindFramebuffer(GL_FRAMEBUFFER, frame_buffer_);
-  glClearColor(0.08f, 0.08f, 0.10f, 1.0f);
+  if (fuel_labels) glClearColor(0, 0, 0, 1);
+  else glClearColor(0.08f, 0.08f, 0.10f, 1.0f);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
   glUseProgram(program_);
+  glUniform1i(glGetUniformLocation(program_, "fuel_labels"), fuel_labels);
   glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer_);
   glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, vertex_buffer_);
   const auto camera = world_to_camera.cast<float>();
   const GLint mvp_uniform = glGetUniformLocation(program_, "mvp");
   const GLint model_uniform = glGetUniformLocation(program_, "model");
   const GLint color_uniform = glGetUniformLocation(program_, "color");
-  auto draw_one = [&](const Draw& draw) {
+  auto draw_one = [&](const Draw& draw, std::size_t label = 0, GLenum mode = GL_TRIANGLES) {
     const Matrix mvp = projection_ * camera * draw.model;
     glUniformMatrix4fv(mvp_uniform, 1, GL_FALSE, mvp.data());
     glUniformMatrix4fv(model_uniform, 1, GL_FALSE, draw.model.data());
-    glUniform4fv(color_uniform, 1, draw.color.val);
+    const cv::Vec4f label_color{static_cast<float>(label & 255) / 255,
+        static_cast<float>((label >> 8) & 255) / 255,
+        static_cast<float>((label >> 16) & 255) / 255, 1};
+    glUniform4fv(color_uniform, 1, fuel_labels ? label_color.val : draw.color.val);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, draw.vertex_stride,
                           reinterpret_cast<const void*>(static_cast<uintptr_t>(draw.position_offset)));
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, draw.vertex_stride,
                           reinterpret_cast<const void*>(static_cast<uintptr_t>(draw.normal_offset)));
     glEnableVertexAttribArray(0);
     glEnableVertexAttribArray(1);
-    glDrawElements(GL_TRIANGLES, draw.index_count, draw.index_type,
+    glDrawElements(mode, draw.index_count, draw.index_type,
                    reinterpret_cast<const void*>(draw.index_offset));
   };
   for (const auto& draw : draws_) {
     if (!draw.transparent) draw_one(draw);
   }
-  for (const auto& draw : active_fuel_draws_) {
-    if (!draw.transparent) draw_one(draw);
+  if (probes && !staged_fuel_draws_.empty()) for (std::size_t i = 0; i < probes->size(); ++i) {
+    // Collapsed Fuel vertices rasterize a one-pixel point, depth-tested only
+    // against the field. Fuel itself must not hide its cluster's center.
+    auto probe = staged_fuel_draws_.front();
+    probe.model.block<3, 3>(0, 0) *= 1e-6f;
+    for (int axis = 0; axis < 3; ++axis) probe.model(axis, 3) = probes->at(i)[axis];
+    draw_one(probe, i + 1, GL_POINTS);
+  }
+  else if (!probes) for (std::size_t i = 0; i < active_fuel_draws_.size(); ++i) {
+    if (!active_fuel_draws_[i].transparent) draw_one(active_fuel_draws_[i], i + 1);
   }
   std::vector<const Draw*> transparent;
   for (const auto& draw : draws_) {
@@ -376,7 +431,7 @@ auto FieldRenderer::Render(const Eigen::Matrix4d& world_to_camera) -> cv::Mat {
   glEnable(GL_BLEND);
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
   glDepthMask(GL_FALSE);
-  for (const auto* draw : transparent) draw_one(*draw);
+  if (!fuel_labels) for (const auto* draw : transparent) draw_one(*draw);
   glDepthMask(GL_TRUE);
   glDisable(GL_BLEND);
   if (const GLenum error = glGetError(); error != GL_NO_ERROR)
