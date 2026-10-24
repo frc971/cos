@@ -35,7 +35,7 @@ Gaussian footprint area. Verified sphere arcs anchor the count; unexplained
 yellow area and internal image edges supply a calibrated correction for partial
 balls. Calibration excludes balls with zero rendered image evidence. The
 estimated/verified counts, residual evidence, and `density_area_m2` are included
-in C++ results and visualizer JSON for inspection. See
+in C++ results for inspection. See
 [initial density validation](../../validation/density/RESULTS.md). The default
 density model predicts stationary field-space sphere hypotheses before searching
 unexplained edges for new balls. Count and covariance estimates persist between
@@ -57,84 +57,59 @@ cmake --build build --parallel 6
 cmake --build build --target dev-orin
 ```
 
-Validate exclusively with simulated Gaussian layouts. Copy the validation runner
-and scenarios to the target, then run ideal cases before positional noise:
+The hardware integration test replays three grayscale localization cameras and
+one color gamepiece camera concurrently. Both real and simulated recordings
+must contain JPEGs named by their capture timestamps in seconds on the same
+clock. Localization runs only to apply load; its output never feeds the tracker.
+The tracker instead receives interpolated reference poses from a JSON array:
 
-```sh
-rsync -a scripts/run_gamepiece_validation.py validation/scenarios.json root@dev-orin:/root/cluster-validation/
-ssh root@dev-orin 'cd /root && python3 /root/cluster-validation/run_gamepiece_validation.py --root=/root/cluster-validation/ideal-suite'
-ssh root@dev-orin 'cd /root && python3 /root/cluster-validation/run_gamepiece_validation.py --root=/root/cluster-validation/noisy-suite --noise=0.1'
-ssh root@dev-orin 'cd /root && python3 /root/cluster-validation/run_gamepiece_validation.py --root=/root/cluster-validation/dynamic-suite --dynamic --only=two,elongated'
+```json
+[
+  {"timestamp": 100.0, "x": 2.0, "y": 4.0, "yaw": 0.0},
+  {"timestamp": 105.0, "x": 2.5, "y": 4.0, "yaw": 0.1}
+]
 ```
 
-The simulator's `--fuel_truth` records cluster membership and an additional
-occlusion-aware ID render's per-ball visible pixel counts. Only the evaluator
-reads these IDs; the tracker consumes RGB and calibration/robot pose. White dots
-in simulated field views show generated centers for visual comparison.
+Translation is in WPILib field meters and yaw in radians. Samples must be finite,
+strictly increasing, and cover the entire color recording. Translation is
+interpolated linearly and yaw follows the shortest angular path. All four
+recordings must overlap. No simulator manifest or simulator-specific input mode
+is supported; prepare the same folders, calibrations, and pose file for any source.
 
-Fetch each suite's manifests and `clusters/clusters.json` (preserving folders),
-then run `scripts/evaluate_gamepiece_validation.py SUITE --output=REPORT.json`
-with Python NumPy, SciPy, and OpenCV. It checks every frame's count, one-to-one lineage,
-centroid, and covariance against visible generated centers. Fixed gates are no
-misses/extras/ID switches, every matched centroid error ≤0.35 m, and every
-covariance Bures shape distance ≤0.30 m (p95 values are also reported). The latter measures ellipse spread and orientation in
-meters; it cannot be passed just by matching centroids. Samples with fewer than
-four visible balls are below the evaluator's pile visibility threshold. Empty
-runs must yield no clusters. `--allow-partial` also permits predictions matching
-true piles with 1–3 visible balls, checks their location and IDs, and still
-requires every pile with at least four visible balls, except when at least 2/3
-of the pile's generated balls are off-screen. The coverage test uses projected
-sphere silhouettes, counts partial silhouettes as on-screen, and ignores
-occlusion; a hidden ball inside the sensor still counts toward coverage.
-An exempt pile remains available for matching and geometry measurements but
-cannot contribute a miss. The same rule applies to pose-sensitivity reports.
-`ignored_offscreen_observations` records exempt pile/frame pairs and
-`ignored_offscreen_misses` records the misses actually suppressed. Evaluation
-needs `gamepieces_in_frame` flags or render calibration and reference poses;
-`render_camera_calibration` preserves true rendering calibration when replay
-calibration differs. These fields never enter the tracker. Strict count reports are
-retained alongside this boundary-aware report. Negative evaluator controls
-check missed piles, false piles, geometry errors, ID changes, and misplaced
-partial detections: `python3 scripts/test_gamepiece_evaluator.py`.
-
-`--centroid-gate` uses a separate simulator field-depth point pass to require
-recall while the true cluster centroid is visible. It still records every
-nonexempt four-ball reference miss in `misses` and `missed_observations`, and separately
-reports `centroid_visible_misses` and `hidden_centroid_misses`. Geometry, false
-predictions, duplicate IDs, cross-pile ID reuse, and lineage gates always apply.
-This handles field-occluded fragments without forcing a pile detection from an
-RGB patch indistinguishable from one ball. Full-view suites use strict counts.
-
-Validation must graduate through four, five, and six piles. The `complex_*`,
-`staggered_scenarios.json`, and `speck_scenarios.json` fixtures include unequal
-densities, an elongated pile, irregular layouts, camera entry/return, and
-isolated-ball controls. See `validation/COMPLEX_PROGRESS.md` for current evidence
-and the status of the full goal. Historical seven-pile reports describe the
-earlier failure; current acceptance scenarios max out at six.
-
-The reproducible matrix is `validation/acceptance_suites.json`. Run
-`scripts/gamepiece_acceptance.py run --phase ideal --root ROOT` on dev-orin
-from `/root`, after copying the scripts and top-level validation JSON files into
-`/root/cluster-validation`. Download the resulting manifests, cluster JSON, and
-`ideal-phase.json`; locally run the same script with `check --phase ideal
---root DOWNLOADED_ROOT --fixtures validation`. Copy its `ideal-report.json` back
-to ROOT, then run the noisy phase with the same binaries. The runner refuses
-noise until the ideal report passes and verifies binary/fixture hashes. Checks
-require complete case/seed/frame coverage, four/five/six observed groups, and
-actual frames with all six centroids visible. Per-suite original strict reports
-remain alongside the centroid-gated camera sweeps.
-
-Visualize any simulator run directly:
+Run on dev-orin from `/root`, replacing paths with the recording to test:
 
 ```sh
-ssh root@dev-orin 'cd /root && ./tools/hsv_cluster_visualizer --sim_run=/root/cluster-validation/acceptance-final/basic-ideal/six-7 --output_dir=/root/cluster-validation/review-six'
+./tests/hsv_cluster_pipeline_test \
+  --localization_logs=/logs/gray/front,/logs/gray/left,/logs/gray/right \
+  --localization_configs=constants/second_bot/front_camera.json,constants/second_bot/left_camera.json,constants/second_bot/right_camera.json \
+  --gamepiece_log=/logs/color --gamepiece_config=constants/gamepiece/camera.json \
+  --poses=/logs/poses.json --output_dir=/root/debug-output/replay
 ```
 
-Outputs include camera/field views, per-frame and overall weighted heatmaps,
-comparison panels, and JSON with ground covariance, visible support, ball count
-evidence, and `density`. Colored rings in field views mark verified spheres.
-The cluster tracker and camera annotations use the input pixels directly with
-pinhole intrinsics; the tracker has no distortion parameter or rectification stage.
-The simulator can still render lens distortion for validation. AprilTag localization
-retains its own calibration. Frame processing uses exact simulated poses, never
-inferred ground-truth ball positions.
+The output directory must be new or empty. The test writes only two images:
+`overall_heatmap.png` accumulates weighted ground support, and
+`field_overlay.png` shows the robot path and one median-area observed ellipse per
+persistent cluster ID. `summary.json` records frame counts, skipped frames,
+localization pose counts, tracker FPS, and capacity/throughput for each camera.
+
+Each grayscale stream and the color pipeline must exceed **30 FPS processing
+capacity** during their common recording interval. Capacity is completed frames
+divided by summed dispatch-to-completion times, including decoding, worker queue
+waits, and downstream processing. Replay pacing and final rendering are excluded.
+Grayscale completion includes detection and fused localization, even when no tags
+or poses are found. Color completion includes decoding and tracking; tracker-only
+FPS starts at decode completion. Wall FPS includes pacing over the entire replay
+and is reported separately. At least two frames per stream must be measured, every
+dispatched frame must finish, and at least one valid cluster must be observed.
+All streams drain independently; the first EOF does not end the test.
+`--timeout_seconds` defaults to 300. A failed performance gate still writes results.
+
+Run the compact edge-case tests and the input/interpolation checks separately:
+
+```sh
+./tests/hsv_cluster_tracker_node_test
+./tests/hsv_cluster_pipeline_test --self_test
+```
+
+The integration replay is excluded from automatic CTest runs. Only its input
+checks are registered as `hsv_cluster_pipeline_input_test`.

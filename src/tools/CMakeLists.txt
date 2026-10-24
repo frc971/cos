@@ -1,10 +1,5 @@
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tools")
 
-add_executable(hsv_cluster_visualizer hsv_cluster_visualizer.cc)
-target_link_libraries(hsv_cluster_visualizer PRIVATE
-  hsv_cluster_tracker_node cos::multi_tag_solver_node cos::camera_config cos::nvjpeg_decode_node cos::cv_geometry_utils nlohmann_json::nlohmann_json
-  cos::thread_pool absl::check opencv_calib3d opencv_imgcodecs opencv_imgproc)
-
 add_executable(robot_positions robot_positions.cc)
 target_link_libraries(robot_positions PRIVATE
   # Resolve shared KleidiCV symbols from CPU OpenCV before optional CUDA modules.

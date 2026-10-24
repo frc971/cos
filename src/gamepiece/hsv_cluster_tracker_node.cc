@@ -105,6 +105,10 @@ auto HSVClusterTrackerNode::CreateCallback()
     -> std::function<void(const control_loop::Context&)> {
   return [this](const control_loop::Context& context) -> void {
     std::unique_lock processing_lock(processing_mutex_);
+    if (!context->Exists(input_path_) ||
+        (!pose_path_.empty() && !context->Exists(pose_path_))) {
+      return;
+    }
     if (context->Exists(output_path_)) {
       return;
     }
