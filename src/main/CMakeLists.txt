@@ -109,12 +109,3 @@ target_link_libraries(second_bot_main PRIVATE
   cos::connect_to_rio
   ${OpenCV_LIBS}
 )
-
-# Replay benchmark includes JPEG decode and CPU tracking.
-add_executable(temp_gamepiece_fps_main temp_gamepiece_fps_main.cc)
-target_link_libraries(temp_gamepiece_fps_main PRIVATE
-  "-Wl,--push-state,--no-as-needed" JPEG::JPEG "-Wl,--pop-state"
-  hsv_cluster_tracker_node cos::camera_config cos::nvjpeg_decode_node
-  cos::nvidia_apriltag_detector_node cos::unambiguous_solver_node
-  cos::control_loop cos::rio_clock cos::thread_pool nlohmann_json::nlohmann_json absl::log_initialize absl::check
-  opencv_imgcodecs)

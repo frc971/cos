@@ -55,25 +55,6 @@ target_include_directories(image_utils PUBLIC
   ${CMAKE_SOURCE_DIR}/src
 )
 
-add_library(hsv_projector_node)
-target_sources(hsv_projector_node PRIVATE
-  hsv_projector_node.cc
-)
-target_link_libraries(hsv_projector_node PUBLIC
-  cos::control_loop
-  opencv_core
-)
-target_link_libraries(hsv_projector_node PRIVATE
-  cos::nvjpeg_decode_node
-  image_utils
-  cos::cv_geometry_utils
-  opencv_calib3d
-  wpimath
-)
-target_include_directories(hsv_projector_node PUBLIC
-  ${CMAKE_SOURCE_DIR}/src
-)
-
 add_library(hsv_cluster_tracker_node hsv_cluster_tracker_node.cc)
 target_link_libraries(hsv_cluster_tracker_node PUBLIC
   opencv_core wpimath cos::control_loop PRIVATE
@@ -85,6 +66,5 @@ add_library(cos::hsv_cluster_tracker_node ALIAS hsv_cluster_tracker_node)
 add_library(gamepiece INTERFACE)
 target_link_libraries(gamepiece INTERFACE
   yolo_inference
-  hsv_projector_node
   hsv_cluster_tracker_node
 )
