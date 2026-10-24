@@ -12,6 +12,7 @@ namespace control_loop {
 // Register this node as a dependency in the receiving loop. It retains only
 // the latest non-null message per source publication, without retaining source
 // contexts. Each receiving callback consumes the pending messages once.
+// An idle source publishes null after a bounded wait, allowing loop shutdown.
 // Register downstream callbacks before starting the receiving loop.
 class ContextHandoffNode final : public INode {
  public:

@@ -11,7 +11,7 @@ target_link_libraries(cluster_nt_java_publisher PRIVATE
   cos::cluster_rio_streamer_node opencv_core wpimath)
 
 add_executable(image_utils_test image_utils_test.cc)
-target_link_libraries(image_utils_test PRIVATE image_utils GTest::gtest_main)
+target_link_libraries(image_utils_test PRIVATE image_utils_cuda GTest::gtest_main)
 add_test(NAME image_utils_test COMMAND image_utils_test)
 
 add_executable(hsv_cluster_tracker_node_test hsv_cluster_tracker_node_test.cc)

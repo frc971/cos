@@ -126,7 +126,7 @@ class HSVClusterTrackerNode final : public control_loop::INode {
   std::string output_path_;
   std::string pose_path_;
   std::string pose_output_path_;
-  nt::StructSubscriber<frc::Pose3d> pose_subscriber_;
+  nt::StructSubscriber<frc::Pose2d> pose_subscriber_;
   std::vector<std::function<void(const control_loop::Context&)>> callbacks_;
   std::vector<control_loop::MessageDescriptor> dependencies_;
   std::vector<control_loop::MessageDescriptor> publications_;

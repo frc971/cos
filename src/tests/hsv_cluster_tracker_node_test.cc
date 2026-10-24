@@ -1,14 +1,18 @@
 #include "gamepiece/hsv_cluster_tracker_node.h"
 
 #include <cmath>
+#include <filesystem>
 #include <memory>
 #include <numbers>
 #include <random>
+#include <frc/geometry/struct/Pose2dStruct.h>
 #include <gtest/gtest.h>
 #include <opencv2/imgproc.hpp>
 #include <cuda_runtime_api.h>
 #include "localization/position.h"
 #include "camera/nvjpeg_decode_node.h"
+#include "control_loop/control_loop.h"
+#include "logging/wpilog_writer.h"
 #include "streamer/densest_cluster_rio_streamer_node.h"
 
 namespace gamepiece {
@@ -34,6 +38,17 @@ const cv::Matx33d kIntrinsics{100, 0, 64, 0, 100, 48, 0, 0, 1};
 const cv::Matx44d kExtrinsics{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1};
 using Tracker = gamepiece::HSVClusterTrackerNode;
 auto MakeTracker() { return Tracker("decoded", "clusters", kIntrinsics, kExtrinsics, 128 * 96); }
+TEST(HSVClusterTrackerNodeTest, ProductionPipelineLoggingStarts) {
+  control_loop::ControlLoop loop(std::chrono::milliseconds{1});
+  auto tracker = std::make_shared<Tracker>("decoded", "clusters", kIntrinsics, kExtrinsics, 128 * 96);
+  tracker->EnablePoseOutput("frame/pose"); loop.RegisterNode(tracker);
+  loop.RegisterNode(std::make_shared<streamer::DensestClusterRioStreamerNode>("clusters", "frame/pose", "/COS/DensestCluster"));
+  const auto path = std::filesystem::temp_directory_path() / "cos-cluster-startup.wpilog";
+  const auto publications = loop.GetLogPublications();
+  ASSERT_EQ(publications.size(), 2U);
+  EXPECT_NO_THROW({ logging::WPILogWriter writer(path.string(), publications); });
+  std::filesystem::remove(path);
+}
 auto Cloud(cv::Point2f center, float sx = 0.35f, float sy = 0.2f) {
   std::mt19937 rng(7);
   std::normal_distribution<float> n;
@@ -166,7 +181,7 @@ TEST(HSVClusterTrackerNodeTest, PullsLatestNetworkTablesPoseOnlyWhenProcessingAF
                     gamepiece::DensityHistory::kPredict, true, "/test/Pose", instance);
     tracker.EnablePoseOutput("frame/pose");
     EXPECT_EQ(tracker.GetPublications().size(), 2U);
-    auto publisher = instance.GetStructTopic<frc::Pose3d>("/test/Pose").Publish();
+    auto publisher = instance.GetStructTopic<frc::Pose2d>("/test/Pose").Publish();
     const auto callback = tracker.CreateCallback();
     const auto frame = [&] {
       auto context = std::make_shared<control_loop::ContextInternal>(Clock::now(), nullptr, std::stop_token{}, 0);
@@ -179,10 +194,10 @@ TEST(HSVClusterTrackerNodeTest, PullsLatestNetworkTablesPoseOnlyWhenProcessingAF
     };
     EXPECT_EQ(tracker.GetDependencies().size(), 1U);
     frame(); EXPECT_FALSE(gamepiece::HSVClusterTrackerNodeTestPeer::Pose(tracker));
-    for (double x : {1.0, 2.0}) publisher.Set(frc::Pose3d{units::meter_t{x}, 3_m, 0_m, frc::Rotation3d{}});
+    for (double x : {1.0, 2.0}) publisher.Set(frc::Pose2d{units::meter_t{x}, 3_m, frc::Rotation2d{}});
     frame(); ASSERT_TRUE(gamepiece::HSVClusterTrackerNodeTestPeer::Pose(tracker));
     EXPECT_DOUBLE_EQ(gamepiece::HSVClusterTrackerNodeTestPeer::Pose(tracker)->X().value(), 2);
-    publisher.Set(frc::Pose3d{4_m, 5_m, 0_m, frc::Rotation3d{0_rad, 0_rad, 0.7_rad}});
+    publisher.Set(frc::Pose2d{4_m, 5_m, frc::Rotation2d{0.7_rad}});
     EXPECT_DOUBLE_EQ(gamepiece::HSVClusterTrackerNodeTestPeer::Pose(tracker)->X().value(), 2);
     frame(); EXPECT_DOUBLE_EQ(gamepiece::HSVClusterTrackerNodeTestPeer::Pose(tracker)->X().value(), 4);
     EXPECT_NEAR(gamepiece::HSVClusterTrackerNodeTestPeer::Pose(tracker)->Rotation().Radians().value(), .7, 1e-9);

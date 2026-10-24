@@ -13,7 +13,7 @@
 
 #include <opencv2/core/cuda.hpp>
 #include <opencv2/imgproc.hpp>
-#include <frc/geometry/struct/Pose3dStruct.h>
+#include <frc/geometry/struct/Pose2dStruct.h>
 
 #include "absl/log/check.h"
 #include "camera/nvjpeg_decode_node.h"
@@ -78,9 +78,9 @@ HSVClusterTrackerNode::HSVClusterTrackerNode(
       output_path_(output_path),
       pose_path_(pose_path),
       dependencies_({{input_path_, typeid(camera::DecodedJpegBuffer)}}),
-      publications_(
-          {control_loop::MessageDescriptor::Publication<hsv_clusters_t>(
-              output_path_)}),
+      // Intermediate clusters contain image samples, not generic log fields.
+      publications_({{output_path_,
+                      typeid(control_loop::ValueMessage<hsv_clusters_t>)}}),
       camera_intrinsics_(intrinsics),
       camera_extrinsics_cv_(extrinsics) {
   if (image_size == 0) {
@@ -95,7 +95,7 @@ HSVClusterTrackerNode::HSVClusterTrackerNode(
     dependencies_.emplace_back(pose_path_,
                                typeid(localization::PositionEstimateMessage));
   else if (!pose_topic.empty())
-    pose_subscriber_ = instance.GetStructTopic<frc::Pose3d>(pose_topic).Subscribe(
+    pose_subscriber_ = instance.GetStructTopic<frc::Pose2d>(pose_topic).Subscribe(
         {}, {.periodic = 0.001});
   // Capture the ground translation before changing from WPILib coordinates.
   extrinsics_offset_ = frc::Translation2d{units::meter_t{extrinsics(0, 3)},
@@ -137,7 +137,7 @@ auto HSVClusterTrackerNode::CreateCallback()
         pose = estimate->pose.ToPose2d();
     } else if (pose_subscriber_) {
       const auto latest = pose_subscriber_.GetAtomic();
-      const auto candidate = latest.value.ToPose2d();
+      const auto& candidate = latest.value;
       if (latest.time > 0 && std::isfinite(candidate.X().value()) &&
           std::isfinite(candidate.Y().value()) &&
           std::isfinite(candidate.Rotation().Radians().value()))

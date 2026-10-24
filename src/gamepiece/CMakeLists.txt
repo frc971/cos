@@ -47,13 +47,15 @@ target_sources(image_utils PRIVATE
 target_link_libraries(image_utils PUBLIC
   opencv_core
   opencv_imgproc
-  opencv_cudaarithm
-  opencv_cudaimgproc
   wpimath
 )
 target_include_directories(image_utils PUBLIC
   ${CMAKE_SOURCE_DIR}/src
 )
+
+add_library(image_utils_cuda image_utils_cuda.cc)
+target_link_libraries(image_utils_cuda PUBLIC
+  image_utils opencv_cudaarithm opencv_cudaimgproc)
 
 add_library(hsv_cluster_tracker_node hsv_cluster_tracker_node.cc)
 target_link_libraries(hsv_cluster_tracker_node PUBLIC

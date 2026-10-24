@@ -12,7 +12,7 @@ occlusion correction excludes arcs contradicted by non-yellow pixels.
 `DensestClusterRioStreamerNode` at `/COS/DensestCluster` (stream port 5804).
 The camera mount uses `constants/gamepiece/chopped_mount.json` geometry.
 The three grayscale cameras continue to localize with AprilTags. The tracker
-snapshots `/Robot/Pose` and publishes that same pose in the frame context for
+snapshots `/Drive/Pose` and publishes that same pose in the frame context for
 the sender via `EnablePoseOutput`, so selection and field coordinates agree.
 Until a robot pose is received, valid color frames publish empty target arrays.
 
@@ -33,7 +33,7 @@ suppresses isolated balls. There is no image-area cutoff on contour samples.
 `ProcessFrame(frame, robot_pose)` uses field coordinates for clustering, neutral
 zone culling (X 4.60–11.94 m, Y 0–8.07 m), and one-to-one ID matching. Omit the
 pose for stationary-camera robot coordinates. The callback reads the latest
-WPILib `Pose3d` from the NetworkTables topic `/Robot/Pose` once per frame.
+WPILib `Pose2d` from the NetworkTables topic `/Drive/Pose` once per frame.
 Configure the constructor's `pose_topic` to match the Java pose provider; an
 empty topic disables the subscription. Before a pose is available, processing
 uses robot coordinates; unavailable or nonfinite samples retain the last pose.
