@@ -171,7 +171,7 @@ TEST(HSVClusterTrackerNodeTest, PullsLatestNetworkTablesPoseOnlyWhenProcessingAF
     };
     EXPECT_EQ(tracker.GetDependencies().size(), 1U);
     frame(); EXPECT_FALSE(gamepiece::HSVClusterTrackerNodeTestPeer::Pose(tracker));
-    for (int x : {1, 2}) publisher.Set(frc::Pose3d{units::meter_t{x}, 3_m, 0_m, frc::Rotation3d{}});
+    for (double x : {1.0, 2.0}) publisher.Set(frc::Pose3d{units::meter_t{x}, 3_m, 0_m, frc::Rotation3d{}});
     frame(); ASSERT_TRUE(gamepiece::HSVClusterTrackerNodeTestPeer::Pose(tracker));
     EXPECT_DOUBLE_EQ(gamepiece::HSVClusterTrackerNodeTestPeer::Pose(tracker)->X().value(), 2);
     publisher.Set(frc::Pose3d{4_m, 5_m, 0_m, frc::Rotation3d{0_rad, 0_rad, 0.7_rad}});
