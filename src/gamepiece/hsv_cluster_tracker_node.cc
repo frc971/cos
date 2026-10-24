@@ -13,6 +13,7 @@
 
 #include <opencv2/core/cuda.hpp>
 #include <opencv2/imgproc.hpp>
+#include <frc/geometry/struct/Pose3dStruct.h>
 
 #include "absl/log/check.h"
 #include "camera/nvjpeg_decode_node.h"
@@ -68,7 +69,8 @@ HSVClusterTrackerNode::HSVClusterTrackerNode(
     std::string_view input_path, std::string_view output_path,
     cv::Matx33d intrinsics, cv::Matx44d extrinsics, std::size_t image_size,
     std::string_view pose_path, DensityHistory density_history,
-    bool residual_density)
+    bool residual_density, std::string_view pose_topic,
+    nt::NetworkTableInstance instance)
     : temporal_density_(density_history != DensityHistory::kNone),
       predictive_density_(density_history == DensityHistory::kPredict),
       residual_density_(residual_density),
@@ -92,6 +94,9 @@ HSVClusterTrackerNode::HSVClusterTrackerNode(
   if (!pose_path_.empty())
     dependencies_.emplace_back(pose_path_,
                                typeid(localization::PositionEstimateMessage));
+  else if (!pose_topic.empty())
+    pose_subscriber_ = instance.GetStructTopic<frc::Pose3d>(pose_topic).Subscribe(
+        {}, {.periodic = 0.001});
   // Capture the ground translation before changing from WPILib coordinates.
   extrinsics_offset_ = frc::Translation2d{units::meter_t{extrinsics(0, 3)},
                                           units::meter_t{extrinsics(1, 3)}};
@@ -112,14 +117,20 @@ auto HSVClusterTrackerNode::CreateCallback()
     if (context->Exists(output_path_)) {
       return;
     }
-    std::optional<frc::Pose2d> pose =
-        pose_path_.empty() ? std::nullopt : last_robot_pose_;
+    std::optional<frc::Pose2d> pose = last_robot_pose_;
     if (!pose_path_.empty()) {
       const auto* estimate =
           context->GetMessage<localization::PositionEstimateMessage>(
               pose_path_);
       if (estimate)
         pose = estimate->pose.ToPose2d();
+    } else if (pose_subscriber_) {
+      const auto latest = pose_subscriber_.GetAtomic();
+      const auto candidate = latest.value.ToPose2d();
+      if (latest.time > 0 && std::isfinite(candidate.X().value()) &&
+          std::isfinite(candidate.Y().value()) &&
+          std::isfinite(candidate.Rotation().Radians().value()))
+        pose = candidate;
     }
     const auto* frame =
         context->GetMessage<camera::DecodedJpegBuffer>(input_path_);

@@ -2,7 +2,8 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
 
 add_executable(cluster_rio_streamer_node_test cluster_rio_streamer_node_test.cc)
 target_link_libraries(cluster_rio_streamer_node_test PRIVATE
-  cos::cluster_rio_streamer_node opencv_core wpimath GTest::gtest_main)
+  cos::cluster_rio_streamer_node cos::densest_cluster_rio_streamer_node
+  opencv_core wpimath GTest::gtest_main)
 add_test(NAME cluster_rio_streamer_node_test COMMAND cluster_rio_streamer_node_test)
 
 add_executable(cluster_nt_java_publisher cluster_nt_java_publisher.cc)

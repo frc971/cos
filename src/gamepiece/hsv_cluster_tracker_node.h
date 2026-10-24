@@ -9,7 +9,9 @@
 #include <vector>
 
 #include <frc/geometry/Pose2d.h>
+#include <frc/geometry/Pose3d.h>
 #include <frc/geometry/Translation2d.h>
+#include <networktables/StructTopic.h>
 #include <opencv2/core.hpp>
 
 #include "control_loop/node.h"
@@ -64,7 +66,9 @@ class HSVClusterTrackerNode final : public control_loop::INode {
       std::size_t image_size,  // Total pixels (width * height).
       std::string_view pose_path = "",
       DensityHistory density_history = DensityHistory::kPredict,
-      bool residual_density = true);
+      bool residual_density = true,
+      std::string_view pose_topic = "/Robot/Pose",
+      nt::NetworkTableInstance instance = nt::NetworkTableInstance::GetDefault());
   // Processes a CPU BGR frame; callers must serialize access with callbacks.
   void ProcessFrame(const cv::Mat& frame,
                     std::optional<frc::Pose2d> robot_pose = std::nullopt);
@@ -119,6 +123,7 @@ class HSVClusterTrackerNode final : public control_loop::INode {
   std::string input_path_;
   std::string output_path_;
   std::string pose_path_;
+  nt::StructSubscriber<frc::Pose3d> pose_subscriber_;
   std::vector<std::function<void(const control_loop::Context&)>> callbacks_;
   std::vector<control_loop::MessageDescriptor> dependencies_;
   std::vector<control_loop::MessageDescriptor> publications_;

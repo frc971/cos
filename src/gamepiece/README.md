@@ -23,9 +23,13 @@ suppresses isolated balls. There is no image-area cutoff on contour samples.
 
 `ProcessFrame(frame, robot_pose)` uses field coordinates for clustering, neutral
 zone culling (X 4.60–11.94 m, Y 0–8.07 m), and one-to-one ID matching. Omit the
-pose for stationary-camera robot coordinates. The callback accepts an optional
-constructor `pose_path` containing `localization::PositionEstimateMessage`;
-a missing estimate holds the last pose. Camera calibration and pose must be
+pose for stationary-camera robot coordinates. The callback reads the latest
+WPILib `Pose3d` from the NetworkTables topic `/Robot/Pose` once per frame.
+Configure the constructor's `pose_topic` to match the Java pose provider; an
+empty topic disables the subscription. Before a pose is available, processing
+uses robot coordinates; unavailable or nonfinite samples retain the last pose.
+For replay, an explicit constructor `pose_path` instead consumes a context
+`localization::PositionEstimateMessage`; a missing estimate retains the last pose. Camera calibration and pose must be
 accurate. Switching between field and robot coordinates resets the ID map.
 
 Each result retains normalized image samples and robot-relative ground samples,
@@ -92,6 +96,27 @@ The output directory must be new or empty. The test writes only two images:
 persistent cluster ID. `summary.json` records frame counts, skipped frames,
 localization pose counts, tracker FPS, and capacity/throughput for each camera.
 
+Add `--ground_truth=/logs/clusters.json` for accuracy metrics. This optional file
+uses absolute JPEG timestamps and independently annotated field centers/densities:
+
+```json
+[{"timestamp":100.0,"clusters":[
+  {"x":6.0,"y":4.0,"density":20.0,"in_frame_fraction":1.0}
+]}]
+```
+
+Supply every color timestamp (within 1 µs), including empty cluster arrays.
+`in_frame_fraction` is the fraction of a cluster's gamepieces on-screen; it
+defaults to 1. Clusters with at least two-thirds off-screen are excluded.
+`summary.json.accuracy` reports missed cluster observations, median and population
+standard deviation of matched Euclidean centroid errors in meters, and incorrect
+density-pair orderings with their denominator and error fraction. Matching is
+one-to-one within 0.9 m, maximizing matches before minimizing distance. Density
+comparisons use matched pairs in the same frame; equal true densities are ignored
+and predicted ties count as incorrect. No matches/pairs produce null error metrics.
+Accuracy covers processed color frames over the full recording; skipped frames
+remain in the camera statistics. These metrics do not add acceptance thresholds.
+
 Each grayscale stream and the color pipeline must exceed **30 FPS processing
 capacity** during their common recording interval. Capacity is completed frames
 divided by summed dispatch-to-completion times, including decoding, worker queue
@@ -104,12 +129,12 @@ dispatched frame must finish, and at least one valid cluster must be observed.
 All streams drain independently; the first EOF does not end the test.
 `--timeout_seconds` defaults to 300. A failed performance gate still writes results.
 
-Run the compact edge-case tests and the input/interpolation checks separately:
+Run the compact edge-case tests and the input/accuracy checks separately:
 
 ```sh
 ./tests/hsv_cluster_tracker_node_test
 ./tests/hsv_cluster_pipeline_test --self_test
 ```
 
-The integration replay is excluded from automatic CTest runs. Only its input
-checks are registered as `hsv_cluster_pipeline_input_test`.
+The integration replay is excluded from automatic CTest runs. Its input and
+accuracy checks are registered as `hsv_cluster_pipeline_input_test`.

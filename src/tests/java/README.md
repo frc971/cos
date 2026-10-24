@@ -1,5 +1,25 @@
 # Cluster NetworkTables interoperability
 
+For a single target as a `DoubleArray`, include
+`streamer/densest_cluster_rio_streamer_node.h` and link
+`cos::densest_cluster_rio_streamer_node`:
+
+```cpp
+auto sender = std::make_shared<streamer::DensestClusterRioStreamerNode>(
+    "clusters", "pose", "/COS/DensestCluster");
+loop.RegisterNode(sender);
+```
+
+This alternative publishes only the valid cluster with the highest tracker
+density (first in input order on a tie), as exactly ten doubles:
+`center_x, center_y, semimajor_1x, semimajor_1y, semimajor_2x, semimajor_2y,
+semiminor_1x, semiminor_1y, semiminor_2x, semiminor_2y`.
+All points are field coordinates in meters. Endpoints are center plus/minus the
+2-sigma axis vector; the minor direction is 90 degrees counterclockwise from
+the major direction. Density is used only for selection. Its context output is
+`ValueMessage<std::vector<double>>`; an empty array clears unavailable targets,
+and a null frame does not transmit. Use a different topic from the struct sender.
+
 `streamer::ClusterRioStreamerNode` consumes a tracker publication and a
 `localization::PositionEstimateMessage` from the same context. Register it with
 the loop that contains those publications and link

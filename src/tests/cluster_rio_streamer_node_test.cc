@@ -1,4 +1,5 @@
 #include "streamer/cluster_rio_streamer_node.h"
+#include "streamer/densest_cluster_rio_streamer_node.h"
 
 #include <chrono>
 #include <limits>
@@ -143,6 +144,104 @@ TEST_F(ClusterSenderTest, EmptyAndMissingPoseClearTargetsButNullFrameDoesNotSend
   callback(context);
   EXPECT_TRUE(subscriber.ReadQueue().empty());
   EXPECT_TRUE(context->Exists("/COS/Clusters"));
+}
+
+TEST_F(ClusterSenderTest, DensestPublishesOnlyCenterAndAxisEndpointsOnce) {
+  streamer::DensestClusterRioStreamerNode sender("clusters", "pose", "/best",
+                                                 instance_);
+  auto subscriber = instance_.GetDoubleArrayTopic("/best").Subscribe(
+      {}, {.sendAll = true, .keepDuplicates = true});
+  int callbacks = 0;
+  sender.RegisterCallback([&](const auto&) -> void { ++callbacks; });
+  auto callback = sender.CreateCallback();
+  auto lower = Cluster(), best = Cluster(), invalid = Cluster();
+  lower.density = 1;
+  lower.robot_relative_translation = frc::Translation2d{};
+  invalid.density = 100;
+  invalid.ground_covar = {1, 2, 2, 1};
+  auto missing = invalid;
+  missing.robot_relative_translation.reset();
+  auto nan = best;
+  nan.density = std::numeric_limits<float>::quiet_NaN();
+  auto tied = lower;
+  tied.density = best.density;
+  for (bool pose_first : {false, true}) {
+    auto context = Context();
+    if (pose_first)
+      SetPose(context);
+    else
+      SetClusters(context, {lower, best, invalid, missing, nan, tied});
+    callback(context);
+    EXPECT_TRUE(subscriber.ReadQueue().empty());
+    if (pose_first)
+      SetClusters(context, {lower, best, invalid, missing, nan, tied});
+    else
+      SetPose(context);
+    std::thread first([&] -> void { callback(context); });
+    std::thread second([&] -> void { callback(context); });
+    first.join();
+    second.join();
+    auto samples = subscriber.ReadQueue();
+    ASSERT_EQ(samples.size(), 1);
+    const std::vector<double> expected{11, -1, 11, 5, 11, -7, 7, -1, 15, -1};
+    ASSERT_EQ(samples[0].value.size(), expected.size());
+    for (std::size_t i = 0; i < expected.size(); ++i) {
+      EXPECT_NEAR(samples[0].value[i], expected[i], 1e-9);
+    }
+    const auto* output =
+        context->GetMessage<control_loop::ValueMessage<std::vector<double>>>(
+            "/best");
+    ASSERT_NE(output, nullptr);
+    EXPECT_EQ(output->value, samples[0].value);
+  }
+  EXPECT_EQ(callbacks, 2);
+  EXPECT_EQ(subscriber.GetTopic().GetTypeString(), "double[]");
+}
+
+TEST_F(ClusterSenderTest, DensestClearsUnavailableTargetsAndSkipsNullFrames) {
+  streamer::DensestClusterRioStreamerNode sender("clusters", "pose", "/best",
+                                                 instance_);
+  auto subscriber = instance_.GetDoubleArrayTopic("/best").Subscribe(
+      {}, {.sendAll = true, .keepDuplicates = true});
+  auto callback = sender.CreateCallback();
+  for (int scenario = 0; scenario < 5; ++scenario) {
+    auto context = Context();
+    if (scenario == 1)
+      context->SetMessage("pose", nullptr);
+    else
+      SetPose(context);
+    auto cluster = Cluster();
+    if (scenario == 2) cluster.density = -1;
+    if (scenario == 3) {
+      cluster.ground_covar = cv::Matx22f::zeros();
+      cluster.density = 0;
+    }
+    if (scenario == 4)
+      context->SetMessage("clusters", nullptr);
+    else
+      SetClusters(context, scenario == 0 ? gamepiece::hsv_clusters_t{}
+                                         : gamepiece::hsv_clusters_t{cluster});
+    callback(context);
+    const auto samples = subscriber.ReadQueue();
+    if (scenario == 4) {
+      EXPECT_TRUE(samples.empty());
+      EXPECT_TRUE(context->Exists("/best"));
+      EXPECT_EQ(
+          context->GetMessage<control_loop::ValueMessage<std::vector<double>>>(
+              "/best"),
+          nullptr);
+    } else {
+      ASSERT_EQ(samples.size(), 1);
+      if (scenario == 3) {
+        ASSERT_EQ(samples[0].value.size(), 10);
+        for (std::size_t i = 0; i < 10; i += 2) {
+          EXPECT_NEAR(samples[0].value[i], 11, 1e-9);
+          EXPECT_NEAR(samples[0].value[i + 1], -1, 1e-9);
+        }
+      } else
+        EXPECT_TRUE(samples[0].value.empty());
+    }
+  }
 }
 
 }  // namespace

@@ -57,7 +57,7 @@ target_include_directories(image_utils PUBLIC
 
 add_library(hsv_cluster_tracker_node hsv_cluster_tracker_node.cc)
 target_link_libraries(hsv_cluster_tracker_node PUBLIC
-  opencv_core wpimath cos::control_loop PRIVATE
+  opencv_core wpimath ntcore cos::control_loop PRIVATE
   image_utils cos::cv_geometry_utils opencv_imgproc
   cos::nvjpeg_decode_node cos::thread_pool)
 target_include_directories(hsv_cluster_tracker_node PUBLIC ${CMAKE_SOURCE_DIR}/src)
