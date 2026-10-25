@@ -1,5 +1,15 @@
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tools")
 
+add_executable(robot_positions robot_positions.cc)
+target_link_libraries(robot_positions PRIVATE
+  # Resolve shared KleidiCV symbols from CPU OpenCV before optional CUDA modules.
+  "-Wl,--push-state,--no-as-needed"
+  "$<TARGET_FILE:opencv_core>" "$<TARGET_FILE:opencv_imgproc>"
+  "$<TARGET_FILE:opencv_imgcodecs>" "$<TARGET_FILE:opencv_calib3d>"
+  "-Wl,--pop-state"
+  cos::multi_tag_solver_node cos::camera_config nlohmann_json::nlohmann_json
+  ntcore absl::check opencv_calib3d opencv_imgcodecs)
+
 add_subdirectory(path_camera_sim)
 
 add_executable(uvc_logger)
@@ -100,3 +110,12 @@ target_link_libraries(intrinsics_calibrate_disk PRIVATE
 target_include_directories(intrinsics_calibrate_disk PRIVATE
   ${OpenCV_INCLUDE_DIRS}
 )
+
+add_executable(cluster_viewer cluster_viewer.cc)
+target_link_libraries(cluster_viewer PRIVATE
+  "-Wl,--push-state,--no-as-needed" JPEG::JPEG "-Wl,--pop-state"
+  cos::camera_config cos::hsv_cluster_tracker_node cos::cluster_debug_streamer_node
+  cos::densest_cluster_rio_streamer_node cos::uvc_camera_node
+  cos::uvc_disk_camera_node cos::get_earliest_timestamp cos::nvjpeg_decode_node
+  cos::control_loop cos::thread_pool cos::rio_clock cos::stop
+  absl::flags_parse absl::log_initialize)
