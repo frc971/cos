@@ -110,3 +110,12 @@ target_link_libraries(intrinsics_calibrate_disk PRIVATE
 target_include_directories(intrinsics_calibrate_disk PRIVATE
   ${OpenCV_INCLUDE_DIRS}
 )
+
+add_executable(cluster_viewer cluster_viewer.cc)
+target_link_libraries(cluster_viewer PRIVATE
+  "-Wl,--push-state,--no-as-needed" JPEG::JPEG "-Wl,--pop-state"
+  cos::camera_config cos::hsv_cluster_tracker_node cos::cluster_debug_streamer_node
+  cos::densest_cluster_rio_streamer_node cos::uvc_camera_node
+  cos::uvc_disk_camera_node cos::get_earliest_timestamp cos::nvjpeg_decode_node
+  cos::control_loop cos::thread_pool cos::rio_clock cos::stop
+  absl::flags_parse absl::log_initialize)

@@ -46,3 +46,10 @@ target_link_libraries(cos.position_estimate_rio_streamer_node PUBLIC
   wpilibc
   ntcore
 )
+
+add_library(cos.cluster_debug_streamer_node cluster_debug_streamer_node.cc)
+add_library(cos::cluster_debug_streamer_node ALIAS cos.cluster_debug_streamer_node)
+target_include_directories(cos.cluster_debug_streamer_node PUBLIC ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(cos.cluster_debug_streamer_node PUBLIC
+  cos::control_loop nadjieb_mjpeg_streamer::nadjieb_mjpeg_streamer PRIVATE
+  cos::localization_solver_common opencv_imgcodecs opencv_imgproc)

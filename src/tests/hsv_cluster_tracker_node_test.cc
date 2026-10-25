@@ -215,6 +215,7 @@ TEST(HSVClusterTrackerNodeTest, WaitsForBothDependenciesAndPublishesPaddedFrames
   for (bool pose_first : {false, true}) {
     Tracker tracker("d", "c", kSphereIntrinsics, kExtrinsics, 640 * 480, "pose");
     tracker.EnablePoseOutput("frame/pose");
+    tracker.EnableMaskOutput("mask");
     streamer::DensestClusterRioStreamerNode sender("c", "frame/pose", "/test/DensestCluster");
     auto subscriber = nt::NetworkTableInstance::GetDefault().GetDoubleArrayTopic("/test/DensestCluster")
         .Subscribe({}, {.sendAll = true, .keepDuplicates = true});
@@ -231,6 +232,10 @@ TEST(HSVClusterTrackerNodeTest, WaitsForBothDependenciesAndPublishesPaddedFrames
     const auto* output = context->GetMessage<control_loop::ValueMessage<gamepiece::hsv_clusters_t>>("c");
     ASSERT_NE(output, nullptr); ASSERT_EQ(output->value.size(), 1U);
     EXPECT_GT(output->value.front().density, 0);
+    const auto* mask = context->GetMessage<control_loop::ValueMessage<cv::Mat>>("mask");
+    ASSERT_NE(mask, nullptr); EXPECT_EQ(mask->value.size(), image.size());
+    EXPECT_EQ(mask->value.type(), CV_8UC1); EXPECT_GT(cv::countNonZero(mask->value), 0);
+    tracker.ProcessFrame(cv::Mat{}); EXPECT_GT(cv::countNonZero(mask->value), 0);
     const auto samples = subscriber.ReadQueue();
     ASSERT_EQ(samples.size(), 1U); ASSERT_EQ(samples[0].value.size(), 10U);
     for (double value : samples[0].value) EXPECT_TRUE(std::isfinite(value));

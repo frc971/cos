@@ -9,6 +9,7 @@
 #include <networktables/StringTopic.h>
 #include <chrono>
 #include <filesystem>
+#include <iostream>
 #include <mutex>
 #include <thread>
 
@@ -33,10 +34,13 @@ auto ShouldLogImages() -> bool {
   const std::scoped_lock lock(mutex);
   static bool was_enabled = false;
   static bool waiting_for_second_enable = false;
+  static bool was_logging = false;
   if (!instance.IsConnected() || !enabled.GetTopic().Exists()) {
     enabled.ReadQueue();
     was_enabled = false;
     waiting_for_second_enable = false;
+    if (was_logging) std::cout << "Stopped logging" << std::endl;
+    was_logging = false;
     return false;
   }
   for (const auto& update : enabled.ReadQueue()) {
@@ -46,7 +50,13 @@ auto ShouldLogImages() -> bool {
     }
     was_enabled = update.value;
   }
-  return was_enabled || waiting_for_second_enable;
+  const bool should_log = was_enabled || waiting_for_second_enable;
+  if (should_log != was_logging) {
+    std::cout << (should_log ? "Started logging" : "Stopped logging")
+              << std::endl;
+    was_logging = should_log;
+  }
+  return should_log;
 }
 
 auto GetLogPath() -> const std::string& {

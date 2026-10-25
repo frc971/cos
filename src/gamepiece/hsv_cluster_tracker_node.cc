@@ -108,13 +108,21 @@ HSVClusterTrackerNode::HSVClusterTrackerNode(
 
 void HSVClusterTrackerNode::EnablePoseOutput(std::string_view output_path) {
   if (output_path.empty() || output_path == input_path_ ||
-      output_path == output_path_ || output_path == pose_path_ ||
+      output_path == output_path_ || output_path == mask_output_path_ || output_path == pose_path_ ||
       !pose_output_path_.empty()) {
     throw std::invalid_argument("Tracker pose output requires a distinct path");
   }
   pose_output_path_ = output_path;
   publications_.push_back(control_loop::MessageDescriptor::Publication<
       localization::PositionEstimateMessage>(pose_output_path_));
+}
+
+void HSVClusterTrackerNode::EnableMaskOutput(std::string_view output_path) {
+  if (output_path.empty() || output_path == input_path_ || output_path == output_path_ ||
+      output_path == pose_path_ || output_path == pose_output_path_ || !mask_output_path_.empty())
+    throw std::invalid_argument("Tracker mask output requires a distinct path");
+  mask_output_path_ = output_path;
+  publications_.push_back(control_loop::MessageDescriptor::Publication<cv::Mat>(mask_output_path_));
 }
 
 auto HSVClusterTrackerNode::CreateCallback()
@@ -170,6 +178,11 @@ auto HSVClusterTrackerNode::CreateCallback()
         if (frame) estimate->timestamp = frame->timestamp;
       }
       context->SetMessage(pose_output_path_, std::move(estimate));
+    }
+    if (!mask_output_path_.empty()) {
+      context->SetMessage(mask_output_path_,
+          std::make_shared<control_loop::ValueMessage<cv::Mat>>(
+              frame && frame->destination.channel[0] ? hsv_masked_.clone() : cv::Mat{}));
     }
     processing_lock.unlock();
     for (const auto& callback : callbacks_) {
@@ -247,8 +260,10 @@ void HSVClusterTrackerNode::ProcessFrame(
     ++state.missed;
   last_robot_pose_ = robot_pose;
   clusters_.clear();
-  if (frame.empty())
+  if (frame.empty()) {
+    hsv_masked_.release();
     return;
+  }
   std::vector<cv::Point2f> image_points, ground_points;
   std::vector<float> ground_weights, refined_weights;
   cv::cvtColor(frame, hsv_image_, cv::COLOR_BGR2HSV);

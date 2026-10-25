@@ -76,6 +76,8 @@ class HSVClusterTrackerNode final : public control_loop::INode {
       -> const std::vector<kmeans_cluster_t>*;
   // Configure before registering the node; shares the exact frame pose with senders.
   void EnablePoseOutput(std::string_view output_path);
+  // Configure before registration; publishes an owned threshold mask per frame.
+  void EnableMaskOutput(std::string_view output_path);
   // Generic ray intersection with the Fuel center plane. Silhouette-corrected
   // retained samples are in each cluster's ground_points.
   [[nodiscard]] auto RobotRelativeOffset(const cv::Point2f& point) const
@@ -126,6 +128,7 @@ class HSVClusterTrackerNode final : public control_loop::INode {
   std::string output_path_;
   std::string pose_path_;
   std::string pose_output_path_;
+  std::string mask_output_path_;
   nt::StructSubscriber<frc::Pose2d> pose_subscriber_;
   std::vector<std::function<void(const control_loop::Context&)>> callbacks_;
   std::vector<control_loop::MessageDescriptor> dependencies_;
