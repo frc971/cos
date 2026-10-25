@@ -1,5 +1,6 @@
 #include "control_loop/context_handoff_node.h"
 
+#include <chrono>
 #include <cstddef>
 #include <mutex>
 #include <utility>
@@ -12,7 +13,7 @@ struct ContextHandoffNode::State {
   std::mutex mutex;
   std::vector<std::shared_ptr<IMessage>> messages;
   std::condition_variable cv;
-  bool holds_new_message_;
+  bool holds_new_message_ = false;
 };
 
 ContextHandoffNode::ContextHandoffNode(const std::shared_ptr<INode>& node)
@@ -42,8 +43,8 @@ auto ContextHandoffNode::CreateCallback()
   return [this](const Context& context) -> void {
     {
       std::unique_lock lock(state_->mutex);
-      state_->cv.wait(lock,
-                      [this] -> bool { return state_->holds_new_message_; });
+      state_->cv.wait_for(lock, std::chrono::milliseconds{1},
+                         [this] -> bool { return state_->holds_new_message_; });
       for (std::size_t i = 0; i < publications_.size(); ++i) {
         context->SetMessage(publications_[i].GetChannel(),
                             std::move(state_->messages[i]));

@@ -1,3 +1,17 @@
+add_library(cos.cluster_rio_streamer_node cluster_rio_streamer_node.cc)
+add_library(cos::cluster_rio_streamer_node ALIAS cos.cluster_rio_streamer_node)
+target_include_directories(cos.cluster_rio_streamer_node PUBLIC
+  ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(cos.cluster_rio_streamer_node PUBLIC
+  cos::control_loop ntcore wpiutil PRIVATE opencv_core wpimath)
+
+add_library(cos.densest_cluster_rio_streamer_node densest_cluster_rio_streamer_node.cc)
+add_library(cos::densest_cluster_rio_streamer_node ALIAS cos.densest_cluster_rio_streamer_node)
+target_include_directories(cos.densest_cluster_rio_streamer_node PUBLIC
+  ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(cos.densest_cluster_rio_streamer_node PUBLIC
+  cos::control_loop ntcore wpiutil PRIVATE opencv_core wpimath)
+
 add_library(cos.jpeg_buffer_streamer_node)
 add_library(cos::jpeg_buffer_streamer_node ALIAS cos.jpeg_buffer_streamer_node)
 target_sources(cos.jpeg_buffer_streamer_node
