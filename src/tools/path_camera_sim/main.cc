@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -28,6 +29,8 @@
 
 ABSL_FLAG(std::string, poses, "", "JSON file containing localization poses");
 ABSL_FLAG(double, fps, 30.0, "Frame rate used for timestamp filenames in seconds");
+ABSL_FLAG(double, exposure_ms, 0.0, "Centered box shutter duration; zero renders sharp frames");
+ABSL_FLAG(int, exposure_samples, 9, "Temporal samples per motion-blurred RGB frame");
 ABSL_FLAG(std::string, camera_config, "constants/second_bot/left_camera.json",
           "Camera configuration with intrinsics and extrinsics");
 ABSL_FLAG(std::string, field_dir, "constants/field-cad",
@@ -152,6 +155,11 @@ void Run() {
   const double fps = absl::GetFlag(FLAGS_fps);
   if (!std::isfinite(fps) || fps <= 0.0 || fps > 1e6)
     throw std::runtime_error("--fps must be finite and in (0, 1000000]");
+  const double exposure_ms = absl::GetFlag(FLAGS_exposure_ms);
+  const int exposure_samples = absl::GetFlag(FLAGS_exposure_samples);
+  if (!std::isfinite(exposure_ms) || exposure_ms < 0 || exposure_ms > 1000 ||
+      exposure_samples < 2 || exposure_samples > 64)
+    throw std::runtime_error("Exposure must be in [0,1000] ms, samples in [2,64]");
   const std::string cluster_arg = absl::GetFlag(FLAGS_fuel_clusters);
   const auto cluster_json = cluster_arg.empty() ? nlohmann::json::array()
                                                : ReadJson(cluster_arg);
@@ -180,6 +188,14 @@ void Run() {
   if (!poses.is_array() || poses.empty()) {
     throw std::runtime_error("Pose file must contain a nonempty poses array");
   }
+  const auto pose_at = [&](double index) {
+    index = std::clamp(index, 0.0, static_cast<double>(poses.size() - 1));
+    const auto left = static_cast<std::size_t>(index), right = std::min(left + 1, poses.size() - 1);
+    const auto a = ReadPose(poses[left]), b = ReadPose(poses[right]);
+    const double f = index - left;
+    return frc::Pose3d{a.Translation() + (b.Translation() - a.Translation()) * f,
+                      a.Rotation() + (b.Rotation() - a.Rotation()) * f};
+  };
   cv::Mat map_x;
   cv::Mat map_y;
   if (absl::GetFlag(FLAGS_apply_distortion)) {
@@ -216,6 +232,8 @@ void Run() {
       {"field_model", (std::filesystem::path(field_dir) / "model.glb").string()},
       {"resolution", {image_size.width, image_size.height}},
       {"fps", fps},
+      {"exposure_ms", exposure_ms}, {"exposure_samples", exposure_ms > 0 ? exposure_samples : 1},
+      {"shutter", "centered box; linear-light RGB average; endpoint poses clamped; labels at center"},
       {"frames", nlohmann::json::array()}};
     if (!cluster_arg.empty()) {
       manifest["fuel_clusters"] = cluster_json;
@@ -248,6 +266,16 @@ void Run() {
       const auto& item = poses.at(index);
       const frc::Pose3d pose = ReadPose(item);
       cv::Mat image = renderer.Render(CameraWorldToOpenCv(pose, camera_to_robot));
+      if (exposure_ms > 0) {
+        cv::Mat sum = cv::Mat::zeros(image_size, CV_32FC3);
+        for (int sample = 0; sample < exposure_samples; ++sample) {
+          const double offset = ((sample + .5) / exposure_samples - .5) * exposure_ms * fps / 1000;
+          cv::Mat rgb = renderer.Render(CameraWorldToOpenCv(pose_at(index + offset), camera_to_robot)), linear;
+          rgb.convertTo(linear, CV_32FC3, 1.0 / 255); cv::pow(linear, 2.2, linear);
+          sum += linear / exposure_samples;
+        }
+        cv::pow(sum, 1.0 / 2.2, sum); sum.convertTo(image, CV_8UC3, 255);
+      }
       if (!map_x.empty()) {
         cv::Mat distorted;
         cv::remap(image, distorted, map_x, map_y, cv::INTER_LINEAR,
