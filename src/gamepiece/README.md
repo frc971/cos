@@ -72,6 +72,14 @@ cmake --build build --parallel 6
 cmake --build build --target dev-orin
 ```
 
+For paired analytical/YOLO/hybrid evaluation, see the
+[standard benchmark](../../validation/gamepiece-benchmark/README.md). It combines
+simulator ground-truth accuracy with coverage-audited real-log distribution and
+densest-choice consistency, and freezes regression baselines. Native replay uses
+`--strategy=analytical|yolo|hybrid`; YOLO and hybrid additionally require
+`--gamepiece_model=ENGINE`. Serial evaluation and paced hardware capacity checks
+are reported separately.
+
 The hardware integration test replays three grayscale localization cameras and
 one color gamepiece camera concurrently. Both real and simulated recordings
 must contain JPEGs named by their capture timestamps in seconds on the same
