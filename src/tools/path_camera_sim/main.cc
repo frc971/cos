@@ -12,6 +12,7 @@
 #include <vector>
 
 #include <Eigen/Core>
+#include <Eigen/Geometry>
 #include <Eigen/LU>
 #include <absl/flags/flag.h>
 #include <absl/flags/parse.h>
@@ -31,6 +32,10 @@ ABSL_FLAG(std::string, poses, "", "JSON file containing localization poses");
 ABSL_FLAG(double, fps, 30.0, "Frame rate used for timestamp filenames in seconds");
 ABSL_FLAG(double, exposure_ms, 0.0, "Centered box shutter duration; zero renders sharp frames");
 ABSL_FLAG(int, exposure_samples, 9, "Temporal samples per motion-blurred RGB frame");
+ABSL_FLAG(double, fuel_soot, 0.0, "Sphere-local dirt/smudge amount [0,1]; does not alter truth");
+ABSL_FLAG(uint32_t, appearance_seed, 0, "Deterministic sphere surface texture seed");
+ABSL_FLAG(std::string, practice_room, "", "Optional textured plywood/carpet room JSON replacing the field mesh");
+ABSL_FLAG(double, fuel_separation, 0.0, "Optional minimum ball-center separation in meters");
 ABSL_FLAG(std::string, camera_config, "constants/second_bot/left_camera.json",
           "Camera configuration with intrinsics and extrinsics");
 ABSL_FLAG(std::string, field_dir, "constants/field-cad",
@@ -39,6 +44,7 @@ ABSL_FLAG(std::string, output_dir, "/root/debug-output/path-camera-sim",
           "Directory for rendered PNGs");
 ABSL_FLAG(bool, apply_distortion, true, "Apply camera lens distortion");
 ABSL_FLAG(bool, fuel_truth, false, "Record occlusion-aware visible Fuel IDs for validation");
+ABSL_FLAG(bool, fuel_boxes, false, "Include instantaneous and exposure-aware sphere boxes; requires --fuel_truth");
 ABSL_FLAG(double, fuel_entropy, -1.0,
           "Render staged Fuel and a second layout at this entropy (0 to 1)");
 ABSL_FLAG(uint32_t, fuel_seed, 0, "Seed for randomized Fuel layouts");
@@ -152,6 +158,8 @@ void BuildDistortionMaps(const cv::Size& size, const cv::Matx33d& intrinsics,
 }
 
 void Run() {
+  if (absl::GetFlag(FLAGS_fuel_boxes) && !absl::GetFlag(FLAGS_fuel_truth))
+    throw std::runtime_error("--fuel_boxes requires --fuel_truth");
   const double fps = absl::GetFlag(FLAGS_fps);
   if (!std::isfinite(fps) || fps <= 0.0 || fps > 1e6)
     throw std::runtime_error("--fps must be finite and in (0, 1000000]");
@@ -204,6 +212,15 @@ void Run() {
   }
   const auto field_dir = absl::GetFlag(FLAGS_field_dir);
   path_camera_sim::FieldRenderer renderer(field_dir, image_size, camera_matrix);
+  const auto practice_room = absl::GetFlag(FLAGS_practice_room);
+  if (!practice_room.empty()) renderer.SetPracticeRoom(practice_room);
+  const double soot = absl::GetFlag(FLAGS_fuel_soot);
+  if (!std::isfinite(soot) || soot < 0 || soot > 1)
+    throw std::runtime_error("--fuel_soot must be in [0,1]");
+  renderer.SetFuelAppearance(static_cast<float>(soot), absl::GetFlag(FLAGS_appearance_seed));
+  const double separation = absl::GetFlag(FLAGS_fuel_separation);
+  if (!std::isfinite(separation) || separation < 0 || separation > 1)
+    throw std::runtime_error("--fuel_separation must be in [0,1]");
   const std::filesystem::path output_dir(absl::GetFlag(FLAGS_output_dir));
   const double entropy = absl::GetFlag(FLAGS_fuel_entropy);
   if (entropy != -1.0 && (!std::isfinite(entropy) || entropy < 0.0 || entropy > 1.0)) {
@@ -217,7 +234,7 @@ void Run() {
   }
   for (const auto& [name, layout_entropy] : layouts) {
     if (!cluster_arg.empty()) {
-      renderer.SetFuelClusters(clusters, noise, absl::GetFlag(FLAGS_fuel_seed));
+      renderer.SetFuelClusters(clusters, noise, absl::GetFlag(FLAGS_fuel_seed), separation);
     }
     if (layout_entropy >= 0.0) {
       renderer.SetFuelLayout(layout_entropy, absl::GetFlag(FLAGS_fuel_seed));
@@ -230,10 +247,13 @@ void Run() {
       {"apply_distortion", absl::GetFlag(FLAGS_apply_distortion)},
       {"poses", poses_path},
       {"field_model", (std::filesystem::path(field_dir) / "model.glb").string()},
+      {"practice_room", practice_room.empty() ? nlohmann::json(nullptr) : ReadJson(practice_room)},
       {"resolution", {image_size.width, image_size.height}},
       {"fps", fps},
       {"exposure_ms", exposure_ms}, {"exposure_samples", exposure_ms > 0 ? exposure_samples : 1},
-      {"shutter", "centered box; linear-light RGB average; endpoint poses clamped; labels at center"},
+      {"fuel_soot", soot}, {"appearance_seed", absl::GetFlag(FLAGS_appearance_seed)},
+      {"fuel_separation", separation},
+      {"shutter", "centered box; linear-light RGB average; endpoint poses clamped; visibility at center; optional exposure boxes"},
       {"frames", nlohmann::json::array()}};
     if (!cluster_arg.empty()) {
       manifest["fuel_clusters"] = cluster_json;
@@ -302,6 +322,66 @@ void Run() {
           if (id > 0 && id <= visible.size()) ++visible[id - 1];
         }
         manifest["frames"].back()["visible_fuel_pixels"] = visible;
+        if (absl::GetFlag(FLAGS_fuel_boxes)) {
+          const auto sphere_boxes = [&](const frc::Pose3d& sample_pose) {
+            std::vector<cv::Rect2d> boxes(visible.size());
+            const auto transform = CameraWorldToOpenCv(sample_pose, camera_to_robot);
+            for (std::size_t i = 0; i < boxes.size(); ++i) {
+              const auto& p = renderer.FuelPositions()[i];
+              const Eigen::Vector4d c = transform * Eigen::Vector4d{p[0], p[1], p[2], 1};
+              const Eigen::Vector3d center = c.head<3>();
+              if (center.z() <= .075) continue;
+              const auto axis = center.normalized();
+              const Eigen::Vector3d u = axis.cross(Eigen::Vector3d::UnitY()).normalized(), v = axis.cross(u);
+              const double sine = .075 / center.norm(), cosine = std::sqrt(1 - sine * sine);
+              std::vector<cv::Point3d> rays;
+              for (int j = 0; j < 128; ++j) {
+                const double a = j * 2 * std::acos(-1.) / 128;
+                const Eigen::Vector3d q = cosine * axis + sine * (std::cos(a) * u + std::sin(a) * v);
+                rays.emplace_back(q.x(), q.y(), q.z());
+              }
+              std::vector<cv::Point2d> pixels;
+              cv::projectPoints(rays, cv::Vec3d{}, cv::Vec3d{}, camera_matrix,
+                  map_x.empty() ? cv::Vec<double, 5>{} : intrinsics.ToDistortionCoefficients(), pixels);
+              double x1 = pixels[0].x, x2 = x1, y1 = pixels[0].y, y2 = y1;
+              for (const auto& q : pixels) { x1 = std::min(x1, q.x); x2 = std::max(x2, q.x); y1 = std::min(y1, q.y); y2 = std::max(y2, q.y); }
+              boxes[i] = {x1, y1, x2 - x1, y2 - y1};
+            }
+            return boxes;
+          };
+          const auto json_boxes = [](const std::vector<cv::Rect2d>& boxes) {
+            auto result = nlohmann::json::array();
+            for (const auto& b : boxes) {
+              if (b.empty()) result.push_back(nullptr);
+              else result.push_back({b.x, b.y, b.x + b.width, b.y + b.height});
+            }
+            return result;
+          };
+          auto& truth = manifest["frames"].back();
+          truth["fuel_boxes"] = json_boxes(sphere_boxes(pose));
+          std::vector<cv::Rect2d> swept(visible.size());
+          std::vector<double> exposure_visible(visible.size());
+          const int samples = exposure_ms > 0 ? exposure_samples : 1;
+          for (int j = 0; j < samples; ++j) {
+            const double offset = exposure_ms > 0 ? ((j + .5) / samples - .5) * exposure_ms * fps / 1000 : 0;
+            const auto sample_pose = pose_at(index + offset);
+            cv::Mat ids = renderer.Render(CameraWorldToOpenCv(sample_pose, camera_to_robot), true);
+            if (!map_x.empty()) cv::remap(ids.clone(), ids, map_x, map_y, cv::INTER_NEAREST);
+            std::vector<std::size_t> pixels(visible.size());
+            for (int y = 0; y < ids.rows; ++y) for (int x = 0; x < ids.cols; ++x) {
+              const auto p = ids.at<cv::Vec3b>(y, x);
+              const std::size_t id = p[2] + (p[1] << 8) + (p[0] << 16);
+              if (id > 0 && id <= pixels.size()) ++pixels[id - 1];
+            }
+            const auto boxes = sphere_boxes(sample_pose);
+            for (std::size_t i = 0; i < pixels.size(); ++i) {
+              exposure_visible[i] += double(pixels[i]) / samples;
+              if (pixels[i] && !boxes[i].empty()) swept[i] |= boxes[i];
+            }
+          }
+          truth["exposure_fuel_boxes"] = json_boxes(swept);
+          truth["exposure_visible_fuel_pixels"] = exposure_visible;
+        }
         if (!cluster_arg.empty()) {
           const auto camera = CameraWorldToOpenCv(pose, camera_to_robot);
           const auto probes = renderer.Render(camera, true, &centroids);

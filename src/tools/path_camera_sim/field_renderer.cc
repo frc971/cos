@@ -15,6 +15,7 @@
 
 #include <Eigen/Geometry>
 #include <nlohmann/json.hpp>
+#include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
 namespace path_camera_sim {
@@ -113,10 +114,16 @@ auto MakeProgram() -> GLuint {
     uniform mat4 mvp;
     uniform mat4 model;
     out float light;
+    out vec3 surface;
+    out vec3 world_position;
+    out vec3 world_normal;
     void main() {
       gl_Position = mvp * vec4(position, 1.0);
       gl_PointSize = 1.0;
       vec3 n = normalize(mat3(model) * normal);
+      surface = normal;
+      world_position = (model * vec4(position, 1.0)).xyz;
+      world_normal = n;
       light = 0.55 + 0.45 * abs(dot(n, normalize(vec3(-0.4, 0.3, 1.0))));
     }
   )";
@@ -124,10 +131,43 @@ auto MakeProgram() -> GLuint {
     precision highp float;
     uniform vec4 color;
     uniform bool fuel_labels;
+    uniform float soot;
+    uniform float appearance_seed;
+    uniform int material;
+    uniform sampler2D room_texture;
     in float light;
+    in vec3 surface;
+    in vec3 world_position;
+    in vec3 world_normal;
     out vec4 pixel;
+    float hash(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
+    float noise(vec3 p) {
+      vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+      return mix(mix(mix(hash(i), hash(i+vec3(1,0,0)), f.x),
+                     mix(hash(i+vec3(0,1,0)), hash(i+vec3(1,1,0)), f.x), f.y),
+                 mix(mix(hash(i+vec3(0,0,1)), hash(i+vec3(1,0,1)), f.x),
+                     mix(hash(i+vec3(0,1,1)), hash(i+vec3(1,1,1)), f.x), f.y), f.z);
+    }
     void main() {
-      pixel = fuel_labels ? color : vec4(pow(max(color.rgb * light, vec3(0.0)), vec3(1.0 / 2.2)), color.a);
+      if (fuel_labels) { pixel = color; return; }
+      vec3 base = color.rgb;
+      if (material > 0) {
+        vec2 uv = material == 1 ? world_position.xy / vec2(0.6, 0.15) :
+            vec2(abs(world_normal.x) > 0.5 ? world_position.y : world_position.x, world_position.z) / vec2(1.2, 0.9);
+        vec3 tex = texture(room_texture, uv).rgb;
+        float grain = material == 1 ? 0.92 + 0.16 * noise(world_position * 1200.0) : 1.0;
+        float seam = material == 2 && (fract(uv.x * 0.5) < 0.006 || fract(uv.y * 0.75) < 0.006) ? 0.65 : 1.0;
+        base *= pow(tex, vec3(2.2)) * grain * seam;
+      }
+      if (soot > 0.0) {
+        vec3 p = normalize(surface) * vec3(7.0, 9.0, 12.0) + appearance_seed;
+        float smudge = smoothstep(0.38, 0.76, 0.7 * noise(p) + 0.3 * noise(p * 2.7));
+        float speckle = smoothstep(0.68, 0.86, noise(p * 7.0));
+        float dirt = soot * (0.75 * smudge + 0.25 * speckle);
+        base = mix(base, vec3(0.055, 0.043, 0.026), dirt);
+        base *= 1.0 - soot * 0.18 * noise(p * 1.7);
+      }
+      pixel = vec4(pow(max(base * light, vec3(0.0)), vec3(1.0 / 2.2)), color.a);
     }
   )";
   const GLuint v = MakeShader(GL_VERTEX_SHADER, vertex);
@@ -317,8 +357,64 @@ void FieldRenderer::SetFuelLayout(double entropy, uint32_t seed) {
   }
 }
 
+void FieldRenderer::SetPracticeRoom(const std::filesystem::path& path) {
+  const auto config = ReadJson(path);
+  const float length = config.at("size_m").at(0), width = config.at("size_m").at(1);
+  const float height = config.at("wall_height_m");
+  if (!(length > 3 && length < 30 && width > 3 && width < 20 && height > .3 && height < 4))
+    throw std::runtime_error("Invalid practice-room dimensions");
+  field_length_ = length; field_width_ = width;
+  glDeleteTextures(2, room_textures_.data()); glGenTextures(2, room_textures_.data());
+  for (int i = 0; i < 2; ++i) {
+    auto image = cv::imread((path.parent_path() / config.at(i == 0 ? "carpet_texture" : "plywood_texture").get<std::string>()).string());
+    if (image.empty()) throw std::runtime_error("Cannot load practice-room texture");
+    cv::cvtColor(image, image, cv::COLOR_BGR2RGB);
+    glBindTexture(GL_TEXTURE_2D, room_textures_[i]);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, image.cols, image.rows, 0, GL_RGB, GL_UNSIGNED_BYTE, image.data);
+    glGenerateMipmap(GL_TEXTURE_2D);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_MIRRORED_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_MIRRORED_REPEAT);
+  }
+  glDeleteBuffers(1, &room_buffer_); glGenBuffers(1, &room_buffer_);
+  std::vector<unsigned char> bytes;
+  draws_.clear();
+  auto quad = [&](std::array<Eigen::Vector3f, 4> vertices, Eigen::Vector3f normal, int material) {
+    const auto offset = bytes.size();
+    for (const auto& vertex : vertices) for (const auto& v : {vertex, normal}) {
+      const auto* p = reinterpret_cast<const unsigned char*>(v.data()); bytes.insert(bytes.end(), p, p + 3 * sizeof(float));
+    }
+    const auto indices_offset = bytes.size();
+    const uint32_t indices[] = {0,1,2,0,2,3};
+    const auto* p = reinterpret_cast<const unsigned char*>(indices); bytes.insert(bytes.end(), p, p + sizeof(indices));
+    const float tint = config.value(material == 0 ? "ceiling_gain" : material == 1 ? "carpet_gain" : "plywood_gain", material == 0 ? .7f : 1.f);
+    draws_.push_back(Draw{.model = Matrix::Identity(), .color = cv::Vec4f(tint,tint,tint,1),
+        .position_offset = static_cast<GLint>(offset), .normal_offset = static_cast<GLint>(offset + 12),
+        .vertex_stride = 24, .index_count = 6, .index_type = GL_UNSIGNED_INT,
+        .index_offset = indices_offset, .transparent = false, .buffer = room_buffer_, .material = material});
+  };
+  quad({Eigen::Vector3f{0,0,0}, {length,0,0}, {length,width,0}, {0,width,0}}, {0,0,1}, 1);
+  auto wall = [&](float x1, float y1, float x2, float y2, float z) {
+    const Eigen::Vector3f normal = Eigen::Vector3f(y2-y1, x1-x2, 0).normalized();
+    quad({Eigen::Vector3f{x1,y1,0}, {x2,y2,0}, {x2,y2,z}, {x1,y1,z}}, normal, 2);
+  };
+  wall(0,0,length,0,height); wall(length,0,length,width,height);
+  wall(length,width,0,width,height); wall(0,width,0,0,height);
+  const float ceiling = 3.5f;
+  quad({Eigen::Vector3f{0,0,ceiling}, {length,0,ceiling}, {length,width,ceiling}, {0,width,ceiling}}, {0,0,-1}, 0);
+  quad({Eigen::Vector3f{0,0,height}, {length,0,height}, {length,0,ceiling}, {0,0,ceiling}}, {0,1,0}, 0);
+  quad({Eigen::Vector3f{length,0,height}, {length,width,height}, {length,width,ceiling}, {length,0,ceiling}}, {-1,0,0}, 0);
+  quad({Eigen::Vector3f{length,width,height}, {0,width,height}, {0,width,ceiling}, {length,width,ceiling}}, {0,-1,0}, 0);
+  quad({Eigen::Vector3f{0,width,height}, {0,0,height}, {0,0,ceiling}, {0,width,ceiling}}, {1,0,0}, 0);
+  for (const auto& p : config.value("partitions", Json::array())) wall(p.at(0),p.at(1),p.at(2),p.at(3),p.at(4));
+  glBindBuffer(GL_ARRAY_BUFFER, room_buffer_);
+  glBufferData(GL_ARRAY_BUFFER, bytes.size(), bytes.data(), GL_STATIC_DRAW);
+}
+
 void FieldRenderer::SetFuelClusters(const std::vector<FuelCluster>& clusters,
-                                   double noise_m, uint32_t seed) {
+                                   double noise_m, uint32_t seed, double separation_m) {
   if (!std::isfinite(noise_m) || noise_m < 0.0)
     throw std::runtime_error("--fuel_noise must be finite and nonnegative");
   active_fuel_draws_.clear();
@@ -338,18 +434,27 @@ void FieldRenderer::SetFuelClusters(const std::vector<FuelCluster>& clusters,
     const double c = std::cos(cluster.rotation_rad);
     const double s = std::sin(cluster.rotation_rad);
     for (size_t i = 0; i < static_cast<size_t>(count); ++i) {
-      const double u = sx * normal(random);
-      const double v = sy * normal(random);
-      const double x = cluster.center_m[0] + c * u - s * v + noise_m * normal(random);
-      const double y = cluster.center_m[1] + s * u + c * v + noise_m * normal(random);
-      if (x < 0.075 || x > field_length_ - 0.075 ||
-          y < 0.075 || y > field_width_ - 0.075) continue;
-      Draw fuel = staged_fuel_draws_.front();
-      fuel.model(0, 3) = x;
-      fuel.model(1, 3) = y;
-      fuel_positions_.push_back({x, y, fuel.model(2, 3)});
-      fuel_cluster_ids_.push_back(cluster_id);
-      active_fuel_draws_.push_back(std::move(fuel));
+      bool placed = false;
+      for (int attempt = 0; attempt < (separation_m > 0 ? 2000 : 1); ++attempt) {
+        const double u = sx * normal(random);
+        const double v = sy * normal(random);
+        const double x = cluster.center_m[0] + c * u - s * v + noise_m * normal(random);
+        const double y = cluster.center_m[1] + s * u + c * v + noise_m * normal(random);
+        if (x < 0.075 || x > field_length_ - 0.075 ||
+            y < 0.075 || y > field_width_ - 0.075) continue;
+        if (separation_m > 0 && std::any_of(fuel_positions_.begin(), fuel_positions_.end(), [&](const auto& p) {
+              return std::hypot(x - p[0], y - p[1]) < separation_m;
+            })) continue;
+        Draw fuel = staged_fuel_draws_.front();
+        fuel.model(0, 3) = x;
+        fuel.model(1, 3) = y;
+        fuel_positions_.push_back({x, y, fuel.model(2, 3)});
+        fuel_cluster_ids_.push_back(cluster_id);
+        active_fuel_draws_.push_back(std::move(fuel));
+        placed = true;
+        break;
+      }
+      if (!placed && separation_m > 0) throw std::runtime_error("Cannot pack nonoverlapping Fuel cluster");
     }
   }
 }
@@ -363,6 +468,8 @@ FieldRenderer::~FieldRenderer() {
   if (context_ != EGL_NO_CONTEXT) {
     glDeleteProgram(program_);
     glDeleteBuffers(1, &vertex_buffer_);
+    glDeleteBuffers(1, &room_buffer_);
+    glDeleteTextures(2, room_textures_.data());
     glDeleteFramebuffers(1, &frame_buffer_);
     glDeleteTextures(1, &color_buffer_);
     glDeleteRenderbuffers(1, &depth_buffer_);
@@ -387,7 +494,15 @@ auto FieldRenderer::Render(const Eigen::Matrix4d& world_to_camera, bool fuel_lab
   const GLint mvp_uniform = glGetUniformLocation(program_, "mvp");
   const GLint model_uniform = glGetUniformLocation(program_, "model");
   const GLint color_uniform = glGetUniformLocation(program_, "color");
+  const GLint soot_uniform = glGetUniformLocation(program_, "soot");
+  const GLint seed_uniform = glGetUniformLocation(program_, "appearance_seed");
+  const GLint material_uniform = glGetUniformLocation(program_, "material");
+  glUniform1i(glGetUniformLocation(program_, "room_texture"), 0);
   auto draw_one = [&](const Draw& draw, std::size_t label = 0, GLenum mode = GL_TRIANGLES) {
+    glBindBuffer(GL_ARRAY_BUFFER, draw.buffer ? draw.buffer : vertex_buffer_);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, draw.buffer ? draw.buffer : vertex_buffer_);
+    glUniform1i(material_uniform, draw.material);
+    if (draw.material) glBindTexture(GL_TEXTURE_2D, room_textures_[draw.material - 1]);
     const Matrix mvp = projection_ * camera * draw.model;
     glUniformMatrix4fv(mvp_uniform, 1, GL_FALSE, mvp.data());
     glUniformMatrix4fv(model_uniform, 1, GL_FALSE, draw.model.data());
@@ -395,6 +510,8 @@ auto FieldRenderer::Render(const Eigen::Matrix4d& world_to_camera, bool fuel_lab
         static_cast<float>((label >> 8) & 255) / 255,
         static_cast<float>((label >> 16) & 255) / 255, 1};
     glUniform4fv(color_uniform, 1, fuel_labels ? label_color.val : draw.color.val);
+    glUniform1f(soot_uniform, label && !fuel_labels ? soot_ : 0.f);
+    glUniform1f(seed_uniform, float(appearance_seed_ % 65536) + float(label) * 13.37f);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, draw.vertex_stride,
                           reinterpret_cast<const void*>(static_cast<uintptr_t>(draw.position_offset)));
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, draw.vertex_stride,
