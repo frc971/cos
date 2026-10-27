@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -15,6 +16,7 @@
 #include <opencv2/core.hpp>
 
 #include "control_loop/node.h"
+#include "gamepiece/cluster_strategy.h"
 #include "utils/disjoint_set_union.h"
 
 namespace gamepiece {
@@ -69,8 +71,10 @@ class HSVClusterTrackerNode final : public control_loop::INode {
       bool residual_density = true, std::string_view pose_topic = "/Drive/Pose",
       nt::NetworkTableInstance instance =
           nt::NetworkTableInstance::GetDefault());
-  // Processes a CPU BGR frame; callers must serialize access with callbacks.
-  void ProcessFrame(const cv::Mat& frame,
+  // Switch between frames; clears IDs and density history for the new algorithm.
+  void SetStrategy(std::unique_ptr<ClusterStrategy> strategy);
+  // Accepts CPU or GPU BGR frames; serialize access with callbacks and SetStrategy.
+  void ProcessFrame(cv::InputArray frame,
                     std::optional<frc::Pose2d> robot_pose = std::nullopt);
   [[nodiscard]] auto GetClusters() const
       -> const std::vector<kmeans_cluster_t>*;
@@ -94,6 +98,13 @@ class HSVClusterTrackerNode final : public control_loop::INode {
 
  private:
   friend struct HSVClusterTrackerNodeTestPeer;
+  friend class AnalyticalClusterStrategy;
+  friend class YoloClusterStrategy;
+  friend class HybridClusterStrategy;
+  static constexpr float kFuelRadiusM = 0.075f;
+  static auto Covariance(const std::vector<cv::Point2f>& points) -> cv::Matx22f;
+  void ThresholdFuel(const cv::Mat& frame, cv::Mat1b& mask);
+  void ProcessAnalytical(const cv::Mat& frame, const std::optional<frc::Pose2d>& pose);
   [[nodiscard]] auto NormalizedPointOffset(const cv::Point2f& point) const
       -> frc::Translation2d;
   auto ClusterGroundPoints(const std::vector<cv::Point2f>& image_points,
@@ -109,6 +120,11 @@ class HSVClusterTrackerNode final : public control_loop::INode {
   static auto SphereArcWeight(const cv::Matx33f& intrinsics,
                               const cv::Vec3f& ray, const cv::Vec2f& normal,
                               float depth) -> float;
+  void DetectBallClusters(cv::InputArray frame, const std::optional<frc::Pose2d>& pose,
+                          const BallDetector& detector);
+  void UpdateDensity(kmeans_cluster_t& cluster, cv::Matx22f covariance,
+                     const std::optional<frc::Pose2d>& robot_pose);
+  std::unique_ptr<ClusterStrategy> strategy_;
   struct BallTrack {
     cv::Point2f position;  // Field coordinates when pose is available.
     std::size_t observations = 1, missed = 0;

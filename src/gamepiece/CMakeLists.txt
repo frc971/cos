@@ -28,7 +28,7 @@ target_link_libraries(yolo_inference PUBLIC
   cos::nvjpeg_decode_node
   cos::control_loop
   cos::thread_pool
-  ${OpenCV_LIBS}
+  opencv_core opencv_imgproc opencv_cudaarithm opencv_cudaimgproc opencv_cudawarping
   CUDA::cudart
   absl::check
   absl::log
@@ -57,7 +57,11 @@ add_library(image_utils_cuda image_utils_cuda.cc)
 target_link_libraries(image_utils_cuda PUBLIC
   image_utils opencv_cudaarithm opencv_cudaimgproc)
 
-add_library(hsv_cluster_tracker_node hsv_cluster_tracker_node.cc)
+add_library(hsv_cluster_tracker_node
+  hsv_cluster_tracker_node.cc
+  analytical_cluster_strategy.cc
+  yolo_cluster_strategy.cc
+  hybrid_cluster_strategy.cc)
 target_link_libraries(hsv_cluster_tracker_node PUBLIC
   opencv_core wpimath ntcore cos::control_loop PRIVATE
   image_utils cos::cv_geometry_utils opencv_imgproc
