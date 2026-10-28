@@ -89,6 +89,7 @@ TEST_F(BallPathingNodeTest, MissingFramePublishesInvalidZeroGoal) {
     EXPECT_FALSE(goal->valid);
     EXPECT_DOUBLE_EQ(goal->vx_mps, 0.0);
     EXPECT_DOUBLE_EQ(goal->vy_mps, 0.0);
+    EXPECT_DOUBLE_EQ(goal->omega_rad_per_s, 0.0);
     ++callbacks;
   });
   node_->CreateCallback()(context);
@@ -111,6 +112,7 @@ TEST_F(BallPathingNodeTest, ProcessesGpuFrameThroughTensorRt) {
   const auto goal = result.get();
   EXPECT_TRUE(std::isfinite(goal.vx_mps));
   EXPECT_TRUE(std::isfinite(goal.vy_mps));
+  EXPECT_TRUE(std::isfinite(goal.omega_rad_per_s));
   EXPECT_TRUE(std::isfinite(goal.target_x_m));
   EXPECT_TRUE(std::isfinite(goal.target_y_m));
 }

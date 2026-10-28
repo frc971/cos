@@ -8,18 +8,21 @@ radians immediately when loaded.
 ## Vision-bot ball pathing
 
 `vision_bot_main` runs the grayscale ball U-Net on the front camera and
-publishes a robot-relative translation goal. The internal control-loop channel
+publishes a robot-relative drive goal. The internal control-loop channel
 is `ball_pathing/velocity_goal`. NetworkTables publishes
 `/COS/BallVelocityGoal` as:
 
 ```text
 [vx_mps, vy_mps, target_x_m, target_y_m, estimated_ball_count,
- valid, held, camera_timestamp_seconds, projected_ball_evidence_m2]
+ valid, held, camera_timestamp_seconds, projected_ball_evidence_m2,
+ omega_rad_per_s]
 ```
 
-Robot coordinates are +X forward and +Y left. When no cluster is visible, the
-last goal is marked `held` for 0.5 seconds; it then becomes invalid with zero
-velocity. Heading remains under roboRIO control.
+Robot coordinates are +X forward and +Y left, with positive yaw
+counterclockwise. While a cluster is visible, the goal commands 2.5 m/s
+straight forward and a proportional yaw velocity toward the cluster. It does
+not slow down or stop at the cluster. When no cluster is visible, the last goal
+is marked `held` for 0.5 seconds; it then becomes invalid with zero velocity.
 
 The segmentation mask is sampled and projected onto the floor in robot
 coordinates. Each sample is weighted by its projected floor area, which

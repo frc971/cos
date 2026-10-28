@@ -46,24 +46,35 @@ TEST(BallPathingLogicTest, KeepsTrackedClusterUntilMarginIsMet) {
   EXPECT_DOUBLE_EQ(selected->centroid.x, 5.0);
 }
 
-TEST(BallPathingLogicTest, StopsNearTargetAndLimitsSpeed) {
-  EXPECT_EQ(ComputeVelocity({0.2, 0.0}, 1.5, 1.5, 0.3), cv::Point2d());
-  const cv::Point2d proportional =
-      ComputeVelocity({0.6, 0.2}, 1.5, 1.5, 0.3);
-  EXPECT_NEAR(proportional.x, 0.9, 1e-12);
-  EXPECT_NEAR(proportional.y, 0.3, 1e-12);
-  const cv::Point2d limited = ComputeVelocity({3.0, 4.0}, 1.5, 1.5, 0.3);
-  EXPECT_NEAR(cv::norm(limited), 1.5, 1e-12);
-  EXPECT_GT(limited.x, 0.0);
-  EXPECT_GT(limited.y, 0.0);
+TEST(BallPathingLogicTest, DrivesStraightForwardAtConstantSpeed) {
+  const BallDriveVelocity centered =
+      ComputeDriveVelocity({0.2, 0.0}, 2.5, 3.0, 5.0);
+  EXPECT_DOUBLE_EQ(centered.vx_mps, 2.5);
+  EXPECT_DOUBLE_EQ(centered.vy_mps, 0.0);
+  EXPECT_DOUBLE_EQ(centered.omega_rad_per_s, 0.0);
+
+  const BallDriveVelocity behind =
+      ComputeDriveVelocity({-2.0, 0.0}, 2.5, 3.0, 5.0);
+  EXPECT_DOUBLE_EQ(behind.vx_mps, 2.5);
+  EXPECT_DOUBLE_EQ(behind.vy_mps, 0.0);
+  EXPECT_DOUBLE_EQ(behind.omega_rad_per_s, 5.0);
 }
 
-TEST(BallPathingLogicTest, CommandsNegativeXForTargetBehindRobot) {
-  const cv::Point2d velocity =
-      ComputeVelocity({-2.0, 0.5}, 1.5, 1.5, 0.3);
-  EXPECT_NEAR(cv::norm(velocity), 1.5, 1e-12);
-  EXPECT_LT(velocity.x, 0.0);
-  EXPECT_GT(velocity.y, 0.0);
+TEST(BallPathingLogicTest, CommandsProportionalLimitedYawTowardTarget) {
+  const BallDriveVelocity left =
+      ComputeDriveVelocity({1.0, 0.2}, 2.5, 3.0, 5.0);
+  const BallDriveVelocity right =
+      ComputeDriveVelocity({1.0, -0.2}, 2.5, 3.0, 5.0);
+  EXPECT_NEAR(left.omega_rad_per_s, 3.0 * std::atan2(0.2, 1.0),
+              1e-12);
+  EXPECT_NEAR(right.omega_rad_per_s, -left.omega_rad_per_s, 1e-12);
+
+  const BallDriveVelocity saturated_left =
+      ComputeDriveVelocity({0.0, 1.0}, 2.5, 3.0, 4.0);
+  const BallDriveVelocity saturated_right =
+      ComputeDriveVelocity({0.0, -1.0}, 2.5, 3.0, 4.0);
+  EXPECT_DOUBLE_EQ(saturated_left.omega_rad_per_s, 4.0);
+  EXPECT_DOUBLE_EQ(saturated_right.omega_rad_per_s, -4.0);
 }
 
 }  // namespace

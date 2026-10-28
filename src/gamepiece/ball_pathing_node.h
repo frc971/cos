@@ -27,6 +27,7 @@ struct BallVelocityGoalMessage final : public control_loop::IMessage {
   double vy_mps = 0.0;
   double target_x_m = 0.0;
   double target_y_m = 0.0;
+  double omega_rad_per_s = 0.0;
   int estimated_ball_count = 0;
   double ball_evidence_m2 = 0.0;
   double timestamp = 0.0;
@@ -37,7 +38,8 @@ struct BallVelocityGoalMessage final : public control_loop::IMessage {
   auto GetSize() -> size_t override { return sizeof(*this); }
 
   LOG_FIELDS(BallVelocityGoalMessage, valid, held, vx_mps, vy_mps, target_x_m,
-             target_y_m, estimated_ball_count, ball_evidence_m2, timestamp)
+             target_y_m, omega_rad_per_s, estimated_ball_count,
+             ball_evidence_m2, timestamp)
 };
 
 struct BallPathingConfig {
@@ -47,9 +49,9 @@ struct BallPathingConfig {
   double cluster_radius_m = 1.0;
   double grid_resolution_m = 0.20;
   double nominal_ball_area_m2 = 0.018;
-  double velocity_gain_per_s = 1.5;
-  double maximum_speed_mps = 1.5;
-  double stop_radius_m = 0.30;
+  double forward_speed_mps = 2.5;
+  double yaw_gain_per_s = 3.0;
+  double maximum_yaw_velocity_rad_per_s = 5.026548245743669;
   double switch_evidence_ratio = 1.25;
   std::chrono::duration<double> hold_duration{0.5};
 };
