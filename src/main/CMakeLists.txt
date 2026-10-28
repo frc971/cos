@@ -62,6 +62,8 @@ target_sources(vision_bot_main
     vision_bot_main.cc
 )
 target_link_libraries(vision_bot_main PRIVATE
+  cos::ball_pathing_node
+  cos::ball_velocity_goal_streamer_node
   cos::jpeg_buffer_streamer_node
   cos::uvc_camera_node
   cos::stop
@@ -89,6 +91,8 @@ target_sources(second_bot_main
     second_bot_main.cc
 )
 target_link_libraries(second_bot_main PRIVATE
+  cos::ball_pathing_node
+  cos::ball_velocity_goal_streamer_node
   cos::jpeg_buffer_streamer_node
   cos::uvc_camera_node
   cos::stop

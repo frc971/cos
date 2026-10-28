@@ -7,6 +7,9 @@ bos-logs/
 **/*.jpg
 **/*.png
 **/*.pt
+**/*.onnx
+**/*.engine
 **/__pycache__/
 .cache
 .idea/
+artifacts

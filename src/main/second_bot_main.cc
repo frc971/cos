@@ -11,12 +11,14 @@
 #include "control_loop/connect_to_rio.h"
 #include "control_loop/control_loop.h"
 #include "control_loop/thread_pool.h"
+#include "gamepiece/ball_pathing_node.h"
 #include "localization/unambiguous_solver_node.h"
 #include "localization/variance_calculator_node.h"
 #include "logging/jpeg_buffer_log_node.h"
 #include "logging/wpilog_writer.h"
 #include "simulation/simulation_position_sender_node.h"
 #include "streamer/jpeg_buffer_streamer_node.h"
+#include "streamer/ball_velocity_goal_streamer_node.h"
 #include "streamer/position_estimate_rio_streamer_node.h"
 #include "utils/stop.h"
 
@@ -32,6 +34,29 @@ ABSL_FLAG(                                                        // NOLINT
     bool, log_images, true,                                       // NOLINT
     "Log timestamped JPEG frames to the run's log directory in "  // NOLINT
     "per-camera subfolders");                                     // NOLINT
+ABSL_FLAG(std::string, ball_pathing_model,                         // NOLINT
+          "/root/gamepiece_models/ball_unet.engine",             // NOLINT
+          "TensorRT U-Net engine; empty disables ball pathing");  // NOLINT
+ABSL_FLAG(double, ball_probability_threshold, 0.5,                 // NOLINT
+          "U-Net foreground probability threshold");             // NOLINT
+ABSL_FLAG(double, ball_cluster_radius_m, 0.4,                      // NOLINT
+          "Robot-frame radius used to group visible balls");      // NOLINT
+ABSL_FLAG(double, ball_grid_resolution_m, 0.20,                    // NOLINT
+          "Projected ball-evidence grid resolution in meters");   // NOLINT
+ABSL_FLAG(int, ball_mask_sample_stride, 4,                         // NOLINT
+          "Pixel stride used while projecting the segmentation mask"); // NOLINT
+ABSL_FLAG(double, ball_maximum_range_m, 8.0,                       // NOLINT
+          "Maximum projected ball range in meters");              // NOLINT
+ABSL_FLAG(double, ball_velocity_gain, 1.5,                         // NOLINT
+          "Ball target proportional velocity gain in inverse seconds"); // NOLINT
+ABSL_FLAG(double, ball_maximum_speed_mps, 1.5,                     // NOLINT
+          "Maximum magnitude of the robot-relative velocity goal"); // NOLINT
+ABSL_FLAG(double, ball_stop_radius_m, 0.30,                        // NOLINT
+          "Target distance at which the velocity goal becomes zero"); // NOLINT
+ABSL_FLAG(double, ball_hold_seconds, 0.5,                          // NOLINT
+          "Time to hold the last goal after losing its cluster"); // NOLINT
+ABSL_FLAG(double, ball_switch_evidence_ratio, 1.25,                // NOLINT
+          "Evidence ratio required to switch tracked clusters");  // NOLINT
 
 namespace {
 
@@ -124,6 +149,42 @@ auto main(int argc, char** argv) -> int {
   for (const auto& path : paths) {
     AddCameraPipeline(path, port++, control_loop, thread_pool, *solver_node,
                       rio_sender_node, pva_detection, image_log_path);
+  }
+
+  const std::string ball_model = absl::GetFlag(FLAGS_ball_pathing_model);
+  if (!ball_model.empty()) {
+    constexpr std::string_view kColorJpeg = "jpeg_buffer:dev_orin_color";
+    constexpr std::string_view kBallImage = "ball_pathing:grayscale_color";
+    constexpr std::string_view kBallGoal = "ball_pathing/velocity_goal";
+    const std::string kColorConfig =
+        "/root/constants/second_bot/color.json";
+    auto ball_decode_node = std::make_shared<camera::NvjpegDecodeNode>(
+        kColorJpeg, kBallImage, NVJPEG_OUTPUT_Y, thread_pool);
+    control_loop.RegisterNode(ball_decode_node);
+
+    gamepiece::BallPathingConfig ball_config{
+        .probability_threshold = static_cast<float>(
+            absl::GetFlag(FLAGS_ball_probability_threshold)),
+        .mask_sample_stride = absl::GetFlag(FLAGS_ball_mask_sample_stride),
+        .maximum_range_m = absl::GetFlag(FLAGS_ball_maximum_range_m),
+        .cluster_radius_m = absl::GetFlag(FLAGS_ball_cluster_radius_m),
+        .grid_resolution_m = absl::GetFlag(FLAGS_ball_grid_resolution_m),
+        .velocity_gain_per_s = absl::GetFlag(FLAGS_ball_velocity_gain),
+        .maximum_speed_mps = absl::GetFlag(FLAGS_ball_maximum_speed_mps),
+        .stop_radius_m = absl::GetFlag(FLAGS_ball_stop_radius_m),
+        .switch_evidence_ratio =
+            absl::GetFlag(FLAGS_ball_switch_evidence_ratio),
+        .hold_duration = std::chrono::duration<double>(
+            absl::GetFlag(FLAGS_ball_hold_seconds)),
+    };
+    auto ball_pathing_node = std::make_shared<gamepiece::BallPathingNode>(
+        kBallImage, kBallGoal, ball_model, kColorConfig, thread_pool,
+        ball_config);
+    control_loop.RegisterNode(ball_pathing_node);
+    auto ball_goal_streamer =
+        std::make_shared<streamer::BallVelocityGoalStreamerNode>(kBallGoal,
+                                                                  "/COS");
+    control_loop.RegisterNode(ball_goal_streamer);
   }
 
   auto variance_calculator_node =

@@ -38,6 +38,19 @@ target_sources(jpeg_disk_replay
   PRIVATE
     jpeg_disk_replay.cc
 )
+
+add_executable(ball_pathing_disk_replay ball_pathing_disk_replay.cc)
+target_link_libraries(ball_pathing_disk_replay PRIVATE
+  cos::ball_pathing_node
+  cos::get_earliest_timestamp
+  cos::nvjpeg_decode_node
+  cos::uvc_disk_camera_node
+  cos::stop
+  absl::check
+  absl::flags_parse
+  cos::control_loop
+  cos::thread_pool
+)
 target_link_libraries(jpeg_disk_replay PRIVATE
   cos::get_earliest_timestamp
   cos::uvc_disk_camera_node

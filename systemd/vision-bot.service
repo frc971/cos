@@ -5,7 +5,7 @@ Description=vision-bot
 Type=simple
 User=root
 WorkingDirectory=/root
-ExecStart=/root/main/vision_bot_main --nopva_detection --max_context=2 --log_images
+ExecStart=/root/main/vision_bot_main --nopva_detection --max_context=2 --log_images --ball_pathing_model=/root/gamepiece_models/ball_unet.engine
 Restart=on-failure
 RestartSec=2
 

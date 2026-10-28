@@ -1,0 +1,4 @@
+# Workstation-only dependencies. Use a PyTorch build appropriate for the host.
+torch>=2.6
+onnx>=1.17
+onnxruntime>=1.22

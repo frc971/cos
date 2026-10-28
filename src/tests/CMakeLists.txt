@@ -12,6 +12,23 @@ target_link_libraries(yolo_node_test PRIVATE
 )
 add_test(NAME yolo_node_test COMMAND yolo_node_test)
 
+add_executable(ball_pathing_logic_test ball_pathing_logic_test.cc)
+target_link_libraries(ball_pathing_logic_test PRIVATE
+  cos::ball_pathing_node
+  GTest::gtest_main
+)
+add_test(NAME ball_pathing_logic_test COMMAND ball_pathing_logic_test)
+
+add_executable(ball_pathing_node_test ball_pathing_node_test.cc)
+target_link_libraries(ball_pathing_node_test PRIVATE
+  cos::ball_pathing_node
+  GTest::gtest_main
+)
+target_compile_definitions(ball_pathing_node_test PRIVATE
+  COS_TEST_CONSTANTS_DIR="${PROJECT_SOURCE_DIR}/constants"
+)
+add_test(NAME ball_pathing_node_test COMMAND ball_pathing_node_test)
+
 add_executable(full_robot_gamepiece_pipeline_test
   full_robot_gamepiece_pipeline_test.cc)
 target_link_libraries(full_robot_gamepiece_pipeline_test PRIVATE
