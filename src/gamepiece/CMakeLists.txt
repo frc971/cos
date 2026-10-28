@@ -64,7 +64,7 @@ add_library(hsv_cluster_tracker_node
   hybrid_cluster_strategy.cc)
 target_link_libraries(hsv_cluster_tracker_node PUBLIC
   opencv_core wpimath ntcore cos::control_loop PRIVATE
-  image_utils cos::cv_geometry_utils opencv_imgproc
+  image_utils cos::cv_geometry_utils opencv_imgproc yolo_inference
   cos::nvjpeg_decode_node cos::thread_pool)
 target_include_directories(hsv_cluster_tracker_node PUBLIC ${CMAKE_SOURCE_DIR}/src)
 add_library(cos::hsv_cluster_tracker_node ALIAS hsv_cluster_tracker_node)

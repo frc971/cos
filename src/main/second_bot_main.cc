@@ -20,6 +20,7 @@
 #include "logging/jpeg_buffer_log_node.h"
 #include "logging/wpilog_writer.h"
 #include "simulation/simulation_position_sender_node.h"
+#include "streamer/cluster_debug_streamer_node.h"
 #include "streamer/densest_cluster_rio_streamer_node.h"
 #include "streamer/jpeg_buffer_streamer_node.h"
 #include "streamer/position_estimate_rio_streamer_node.h"
@@ -92,10 +93,14 @@ void AddCameraPipeline(
                                 .ToRobotToCamera<frc::Transform3d>().ToMatrix()),
         static_cast<std::size_t>(config.width) * config.height);
     tracker->EnablePoseOutput("gamepiece/pose");
+    tracker->EnableMaskOutput("gamepiece/mask");
     control_loop.RegisterNode(tracker);
     control_loop.RegisterNode(
         std::make_shared<streamer::DensestClusterRioStreamerNode>(
             "gamepiece/clusters", "gamepiece/pose", "/COS/DensestCluster"));
+    control_loop.RegisterNode(std::make_shared<streamer::ClusterDebugStreamerNode>(
+        "gamepiece/clusters", "gamepiece/pose", "/COS/DensestCluster",
+        "gamepiece/mask"));  // :5806 /stream /hsv /clusters /balls
     return;
   }
 
