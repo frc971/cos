@@ -3,13 +3,14 @@
 #include <mutex>
 #include <nadjieb/mjpeg_streamer.hpp>
 #include "control_loop/node.h"
+#include "streamer/nvjpeg_encoder.h"
 
 namespace streamer {
-// Live field ellipses, exact densest-publisher output, and tracker threshold mask.
+// Live field ellipses, densest-cluster ellipse (/clusters), ball circles (/balls), and threshold mask.
 class ClusterDebugStreamerNode final : public control_loop::INode {
  public:
   ClusterDebugStreamerNode(std::string clusters, std::string pose,
-                           std::string densest, std::string mask, int port = 5805);
+                           std::string densest, std::string mask, int port = 5806);
   auto CreateCallback() -> std::function<void(const control_loop::Context&)> override;
   auto GetDependencies() const -> const std::vector<control_loop::MessageDescriptor>& override { return dependencies_; }
   auto GetPublications() const -> const std::vector<control_loop::MessageDescriptor>& override { return publications_; }
@@ -19,6 +20,7 @@ class ClusterDebugStreamerNode final : public control_loop::INode {
   std::vector<control_loop::MessageDescriptor> dependencies_, publications_;
   std::vector<std::function<void(const control_loop::Context&)>> callbacks_;
   std::mutex mutex_;
+  NvjpegEncoder encoder_;
   nadjieb::MJPEGStreamer streamer_;
 };
 }  // namespace streamer

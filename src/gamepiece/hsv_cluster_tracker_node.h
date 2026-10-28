@@ -70,7 +70,9 @@ class HSVClusterTrackerNode final : public control_loop::INode {
       DensityHistory density_history = DensityHistory::kPredict,
       bool residual_density = true, std::string_view pose_topic = "/Drive/Pose",
       nt::NetworkTableInstance instance =
-          nt::NetworkTableInstance::GetDefault());
+          nt::NetworkTableInstance::GetDefault(),
+      // TensorRT ball detector; analytical clustering if empty or missing.
+      std::string_view yolo_model = "/root/gamepiece_models/best_nms_gray.engine");
   // Switch between frames; clears IDs and density history for the new algorithm.
   void SetStrategy(std::unique_ptr<ClusterStrategy> strategy);
   // Accepts CPU or GPU BGR frames; serialize access with callbacks and SetStrategy.

@@ -26,7 +26,7 @@ ABSL_FLAG(std::string, config, "/root/constants/second_bot/color.json", "Gamepie
 ABSL_FLAG(std::string, log_path, "", "Replay timestamped JPEG directory instead of a live camera");
 ABSL_FLAG(std::string, nt_server, "10.9.71.2", "NT server supplying /Drive/Pose (read only)");
 ABSL_FLAG(std::vector<std::string>, pose, {}, "Optional fixed field pose: x,y,yaw (meters, radians)");
-ABSL_FLAG(int, port, 5805, "HTTP port: /stream ellipses, /hsv threshold mask, /field publisher preview");
+ABSL_FLAG(int, port, 5806, "HTTP port: /stream ellipses, /hsv threshold mask, /clusters densest ellipse, /balls ball circles");
 
 auto main(int argc, char** argv) -> int {
   absl::ParseCommandLine(argc, argv);
@@ -80,7 +80,7 @@ auto main(int argc, char** argv) -> int {
     } else {
       loop.RegisterDependencyNode(std::make_shared<camera::UVCDiskCameraNode>(log, "jpeg", camera::GetEarliestTimestamp(log)));
     }
-    LOG(INFO) << "Cluster viewer on :" << absl::GetFlag(FLAGS_port) << "/stream, /hsv, /field";
+    LOG(INFO) << "Cluster viewer on :" << absl::GetFlag(FLAGS_port) << "/stream, /hsv, /clusters, /balls";
     loop.Start();
     stop::WaitUntilStop();
     loop.Stop();

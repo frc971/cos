@@ -90,6 +90,7 @@ target_sources(second_bot_main
 )
 target_link_libraries(second_bot_main PRIVATE
   cos::hsv_cluster_tracker_node
+  cos::cluster_debug_streamer_node
   cos::densest_cluster_rio_streamer_node
   cos::jpeg_buffer_streamer_node
   cos::uvc_camera_node

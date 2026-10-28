@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <limits>
 #include <memory>
 #include <numbers>
@@ -10,13 +11,16 @@
 #include <tuple>
 #include <utility>
 
+#include <frc/geometry/struct/Pose2dStruct.h>
 #include <opencv2/core/cuda.hpp>
 #include <opencv2/imgproc.hpp>
-#include <frc/geometry/struct/Pose2dStruct.h>
 
 #include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "camera/nvjpeg_decode_node.h"
+#include "control_loop/thread_pool.h"
 #include "gamepiece/image_utils.h"
+#include "gamepiece/yolo_node.h"
 #include "localization/position.h"
 #include "utils/cv_geometry.h"
 
@@ -26,10 +30,33 @@ namespace {
 constexpr float kCellM = 0.1f;
 constexpr float kBandwidthM = 0.3f;
 constexpr float kMergeBandwidthM = 0.4f;
+constexpr float kYoloConfidence = 0.03f;
 constexpr float kModeOverlapD2 = 4.6051702f;  // 90% contour for a 2D Gaussian.
+
+auto MakeDefaultStrategy(std::string_view model)
+    -> std::unique_ptr<ClusterStrategy> {
+  if (model.empty() || !std::filesystem::exists(model)) {
+    LOG(WARNING) << "YOLO model unavailable, using analytical clustering: "
+                 << model;
+    return std::make_unique<AnalyticalClusterStrategy>();
+  }
+  static control_loop::ThreadPool pool(
+      1);  // Detect() runs inline; the node needs a pool.
+  auto yolo = std::make_shared<YoloNode>("", "", std::string(model),
+                                         std::vector<std::string>{}, pool);
+  return std::make_unique<YoloClusterStrategy>(
+      [yolo](const cv::cuda::GpuMat& image) {
+        std::vector<cv::Point2f> centers;
+        for (const auto& box : yolo->Detect(image, kYoloConfidence))
+          centers.emplace_back(box.bounds.x + box.bounds.width / 2.0f,
+                               box.bounds.y + box.bounds.height / 2.0f);
+        return centers;
+      });
+}
 }  // namespace
 
-auto HSVClusterTrackerNode::Covariance(const std::vector<cv::Point2f>& points) -> cv::Matx22f {
+auto HSVClusterTrackerNode::Covariance(const std::vector<cv::Point2f>& points)
+    -> cv::Matx22f {
   cv::Point2f mean{0.0f, 0.0f};
   for (const cv::Point2f& point : points) {
     mean += point;
@@ -52,8 +79,8 @@ HSVClusterTrackerNode::HSVClusterTrackerNode(
     cv::Matx33d intrinsics, cv::Matx44d extrinsics, std::size_t image_size,
     std::string_view pose_path, DensityHistory density_history,
     bool residual_density, std::string_view pose_topic,
-    nt::NetworkTableInstance instance)
-    : strategy_(std::make_unique<AnalyticalClusterStrategy>()),
+    nt::NetworkTableInstance instance, std::string_view yolo_model)
+    : strategy_(MakeDefaultStrategy("")),
       temporal_density_(density_history != DensityHistory::kNone),
       predictive_density_(density_history == DensityHistory::kPredict),
       residual_density_(residual_density),
@@ -62,8 +89,8 @@ HSVClusterTrackerNode::HSVClusterTrackerNode(
       pose_path_(pose_path),
       dependencies_({{input_path_, typeid(camera::DecodedJpegBuffer)}}),
       // Intermediate clusters contain image samples, not generic log fields.
-      publications_({{output_path_,
-                      typeid(control_loop::ValueMessage<hsv_clusters_t>)}}),
+      publications_(
+          {{output_path_, typeid(control_loop::ValueMessage<hsv_clusters_t>)}}),
       camera_intrinsics_(intrinsics),
       camera_extrinsics_cv_(extrinsics) {
   if (image_size == 0) {
@@ -78,8 +105,8 @@ HSVClusterTrackerNode::HSVClusterTrackerNode(
     dependencies_.emplace_back(pose_path_,
                                typeid(localization::PositionEstimateMessage));
   else if (!pose_topic.empty())
-    pose_subscriber_ = instance.GetStructTopic<frc::Pose2d>(pose_topic).Subscribe(
-        {}, {.periodic = 0.001});
+    pose_subscriber_ = instance.GetStructTopic<frc::Pose2d>(pose_topic)
+                           .Subscribe({}, {.periodic = 0.001});
   // Capture the ground translation before changing from WPILib coordinates.
   extrinsics_offset_ = frc::Translation2d{units::meter_t{extrinsics(0, 3)},
                                           units::meter_t{extrinsics(1, 3)}};
@@ -89,8 +116,10 @@ HSVClusterTrackerNode::HSVClusterTrackerNode(
                 camera_extrinsics_cv_(2, 3)};
 }
 
-void HSVClusterTrackerNode::SetStrategy(std::unique_ptr<ClusterStrategy> strategy) {
-  if (!strategy) throw std::invalid_argument("A cluster strategy is required");
+void HSVClusterTrackerNode::SetStrategy(
+    std::unique_ptr<ClusterStrategy> strategy) {
+  if (!strategy)
+    throw std::invalid_argument("A cluster strategy is required");
   std::scoped_lock lock(processing_mutex_);
   strategy_ = std::move(strategy);
   canonical_positions_.clear();
@@ -103,21 +132,25 @@ void HSVClusterTrackerNode::SetStrategy(std::unique_ptr<ClusterStrategy> strateg
 
 void HSVClusterTrackerNode::EnablePoseOutput(std::string_view output_path) {
   if (output_path.empty() || output_path == input_path_ ||
-      output_path == output_path_ || output_path == mask_output_path_ || output_path == pose_path_ ||
-      !pose_output_path_.empty()) {
+      output_path == output_path_ || output_path == mask_output_path_ ||
+      output_path == pose_path_ || !pose_output_path_.empty()) {
     throw std::invalid_argument("Tracker pose output requires a distinct path");
   }
   pose_output_path_ = output_path;
-  publications_.push_back(control_loop::MessageDescriptor::Publication<
-      localization::PositionEstimateMessage>(pose_output_path_));
+  publications_.push_back(
+      control_loop::MessageDescriptor::Publication<
+          localization::PositionEstimateMessage>(pose_output_path_));
 }
 
 void HSVClusterTrackerNode::EnableMaskOutput(std::string_view output_path) {
-  if (output_path.empty() || output_path == input_path_ || output_path == output_path_ ||
-      output_path == pose_path_ || output_path == pose_output_path_ || !mask_output_path_.empty())
+  if (output_path.empty() || output_path == input_path_ ||
+      output_path == output_path_ || output_path == pose_path_ ||
+      output_path == pose_output_path_ || !mask_output_path_.empty())
     throw std::invalid_argument("Tracker mask output requires a distinct path");
   mask_output_path_ = output_path;
-  publications_.push_back(control_loop::MessageDescriptor::Publication<cv::Mat>(mask_output_path_));
+  // Untyped: image payloads are excluded from the WPILog.
+  publications_.emplace_back(mask_output_path_,
+                             typeid(control_loop::ValueMessage<cv::Mat>));
 }
 
 auto HSVClusterTrackerNode::CreateCallback()
@@ -169,14 +202,17 @@ auto HSVClusterTrackerNode::CreateCallback()
       if (pose) {
         estimate = std::make_shared<localization::PositionEstimateMessage>();
         estimate->pose = frc::Pose3d{*pose};
-        if (frame) estimate->timestamp = frame->timestamp;
+        if (frame)
+          estimate->timestamp = frame->timestamp;
       }
       context->SetMessage(pose_output_path_, std::move(estimate));
     }
     if (!mask_output_path_.empty()) {
-      context->SetMessage(mask_output_path_,
+      context->SetMessage(
+          mask_output_path_,
           std::make_shared<control_loop::ValueMessage<cv::Mat>>(
-              frame && frame->destination.channel[0] ? hsv_masked_.clone() : cv::Mat{}));
+              frame && frame->destination.channel[0] ? hsv_masked_.clone()
+                                                     : cv::Mat{}));
     }
     processing_lock.unlock();
     for (const auto& callback : callbacks_) {
@@ -261,13 +297,13 @@ void HSVClusterTrackerNode::ProcessFrame(
   strategy_->Process(*this, frame, robot_pose);
 }
 
-void HSVClusterTrackerNode::UpdateDensity(kmeans_cluster_t& c, cv::Matx22f covariance,
-                                       const std::optional<frc::Pose2d>& robot_pose) {
+void HSVClusterTrackerNode::UpdateDensity(
+    kmeans_cluster_t& c, cv::Matx22f covariance,
+    const std::optional<frc::Pose2d>& robot_pose) {
   c.instantaneous_density_area_m2 =
       2 * std::numbers::pi_v<float> *
-      std::sqrt(cv::determinant(covariance +
-                                cv::Matx22f::eye() *
-                                    (kFuelRadiusM * kFuelRadiusM / 4)));
+      std::sqrt(cv::determinant(
+          covariance + cv::Matx22f::eye() * (kFuelRadiusM * kFuelRadiusM / 4)));
   c.estimated_ball_count = c.instantaneous_ball_count;
   if (temporal_density_) {
     const float angle =
@@ -303,9 +339,8 @@ void HSVClusterTrackerNode::UpdateDensity(kmeans_cluster_t& c, cv::Matx22f covar
   }
   c.density_area_m2 =
       2 * std::numbers::pi_v<float> *
-      std::sqrt(cv::determinant(covariance +
-                                cv::Matx22f::eye() *
-                                    (kFuelRadiusM * kFuelRadiusM / 4)));
+      std::sqrt(cv::determinant(
+          covariance + cv::Matx22f::eye() * (kFuelRadiusM * kFuelRadiusM / 4)));
   c.density = c.estimated_ball_count / c.density_area_m2;
 }
 

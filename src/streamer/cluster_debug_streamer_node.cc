@@ -2,14 +2,13 @@
 
 #include <cmath>
 #include <numbers>
-#include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include "localization/solver_common.h"
 #include "streamer/cluster_geometry.h"
 
 namespace streamer {
 namespace {
-constexpr double kScale = 80;
+constexpr double kScale = 80, kBallRadiusM = 0.075;  // Matches HSVClusterTrackerNode::kFuelRadiusM.
 auto Point(double x, double y) -> cv::Point {
   return {cvRound(x * kScale), cvRound((localization::kApriltagLayout.GetFieldWidth().value() - y) * kScale)};
 }
@@ -49,10 +48,8 @@ ClusterDebugStreamerNode::ClusterDebugStreamerNode(std::string clusters, std::st
   streamer_.start(port, 2);
   cv::Mat waiting(240, 640, CV_8UC3, cv::Scalar{40, 40, 40});
   Label(waiting, "Waiting for a camera frame");
-  std::vector<uchar> jpeg;
-  cv::imencode(".jpg", waiting, jpeg);
-  const std::string initial(reinterpret_cast<const char*>(jpeg.data()), jpeg.size());
-  for (const auto* path : {"/stream", "/hsv", "/field"}) streamer_.publish(path, initial);
+  const auto initial = encoder_.Encode(waiting);
+  for (const auto* path : {"/stream", "/hsv", "/clusters", "/balls"}) streamer_.publish(path, initial);
 }
 
 auto ClusterDebugStreamerNode::CreateCallback() -> std::function<void(const control_loop::Context&)> {
@@ -69,9 +66,7 @@ auto ClusterDebugStreamerNode::CreateCallback() -> std::function<void(const cont
       context->SetMessage(done, nullptr);
       auto publish = [&](const std::string& path, const cv::Mat& image) {
         if (image.empty() || !streamer_.hasClient(path)) return;
-        std::vector<uchar> jpeg;
-        if (cv::imencode(".jpg", image, jpeg, {cv::IMWRITE_JPEG_QUALITY, 80}))
-          streamer_.publish(path, std::string(reinterpret_cast<const char*>(jpeg.data()), jpeg.size()));
+        streamer_.publish(path, encoder_.Encode(image));
       };
       if (const auto* mask = context->GetMessage<control_loop::ValueMessage<cv::Mat>>(mask_))
         publish("/hsv", mask->value);
@@ -90,7 +85,7 @@ auto ClusterDebugStreamerNode::CreateCallback() -> std::function<void(const cont
         }
         publish("/stream", image);
       }
-      if (streamer_.hasClient("/field")) {
+      if (streamer_.hasClient("/clusters")) {
         auto image = Canvas(pose);
         const auto* output = context->GetMessage<control_loop::ValueMessage<std::vector<double>>>(densest_);
         const auto* v = output ? &output->value : nullptr;
@@ -109,7 +104,22 @@ auto ClusterDebugStreamerNode::CreateCallback() -> std::function<void(const cont
                 cv::FONT_HERSHEY_SIMPLEX, .4, {255, 255, 255}, 1, cv::LINE_AA);
           }
         }
-        publish("/field", image);
+        publish("/clusters", image);
+      }
+      if (pose && streamer_.hasClient("/balls")) {
+        auto image = Canvas(pose);
+        const auto robot = pose->pose.ToPose2d();
+        size_t count = 0;
+        for (const auto& cluster : clusters->value)
+          for (const auto& ball : cluster.verified_ball_centers) {
+            const auto field = frc::Translation2d{units::meter_t{ball.x}, units::meter_t{ball.y}}
+                                   .RotateBy(robot.Rotation()) + robot.Translation();
+            cv::circle(image, Point(field.X().value(), field.Y().value()),
+                       cvRound(kBallRadiusM * kScale), {0, 220, 255}, 2, cv::LINE_AA);
+            ++count;
+          }
+        Label(image, cv::format("%zu ball detections | field meters | 1 m grid", count));
+        publish("/balls", image);
       }
     }
     for (const auto& callback : callbacks_) callback(context);
