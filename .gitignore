@@ -9,6 +9,8 @@ bos-logs/
 **/*.pt
 **/*.onnx
 **/*.engine
+!/models/ball_unet.onnx
+!/models/ball_unet.engine
 **/__pycache__/
 .cache
 .idea/

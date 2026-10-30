@@ -30,8 +30,9 @@ distant connected piles. A circular window over this density grid selects the
 largest concentration of ball evidence; connected balls therefore contribute
 their full segmented area rather than being collapsed into one component.
 
-The TensorRT engine is hardware-specific and is not committed. Build and
-install it before starting the service:
+The prebuilt TensorRT engine and ONNX model are committed under `models/`;
+see [model compatibility and validation](models/README.md). The engine is
+hardware-specific. To rebuild and install it before starting the service:
 
 ```sh
 python3 -m venv .cache/unet-export
