@@ -32,7 +32,20 @@ their full segmented area rather than being collapsed into one component.
 
 The prebuilt TensorRT engine and ONNX model are committed under `models/`;
 see [model compatibility and validation](models/README.md). The engine is
-hardware-specific. To rebuild and install it before starting the service:
+hardware-specific. Deploy the committed engine together with the binaries,
+constants, and service files:
+
+```sh
+cmake --build build --target second-bot
+```
+
+This uploads `models/ball_unet.engine` to
+`root@10.9.71.11:/root/models/ball_unet.engine`, the service's configured model
+path. Deployment fails before contacting the robot if the local engine is
+missing or empty. To use a different engine, configure CMake with
+`-DSECOND_BOT_ENGINE=/absolute/path/to/ball_unet.engine`.
+
+To regenerate an engine:
 
 ```sh
 python3 -m venv .cache/unet-export
