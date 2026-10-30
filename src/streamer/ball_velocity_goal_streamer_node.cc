@@ -31,7 +31,7 @@ auto BallVelocityGoalStreamerNode::CreateCallback()
     const auto* goal =
         context->GetMessage<gamepiece::BallVelocityGoalMessage>(input_path_);
     if (goal != nullptr) {
-      const std::array<double, 10> values{
+      const std::array<double, 9> values{
           goal->vx_mps,
           goal->vy_mps,
           goal->target_x_m,
@@ -41,7 +41,6 @@ auto BallVelocityGoalStreamerNode::CreateCallback()
           goal->held ? 1.0 : 0.0,
           goal->timestamp,
           goal->ball_evidence_m2,
-          goal->omega_rad_per_s,
       };
       publisher_.Set(values);
       instance_.Flush();

@@ -66,8 +66,7 @@ auto main(int argc, char** argv) -> int {
               << " valid=" << goal->valid << " held=" << goal->held
               << " target_m=(" << goal->target_x_m << ',' << goal->target_y_m
               << ") velocity_mps=(" << goal->vx_mps << ',' << goal->vy_mps
-              << ") omega_rad_per_s=" << goal->omega_rad_per_s
-              << " evidence_m2=" << goal->ball_evidence_m2
+              << ") evidence_m2=" << goal->ball_evidence_m2
               << " balls=" << goal->estimated_ball_count << '\n';
   });
 

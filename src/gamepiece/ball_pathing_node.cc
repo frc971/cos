@@ -65,9 +65,8 @@ BallPathingNode::BallPathingNode(
   CHECK_GT(config_.cluster_radius_m, 0.0);
   CHECK_GT(config_.grid_resolution_m, 0.0);
   CHECK_GT(config_.nominal_ball_area_m2, 0.0);
-  CHECK_GT(config_.forward_speed_mps, 0.0);
-  CHECK_GT(config_.yaw_gain_per_s, 0.0);
-  CHECK_GT(config_.maximum_yaw_velocity_rad_per_s, 0.0);
+  CHECK_GT(config_.maximum_speed_mps, 0.0);
+  CHECK_GE(config_.stop_radius_m, 0.0);
   CHECK_GE(config_.switch_evidence_ratio, 1.0);
   CHECK_GE(config_.hold_duration.count(), 0.0);
 
@@ -296,14 +295,13 @@ auto BallPathingNode::Process(const cv::cuda::GpuMat& image, double timestamp)
   tracked_cluster_ = *selected;
   have_target_ = true;
   last_seen_ = std::chrono::steady_clock::now();
-  const internal::BallDriveVelocity velocity = internal::ComputeDriveVelocity(
-      selected->centroid, config_.forward_speed_mps, config_.yaw_gain_per_s,
-      config_.maximum_yaw_velocity_rad_per_s);
+  const cv::Point2d velocity = internal::ComputeVelocity(
+      selected->centroid, config_.velocity_gain_per_s,
+      config_.maximum_speed_mps, config_.stop_radius_m);
   last_goal_ = {};
   last_goal_.valid = true;
-  last_goal_.vx_mps = velocity.vx_mps;
-  last_goal_.vy_mps = velocity.vy_mps;
-  last_goal_.omega_rad_per_s = velocity.omega_rad_per_s;
+  last_goal_.vx_mps = velocity.x;
+  last_goal_.vy_mps = velocity.y;
   last_goal_.target_x_m = selected->centroid.x;
   last_goal_.target_y_m = selected->centroid.y;
   last_goal_.ball_evidence_m2 = selected->evidence_m2;

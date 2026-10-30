@@ -97,18 +97,17 @@ auto ChooseBallCluster(const std::vector<BallCluster>& clusters,
   return best;
 }
 
-auto ComputeDriveVelocity(const cv::Point2d& target, double forward_speed_mps,
-                          double yaw_gain_per_s,
-                          double maximum_yaw_velocity_rad_per_s)
-    -> BallDriveVelocity {
-  const double bearing_rad = std::atan2(target.y, target.x);
-  return {
-      .vx_mps = forward_speed_mps,
-      .vy_mps = 0.0,
-      .omega_rad_per_s = std::clamp(bearing_rad * yaw_gain_per_s,
-                                    -maximum_yaw_velocity_rad_per_s,
-                                    maximum_yaw_velocity_rad_per_s),
-  };
+auto ComputeVelocity(const cv::Point2d& target, double gain_per_s,
+                     double maximum_speed_mps, double stop_radius_m)
+    -> cv::Point2d {
+  const double distance = cv::norm(target);
+  if (distance <= stop_radius_m) return {};
+  cv::Point2d velocity = target * gain_per_s;
+  const double speed = cv::norm(velocity);
+  if (speed > maximum_speed_mps) {
+    velocity *= maximum_speed_mps / speed;
+  }
+  return velocity;
 }
 
 }  // namespace gamepiece::internal

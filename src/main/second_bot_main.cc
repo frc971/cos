@@ -47,12 +47,12 @@ ABSL_FLAG(int, ball_mask_sample_stride, 4,                         // NOLINT
           "Pixel stride used while projecting the segmentation mask"); // NOLINT
 ABSL_FLAG(double, ball_maximum_range_m, 8.0,                       // NOLINT
           "Maximum projected ball range in meters");              // NOLINT
-ABSL_FLAG(double, ball_forward_speed_mps, 2.5,                     // NOLINT
-          "Forward speed commanded while a ball target is valid"); // NOLINT
-ABSL_FLAG(double, ball_yaw_gain, 3.0,                              // NOLINT
-          "Ball-bearing proportional yaw gain in inverse seconds"); // NOLINT
-ABSL_FLAG(double, ball_maximum_yaw_velocity_rad_per_s,             // NOLINT
-          5.026548245743669, "Maximum ball-pathing yaw velocity"); // NOLINT
+ABSL_FLAG(double, ball_velocity_gain, 1.5,                         // NOLINT
+          "Ball target proportional velocity gain in inverse seconds"); // NOLINT
+ABSL_FLAG(double, ball_maximum_speed_mps, 1.5,                     // NOLINT
+          "Maximum magnitude of the robot-relative velocity goal"); // NOLINT
+ABSL_FLAG(double, ball_stop_radius_m, 0.30,                        // NOLINT
+          "Target distance at which the velocity goal becomes zero"); // NOLINT
 ABSL_FLAG(double, ball_hold_seconds, 0.5,                          // NOLINT
           "Time to hold the last goal after losing its cluster"); // NOLINT
 ABSL_FLAG(double, ball_switch_evidence_ratio, 1.25,                // NOLINT
@@ -169,10 +169,9 @@ auto main(int argc, char** argv) -> int {
         .maximum_range_m = absl::GetFlag(FLAGS_ball_maximum_range_m),
         .cluster_radius_m = absl::GetFlag(FLAGS_ball_cluster_radius_m),
         .grid_resolution_m = absl::GetFlag(FLAGS_ball_grid_resolution_m),
-        .forward_speed_mps = absl::GetFlag(FLAGS_ball_forward_speed_mps),
-        .yaw_gain_per_s = absl::GetFlag(FLAGS_ball_yaw_gain),
-        .maximum_yaw_velocity_rad_per_s =
-            absl::GetFlag(FLAGS_ball_maximum_yaw_velocity_rad_per_s),
+        .velocity_gain_per_s = absl::GetFlag(FLAGS_ball_velocity_gain),
+        .maximum_speed_mps = absl::GetFlag(FLAGS_ball_maximum_speed_mps),
+        .stop_radius_m = absl::GetFlag(FLAGS_ball_stop_radius_m),
         .switch_evidence_ratio =
             absl::GetFlag(FLAGS_ball_switch_evidence_ratio),
         .hold_duration = std::chrono::duration<double>(
