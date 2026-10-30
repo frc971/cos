@@ -6,7 +6,6 @@ set(SECOND_BOT_ENGINE "${CMAKE_SOURCE_DIR}/models/ball_unet.engine" CACHE FILEPA
     "TensorRT U-Net engine to deploy to second-bot")
 
 add_custom_target(second-bot
-    COMMAND ${CMAKE_COMMAND} "-DENGINE_PATH=${SECOND_BOT_ENGINE}" -P "${CMAKE_CURRENT_LIST_DIR}/CheckSecondBotEngine.cmake"
     COMMAND ${CMAKE_COMMAND} -E echo "Deploying binaries, configs, and U-Net engine to root@10.9.71.11:/root..."
     
     COMMAND ssh root@10.9.71.11 "mkdir -p /root/models"

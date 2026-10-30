@@ -41,8 +41,7 @@ cmake --build build --target second-bot
 
 This uploads `models/ball_unet.engine` to
 `root@10.9.71.11:/root/models/ball_unet.engine`, the service's configured model
-path. Deployment fails before contacting the robot if the local engine is
-missing or empty. To use a different engine, configure CMake with
+path. To use a different engine, configure CMake with
 `-DSECOND_BOT_ENGINE=/absolute/path/to/ball_unet.engine`.
 
 To regenerate an engine:
