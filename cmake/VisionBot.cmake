@@ -7,13 +7,13 @@ add_custom_target(vision-bot
     
     COMMAND ssh root@10.99.72.11 "mkdir -p /root"
 
-    COMMAND rsync -avz --compress-level=9 --info=progress2 --checksum --partial --delete ${CMAKE_BINARY_DIR}/tests/ root@10.99.72.11:/root/tests/
-    COMMAND rsync -avz --compress-level=9 --info=progress2 --checksum --partial --delete ${CMAKE_BINARY_DIR}/main/ root@10.99.72.11:/root/main/
-    COMMAND rsync -avz --compress-level=9 --info=progress2 --checksum --partial --delete ${CMAKE_BINARY_DIR}/examples/ root@10.99.72.11:/root/examples/
-    COMMAND rsync -avz --compress-level=9 --info=progress2 --checksum --partial --delete ${CMAKE_BINARY_DIR}/tools/ root@10.99.72.11:/root/tools/
-    COMMAND rsync -avz --compress-level=9 --info=progress2 --checksum --partial --delete ${CMAKE_BINARY_DIR}/lib/ root@10.99.72.11:/root/lib/
-    COMMAND rsync -avz --compress-level=9 --info=progress2 --checksum --partial --delete ${CMAKE_SOURCE_DIR}/constants/ root@10.99.72.11:/root/constants/
-    COMMAND rsync -avz --compress-level=9 --info=progress2 --checksum --partial ${CMAKE_SOURCE_DIR}/systemd/ root@10.99.72.11:/etc/systemd/system
+    COMMAND rsync -avz --no-times --compress-level=9 --info=progress2 --checksum --partial --delete ${CMAKE_BINARY_DIR}/tests/ root@10.99.72.11:/root/tests/
+    COMMAND rsync -avz --no-times --compress-level=9 --info=progress2 --checksum --partial --delete ${CMAKE_BINARY_DIR}/main/ root@10.99.72.11:/root/main/
+    COMMAND rsync -avz --no-times --compress-level=9 --info=progress2 --checksum --partial --delete ${CMAKE_BINARY_DIR}/examples/ root@10.99.72.11:/root/examples/
+    COMMAND rsync -avz --no-times --compress-level=9 --info=progress2 --checksum --partial --delete ${CMAKE_BINARY_DIR}/tools/ root@10.99.72.11:/root/tools/
+    COMMAND rsync -avz --no-times --compress-level=9 --info=progress2 --checksum --partial --delete ${CMAKE_BINARY_DIR}/lib/ root@10.99.72.11:/root/lib/
+    COMMAND rsync -avz --no-times --compress-level=9 --info=progress2 --checksum --partial --delete ${CMAKE_SOURCE_DIR}/constants/ root@10.99.72.11:/root/constants/
+    COMMAND rsync -avz --no-times --compress-level=9 --info=progress2 --checksum --partial ${CMAKE_SOURCE_DIR}/systemd/ root@10.99.72.11:/etc/systemd/system
 
     
     COMMENT "Uploading folders to 10.99.72.11..."

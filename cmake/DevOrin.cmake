@@ -7,13 +7,13 @@ add_custom_target(dev-orin
     
     COMMAND ssh root@dev-orin "mkdir -p /root"
 
-    COMMAND rsync -avz --compress-level=9 --info=progress2 --checksum --partial --delete ${CMAKE_BINARY_DIR}/tests/ root@dev-orin:/root/tests/
-    COMMAND rsync -avz --compress-level=9 --info=progress2 --checksum --partial --delete ${CMAKE_BINARY_DIR}/main/ root@dev-orin:/root/main/
-    COMMAND rsync -avz --compress-level=9 --info=progress2 --checksum --partial --delete ${CMAKE_BINARY_DIR}/examples/ root@dev-orin:/root/examples/
-    COMMAND rsync -avz --compress-level=9 --info=progress2 --checksum --partial --delete ${CMAKE_BINARY_DIR}/tools/ root@dev-orin:/root/tools/
-    COMMAND rsync -avz --compress-level=9 --info=progress2 --checksum --partial --delete ${CMAKE_BINARY_DIR}/lib/ root@dev-orin:/root/lib/
-    COMMAND rsync -avz --compress-level=9 --info=progress2 --checksum --partial --delete ${CMAKE_SOURCE_DIR}/constants/ root@dev-orin:/root/constants/
-    COMMAND rsync -avz --compress-level=9 --info=progress2 --checksum --partial --delete ${CMAKE_SOURCE_DIR}/systemd/dev-orin.service root@dev-orin:/etc/systemd/system
+    COMMAND rsync -avz --no-times --compress-level=9 --info=progress2 --checksum --partial --delete ${CMAKE_BINARY_DIR}/tests/ root@dev-orin:/root/tests/
+    COMMAND rsync -avz --no-times --compress-level=9 --info=progress2 --checksum --partial --delete ${CMAKE_BINARY_DIR}/main/ root@dev-orin:/root/main/
+    COMMAND rsync -avz --no-times --compress-level=9 --info=progress2 --checksum --partial --delete ${CMAKE_BINARY_DIR}/examples/ root@dev-orin:/root/examples/
+    COMMAND rsync -avz --no-times --compress-level=9 --info=progress2 --checksum --partial --delete ${CMAKE_BINARY_DIR}/tools/ root@dev-orin:/root/tools/
+    COMMAND rsync -avz --no-times --compress-level=9 --info=progress2 --checksum --partial --delete ${CMAKE_BINARY_DIR}/lib/ root@dev-orin:/root/lib/
+    COMMAND rsync -avz --no-times --compress-level=9 --info=progress2 --checksum --partial --delete ${CMAKE_SOURCE_DIR}/constants/ root@dev-orin:/root/constants/
+    COMMAND rsync -avz --no-times --compress-level=9 --info=progress2 --checksum --partial --delete ${CMAKE_SOURCE_DIR}/systemd/dev-orin.service root@dev-orin:/etc/systemd/system
     
     COMMENT "Uploading folders to dev-orin..."
     USES_TERMINAL
