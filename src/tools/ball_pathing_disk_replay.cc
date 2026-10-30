@@ -20,7 +20,7 @@
 using namespace std::chrono_literals;
 
 ABSL_FLAG(std::string, log_path, "", "Directory of timestamped JPEG frames");
-ABSL_FLAG(std::string, model_path, "/root/models/ball_unet.engine",
+ABSL_FLAG(std::string, model_path, "/root/models/ball_unet_rgb.engine",
           "TensorRT U-Net engine");
 ABSL_FLAG(std::string, ball_pathing_input_mode, "rgb",
           "U-Net input mode: rgb or grayscale");

@@ -53,9 +53,11 @@ The default local output names are `ball_unet_rgb.onnx` and
 `REMOTE_ENGINE` selects its remote engine path. The grayscale export remains
 the default when `INPUT_MODE` is unset.
 
-Second-bot deploys `ball_unet_rgb.engine` by default, installing it as
-`/root/models/ball_unet.engine`. It decodes the color camera to interleaved RGB
-and preprocesses it into three normalized float planes. The node receives
+All deployment targets upload this directory to `/root/models/`.
+Second-bot uses `/root/models/ball_unet_rgb.engine` by default; the grayscale
+engine remains available as `/root/models/ball_unet.engine`. Second-bot decodes
+the color camera to interleaved RGB and preprocesses it into three normalized
+float planes. The node receives
 `UnetInputMode::kRgb` explicitly in its constructor and validates the engine's
 input shape. Grayscale remains supported with `UnetInputMode::kGrayscale` and
 the matching engine. Second-bot and disk replay expose this selection through

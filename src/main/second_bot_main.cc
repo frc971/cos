@@ -36,7 +36,7 @@ ABSL_FLAG(                                                        // NOLINT
     "Log timestamped JPEG frames to the run's log directory in "  // NOLINT
     "per-camera subfolders");                                     // NOLINT
 ABSL_FLAG(std::string, ball_pathing_model,                         // NOLINT
-          "/root/models/ball_unet.engine",                       // NOLINT
+          "/root/models/ball_unet_rgb.engine",                       // NOLINT
           "TensorRT U-Net engine; empty disables ball pathing");  // NOLINT
 ABSL_FLAG(std::string, ball_pathing_input_mode, "rgb",
           "U-Net input mode: rgb or grayscale");

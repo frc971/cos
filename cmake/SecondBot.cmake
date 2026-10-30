@@ -9,7 +9,8 @@ add_custom_target(second-bot
     COMMAND ${CMAKE_COMMAND} -E echo "Deploying binaries, configs, and U-Net engine to root@10.9.71.11:/root..."
     
     COMMAND ssh root@10.9.71.11 "mkdir -p /root/models"
-    COMMAND rsync -avz --compress-level=9 --info=progress2 --checksum "${SECOND_BOT_ENGINE}" root@10.9.71.11:/root/models/ball_unet.engine
+    COMMAND rsync -avz --compress-level=9 --info=progress2 --checksum "${CMAKE_SOURCE_DIR}/models/" root@10.9.71.11:/root/models/
+    COMMAND rsync -avz --compress-level=9 --info=progress2 --checksum "${SECOND_BOT_ENGINE}" root@10.9.71.11:/root/models/ball_unet_rgb.engine
 
     COMMAND rsync -avz --compress-level=9 --info=progress2 --checksum --partial --delete ${CMAKE_BINARY_DIR}/tests/ root@10.9.71.11:/root/tests/
     COMMAND rsync -avz --compress-level=9 --info=progress2 --checksum --partial --delete ${CMAKE_BINARY_DIR}/main/ root@10.9.71.11:/root/main/

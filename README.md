@@ -51,9 +51,11 @@ constants, and service files:
 cmake --build build --target second-bot
 ```
 
-This uploads `models/ball_unet_rgb.engine` to
-`root@10.9.71.11:/root/models/ball_unet.engine`, the service's configured model
-path. To use a different engine, configure CMake with
+All deployment targets (`second-bot`, `vision-bot`, and `dev-orin`) upload
+all files in `models/` to `/root/models/` on their respective hosts, including
+both RGB and grayscale engines and ONNX models. Second-bot's service uses
+`/root/models/ball_unet_rgb.engine`. To override that engine during deployment,
+configure CMake with
 `-DSECOND_BOT_ENGINE=/absolute/path/to/ball_unet.engine`.
 
 For existing build directories, select the new RGB default explicitly:
@@ -66,7 +68,8 @@ cmake -S . -B build -DSECOND_BOT_ENGINE="$PWD/models/ball_unet_rgb.engine"
 interleaved RGB, and GPU preprocessing resizes it into three normalized float
 planes. The node's constructor receives an explicit input mode and checks that
 the engine matches it. To use the grayscale model, deploy
-`models/ball_unet.engine` via `SECOND_BOT_ENGINE` and change the service flag to
+the included `models/ball_unet.engine` and set the service flags to
+`--ball_pathing_model=/root/models/ball_unet.engine` and
 `--ball_pathing_input_mode=grayscale`. `ball_pathing_disk_replay` accepts the
 same input-mode flag, alongside its `--model_path` option.
 
