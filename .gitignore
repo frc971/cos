@@ -11,6 +11,8 @@ bos-logs/
 **/*.engine
 !/models/ball_unet.onnx
 !/models/ball_unet.engine
+!/models/ball_unet_rgb.onnx
+!/models/ball_unet_rgb.engine
 **/__pycache__/
 .cache
 .idea/

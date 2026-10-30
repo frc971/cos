@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Export the trained grayscale U-Net to ONNX, build its FP16 TensorRT engine on
+# Export the trained U-Net to ONNX, build its FP16 TensorRT engine on
 # vision-bot, and download a copy. With no checkpoint argument the known model
 # is streamed from yasencomp.
 #
 # Usage: scripts/export_unet_engine.sh [CHECKPOINT.pt] [OUTPUT.engine]
+# Set INPUT_MODE=rgb for the pinned three-channel model (default: grayscale).
 
 set -Eeuo pipefail
 
@@ -12,13 +13,29 @@ if [[ $# -gt 2 ]]; then
   exit 2
 fi
 
-EXPECTED_SHA256=0d2d33035a8618f521e435855dfa41f0a0dcc10e2e42adbd6ecb11e0399f1c1e
+INPUT_MODE="${INPUT_MODE:-grayscale}"
+case "${INPUT_MODE}" in
+  grayscale)
+    EXPECTED_SHA256=0d2d33035a8618f521e435855dfa41f0a0dcc10e2e42adbd6ecb11e0399f1c1e
+    default_checkpoint=/home/charlie/charlie_home/ball-segmentation/artifacts/training-grayscale/best.pt
+    default_engine=ball_unet.engine
+    ;;
+  rgb)
+    EXPECTED_SHA256=dcced817d26316f46f6c324a90ccc796849381f5b59ad28a5697efe44022436e
+    default_checkpoint=/home/charlie/charlie_home/ball-segmentation/artifacts/training/best.pt
+    default_engine=ball_unet_rgb.engine
+    ;;
+  *)
+    echo "INPUT_MODE must be grayscale or rgb" >&2
+    exit 2
+    ;;
+esac
 SOURCE_HOST="${SOURCE_HOST:-yasencomp}"
-SOURCE_CHECKPOINT="${SOURCE_CHECKPOINT:-/home/charlie/charlie_home/ball-segmentation/artifacts/training-grayscale/best.pt}"
+SOURCE_CHECKPOINT="${SOURCE_CHECKPOINT:-${default_checkpoint}}"
 ORIN_HOST="${ORIN_HOST:-root@10.99.72.11}"
-REMOTE_ENGINE="${REMOTE_ENGINE:-/root/gamepiece_models/ball_unet.engine}"
+REMOTE_ENGINE="${REMOTE_ENGINE:-/root/gamepiece_models/${default_engine}}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
-OUTPUT_ENGINE="${2:-ball_unet.engine}"
+OUTPUT_ENGINE="${2:-${default_engine}}"
 ONNX_PATH="${ONNX_PATH:-${OUTPUT_ENGINE%.*}.onnx}"
 
 temporary_checkpoint=""
@@ -51,7 +68,7 @@ fi
 
 mkdir -p -- "$(dirname -- "${ONNX_PATH}")" "$(dirname -- "${OUTPUT_ENGINE}")"
 echo "Exporting fixed-shape ONNX to ${ONNX_PATH}"
-"${PYTHON_BIN}" - "${checkpoint}" "${ONNX_PATH}" <<'PY'
+"${PYTHON_BIN}" - "${checkpoint}" "${ONNX_PATH}" "${INPUT_MODE}" <<'PY'
 import sys
 from pathlib import Path
 
@@ -80,11 +97,11 @@ class DoubleConv(nn.Sequential):
 
 
 class UNet(nn.Module):
-    def __init__(self):
+    def __init__(self, input_channels):
         super().__init__()
         widths = [16, 32, 64, 128, 256]
         self.down = nn.ModuleList(
-            DoubleConv(i, o) for i, o in zip([1] + widths[:-1], widths)
+            DoubleConv(i, o) for i, o in zip([input_channels] + widths[:-1], widths)
         )
         self.up = nn.ModuleList(
             DoubleConv(i + o, o) for i, o in zip(widths[:0:-1], widths[-2::-1])
@@ -106,14 +123,18 @@ class UNet(nn.Module):
         return self.head(value).sigmoid()
 
 
-checkpoint_path, output_path = map(Path, sys.argv[1:])
+checkpoint_path, output_path = map(Path, sys.argv[1:3])
+input_mode = sys.argv[3]
+input_channels = {"grayscale": 1, "rgb": 3}[input_mode]
 saved = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
 config = saved.get("config", {})
-if config.get("input_channels") != 1 or config.get("input_mode") != "grayscale":
-    raise SystemExit("Checkpoint is not the expected one-channel grayscale model")
-model = UNet().eval()
+# Original RGB checkpoints predate input-mode metadata.
+if (config.get("input_channels", 3) != input_channels or
+        config.get("input_mode", "rgb") != input_mode):
+    raise SystemExit(f"Checkpoint is not the expected {input_mode} model")
+model = UNet(input_channels).eval()
 model.load_state_dict(saved["model"], strict=True)
-sample = torch.zeros(1, 1, 400, 640)
+sample = torch.zeros(1, input_channels, 400, 640)
 with torch.inference_mode():
     expected = model(sample)
 torch.onnx.export(
@@ -132,7 +153,7 @@ input_dims = [dimension.dim_value for dimension in
               graph.graph.input[0].type.tensor_type.shape.dim]
 output_dims = [dimension.dim_value for dimension in
                graph.graph.output[0].type.tensor_type.shape.dim]
-if input_dims != [1, 1, 400, 640] or output_dims != [1, 1, 400, 640]:
+if input_dims != [1, input_channels, 400, 640] or output_dims != [1, 1, 400, 640]:
     raise SystemExit(f"Unexpected ONNX shapes: input={input_dims}, output={output_dims}")
 if not torch.isfinite(expected).all() or expected.min() < 0 or expected.max() > 1:
     raise SystemExit("Export source produced invalid probabilities")
