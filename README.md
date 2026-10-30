@@ -5,9 +5,11 @@ Camera configuration JSON stores extrinsic `rotation_x`, `rotation_y`, and
 `rotation_z` in degrees and translations in meters. Rotations are converted to
 radians immediately when loaded.
 
-## Vision-bot ball pathing
+## Second-bot ball pathing
 
-`vision_bot_main` runs the grayscale ball U-Net on the front camera and
+`vision_bot_main` handles AprilTag localization and camera streaming only.
+
+`second_bot_main` runs the grayscale ball U-Net on its gamepiece camera and
 publishes a robot-relative translation goal. The internal control-loop channel
 is `ball_pathing/velocity_goal`. NetworkTables publishes
 `/COS/BallVelocityGoal` as:
