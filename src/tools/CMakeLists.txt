@@ -41,6 +41,7 @@ target_sources(jpeg_disk_replay
 
 add_executable(ball_pathing_disk_replay ball_pathing_disk_replay.cc)
 target_link_libraries(ball_pathing_disk_replay PRIVATE
+  cos::ball_pathing_streamer_node
   cos::ball_pathing_node
   cos::get_earliest_timestamp
   cos::nvjpeg_decode_node

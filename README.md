@@ -35,6 +35,21 @@ speed limits with `--ball_minimum_speed_mps` and `--ball_maximum_speed_mps`;
 there is no direction to command, so the velocity is zero. The existing
 lost-target hold and invalid-goal stop behavior remain unchanged.
 
+Second-bot also serves an annotated MJPEG view at
+`http://<second-bot-address>:5805/stream`. It overlays the selected cluster
+center, a floor-space circle using the configured cluster radius, velocity,
+and tracking/held status. Projection uses the camera JSON's intrinsics,
+distortion, and full mount pose. Invalid goals show `NO TARGET` without a
+target circle. Frames and goals come from the same control-loop context.
+Rendering runs on a dedicated worker at up to 15 FPS, dropping visualization
+work when busy rather than delaying inference.
+
+Use `--ball_pathing_stream_port=0` to disable this view, or
+`--ball_pathing_stream_rotate_180` to display an upside-down camera upright;
+the annotations rotate with the image. The original camera streams remain
+available. Disk replay supports the same overlay via `--stream_port=5805`
+and optional `--stream_rotate_180` (streaming is disabled by default there).
+
 The segmentation mask is sampled and projected onto the floor in robot
 coordinates. Each sample is weighted by its projected floor area, which
 compensates for perspective so nearby large masks do not automatically beat

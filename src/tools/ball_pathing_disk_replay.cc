@@ -15,6 +15,7 @@
 #include "control_loop/rio_clock.h"
 #include "control_loop/thread_pool.h"
 #include "gamepiece/ball_pathing_node.h"
+#include "streamer/ball_pathing_streamer_node.h"
 #include "utils/stop.h"
 
 using namespace std::chrono_literals;
@@ -27,6 +28,9 @@ ABSL_FLAG(std::string, ball_pathing_input_mode, "rgb",
 ABSL_FLAG(std::string, camera_config,
           "/root/constants/second_bot/color.json",
           "Camera intrinsics and extrinsics JSON");
+ABSL_FLAG(int, stream_port, 0, "Annotated MJPEG port; 0 disables streaming");
+ABSL_FLAG(bool, stream_rotate_180, false,
+          "Rotate annotated image and overlay 180 degrees for display");
 ABSL_FLAG(double, cluster_radius_m, 1.0,
           "Robot-frame radius used to score and centroid ball evidence");
 
@@ -84,6 +88,13 @@ auto main(int argc, char** argv) -> int {
   loop.RegisterDependencyNode(disk);
   loop.RegisterNode(decode);
   loop.RegisterNode(pathing);
+  if (absl::GetFlag(FLAGS_stream_port) != 0) {
+    auto stream = std::make_shared<streamer::BallPathingStreamerNode>(
+        kJpeg, kGoal, absl::GetFlag(FLAGS_camera_config),
+        pathing_config.cluster_radius_m, "/stream", absl::GetFlag(FLAGS_stream_port),
+        absl::GetFlag(FLAGS_stream_rotate_180));
+    loop.RegisterNode(stream);
+  }
   loop.Start();
   stop::WaitUntilStop();
   loop.Stop();

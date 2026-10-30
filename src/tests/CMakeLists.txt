@@ -191,3 +191,8 @@ target_link_libraries(unambiguous_solver_node_test PRIVATE
   cos::unambiguous_solver_node
   cos::simulation_position_sender_node
 )
+
+add_executable(ball_pathing_streamer_node_test ball_pathing_streamer_node_test.cc)
+target_link_libraries(ball_pathing_streamer_node_test PRIVATE
+  cos::ball_pathing_streamer_node opencv_calib3d GTest::gtest_main)
+add_test(NAME ball_pathing_streamer_node_test COMMAND ball_pathing_streamer_node_test)

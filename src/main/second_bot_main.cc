@@ -20,6 +20,7 @@
 #include "simulation/simulation_position_sender_node.h"
 #include "streamer/jpeg_buffer_streamer_node.h"
 #include "streamer/ball_velocity_goal_streamer_node.h"
+#include "streamer/ball_pathing_streamer_node.h"
 #include "streamer/position_estimate_rio_streamer_node.h"
 #include "utils/stop.h"
 
@@ -40,6 +41,10 @@ ABSL_FLAG(std::string, ball_pathing_model,                         // NOLINT
           "TensorRT U-Net engine; empty disables ball pathing");  // NOLINT
 ABSL_FLAG(std::string, ball_pathing_input_mode, "rgb",
           "U-Net input mode: rgb or grayscale");
+ABSL_FLAG(int, ball_pathing_stream_port, 5805,
+          "Annotated ball pathing MJPEG port; 0 disables the stream");
+ABSL_FLAG(bool, ball_pathing_stream_rotate_180, false,
+          "Rotate the annotated image and overlay 180 degrees for display");
 ABSL_FLAG(double, ball_probability_threshold, 0.5,                 // NOLINT
           "U-Net foreground probability threshold");             // NOLINT
 ABSL_FLAG(double, ball_cluster_radius_m, 0.4,                      // NOLINT
@@ -198,6 +203,14 @@ auto main(int argc, char** argv) -> int {
         kBallImage, kBallGoal, ball_model, kColorConfig, input_mode, thread_pool,
         ball_config);
     control_loop.RegisterNode(ball_pathing_node);
+    const int ball_stream_port = absl::GetFlag(FLAGS_ball_pathing_stream_port);
+    if (ball_stream_port != 0) {
+      auto ball_streamer = std::make_shared<streamer::BallPathingStreamerNode>(
+          kColorJpeg, kBallGoal, kColorConfig, ball_config.cluster_radius_m,
+          "/stream", ball_stream_port,
+          absl::GetFlag(FLAGS_ball_pathing_stream_rotate_180));
+      control_loop.RegisterNode(ball_streamer);
+    }
     auto ball_goal_streamer =
         std::make_shared<streamer::BallVelocityGoalStreamerNode>(kBallGoal,
                                                                   "/COS");
