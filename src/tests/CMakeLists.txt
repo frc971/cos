@@ -29,6 +29,11 @@ target_compile_definitions(ball_pathing_node_test PRIVATE
 )
 add_test(NAME ball_pathing_node_test COMMAND ball_pathing_node_test)
 
+add_executable(unet_preprocess_test unet_preprocess_test.cc)
+target_link_libraries(unet_preprocess_test PRIVATE
+  cos::ball_pathing_node GTest::gtest_main)
+add_test(NAME unet_preprocess_test COMMAND unet_preprocess_test)
+
 add_executable(full_robot_gamepiece_pipeline_test
   full_robot_gamepiece_pipeline_test.cc)
 target_link_libraries(full_robot_gamepiece_pipeline_test PRIVATE

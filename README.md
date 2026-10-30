@@ -9,7 +9,7 @@ radians immediately when loaded.
 
 `vision_bot_main` handles AprilTag localization and camera streaming only.
 
-`second_bot_main` runs the grayscale ball U-Net on its gamepiece camera and
+`second_bot_main` runs the RGB ball U-Net on its gamepiece camera and
 publishes a robot-relative translation goal. The internal control-loop channel
 is `ball_pathing/velocity_goal`. NetworkTables publishes
 `/COS/BallVelocityGoal` as:
@@ -39,10 +39,24 @@ constants, and service files:
 cmake --build build --target second-bot
 ```
 
-This uploads `models/ball_unet.engine` to
+This uploads `models/ball_unet_rgb.engine` to
 `root@10.9.71.11:/root/models/ball_unet.engine`, the service's configured model
 path. To use a different engine, configure CMake with
 `-DSECOND_BOT_ENGINE=/absolute/path/to/ball_unet.engine`.
+
+For existing build directories, select the new RGB default explicitly:
+
+```sh
+cmake -S . -B build -DSECOND_BOT_ENGINE="$PWD/models/ball_unet_rgb.engine"
+```
+
+`--ball_pathing_input_mode=rgb` is the runtime default. The decoder produces
+interleaved RGB, and GPU preprocessing resizes it into three normalized float
+planes. The node's constructor receives an explicit input mode and checks that
+the engine matches it. To use the grayscale model, deploy
+`models/ball_unet.engine` via `SECOND_BOT_ENGINE` and change the service flag to
+`--ball_pathing_input_mode=grayscale`. `ball_pathing_disk_replay` accepts the
+same input-mode flag, alongside its `--model_path` option.
 
 To regenerate an engine:
 
@@ -57,3 +71,5 @@ SHA-256, builds FP16 on vision-bot, installs
 `/root/gamepiece_models/ball_unet.engine`, and downloads a local copy. Pass a
 checkpoint and output path explicitly to override the defaults. Set
 `--ball_pathing_model=` to disable the pipeline for diagnostics.
+Set `INPUT_MODE=rgb` when exporting the three-channel model; its default local
+output is `ball_unet_rgb.engine`.

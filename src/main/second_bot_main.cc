@@ -3,6 +3,7 @@
 
 #include "absl/flags/flag.h"
 #include "absl/flags/parse.h"
+#include "absl/log/check.h"
 #include "absl/log/globals.h"
 #include "absl/log/initialize.h"
 #include "apriltag/nvidia_apriltag_detector_node.h"
@@ -37,6 +38,8 @@ ABSL_FLAG(                                                        // NOLINT
 ABSL_FLAG(std::string, ball_pathing_model,                         // NOLINT
           "/root/models/ball_unet.engine",                       // NOLINT
           "TensorRT U-Net engine; empty disables ball pathing");  // NOLINT
+ABSL_FLAG(std::string, ball_pathing_input_mode, "rgb",
+          "U-Net input mode: rgb or grayscale");
 ABSL_FLAG(double, ball_probability_threshold, 0.5,                 // NOLINT
           "U-Net foreground probability threshold");             // NOLINT
 ABSL_FLAG(double, ball_cluster_radius_m, 0.4,                      // NOLINT
@@ -151,15 +154,24 @@ auto main(int argc, char** argv) -> int {
                       rio_sender_node, pva_detection, image_log_path);
   }
 
+  const std::string input_mode_name = absl::GetFlag(FLAGS_ball_pathing_input_mode);
+  CHECK(input_mode_name == "rgb" || input_mode_name == "grayscale")
+      << "ball_pathing_input_mode must be rgb or grayscale";
+  const auto input_mode = input_mode_name == "rgb"
+                              ? gamepiece::UnetInputMode::kRgb
+                              : gamepiece::UnetInputMode::kGrayscale;
+  const auto decode_format = input_mode == gamepiece::UnetInputMode::kRgb
+                                 ? NVJPEG_OUTPUT_RGBI : NVJPEG_OUTPUT_Y;
+
   const std::string ball_model = absl::GetFlag(FLAGS_ball_pathing_model);
   if (!ball_model.empty()) {
     constexpr std::string_view kColorJpeg = "jpeg_buffer:dev_orin_color";
-    constexpr std::string_view kBallImage = "ball_pathing:grayscale_color";
+    constexpr std::string_view kBallImage = "ball_pathing:decoded_color";
     constexpr std::string_view kBallGoal = "ball_pathing/velocity_goal";
     const std::string kColorConfig =
         "/root/constants/second_bot/color.json";
     auto ball_decode_node = std::make_shared<camera::NvjpegDecodeNode>(
-        kColorJpeg, kBallImage, NVJPEG_OUTPUT_Y, thread_pool);
+        kColorJpeg, kBallImage, decode_format, thread_pool);
     control_loop.RegisterNode(ball_decode_node);
 
     gamepiece::BallPathingConfig ball_config{
@@ -178,7 +190,7 @@ auto main(int argc, char** argv) -> int {
             absl::GetFlag(FLAGS_ball_hold_seconds)),
     };
     auto ball_pathing_node = std::make_shared<gamepiece::BallPathingNode>(
-        kBallImage, kBallGoal, ball_model, kColorConfig, thread_pool,
+        kBallImage, kBallGoal, ball_model, kColorConfig, input_mode, thread_pool,
         ball_config);
     control_loop.RegisterNode(ball_pathing_node);
     auto ball_goal_streamer =

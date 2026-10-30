@@ -5,7 +5,7 @@ Description=second-bot
 Type=simple
 User=root
 WorkingDirectory=/root
-ExecStart=/root/main/second_bot_main --nopva_detection --max_context=2 --ball_pathing_model=/root/models/ball_unet.engine --ball_cluster_radius_m=0.4
+ExecStart=/root/main/second_bot_main --nopva_detection --max_context=2 --ball_pathing_model=/root/models/ball_unet.engine --ball_pathing_input_mode=rgb --ball_cluster_radius_m=0.4
 Restart=on-failure
 RestartSec=2
 

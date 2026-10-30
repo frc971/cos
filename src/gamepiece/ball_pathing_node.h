@@ -16,6 +16,7 @@
 #include "control_loop/node.h"
 #include "control_loop/thread_pool.h"
 #include "gamepiece/ball_pathing_logic.h"
+#include "gamepiece/unet_preprocess.h"
 #include "logging/log_registration.h"
 
 namespace gamepiece {
@@ -54,7 +55,7 @@ struct BallPathingConfig {
   std::chrono::duration<double> hold_duration{0.5};
 };
 
-// Runs the grayscale U-Net and converts its segmentation into a robot-relative
+// Runs a grayscale or RGB U-Net and converts its segmentation into a robot-relative
 // translational velocity goal. Robot coordinates are +X forward and +Y left.
 class BallPathingNode final : public control_loop::INode,
                               private nvinfer1::ILogger {
@@ -62,7 +63,7 @@ class BallPathingNode final : public control_loop::INode,
   BallPathingNode(std::string_view input_path, std::string_view output_path,
                   const std::string& model_path,
                   const std::string& camera_config_path,
-                  control_loop::ThreadPool& thread_pool,
+                  UnetInputMode input_mode, control_loop::ThreadPool& thread_pool,
                   BallPathingConfig config = {});
   ~BallPathingNode() override;
 
@@ -92,6 +93,7 @@ class BallPathingNode final : public control_loop::INode,
   std::string output_path_;
   control_loop::ThreadPool& thread_pool_;
   BallPathingConfig config_;
+  UnetInputMode input_mode_;
   camera::Intrinsics intrinsics_;
   cv::Matx44d camera_to_robot_;
   std::vector<std::function<void(const control_loop::Context&)>> callbacks_;

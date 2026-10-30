@@ -20,8 +20,10 @@
 using namespace std::chrono_literals;
 
 ABSL_FLAG(std::string, log_path, "", "Directory of timestamped JPEG frames");
-ABSL_FLAG(std::string, model_path, "/root/gamepiece_models/ball_unet.engine",
+ABSL_FLAG(std::string, model_path, "/root/models/ball_unet.engine",
           "TensorRT U-Net engine");
+ABSL_FLAG(std::string, ball_pathing_input_mode, "rgb",
+          "U-Net input mode: rgb or grayscale");
 ABSL_FLAG(std::string, camera_config,
           "/root/constants/second_bot/color.json",
           "Camera intrinsics and extrinsics JSON");
@@ -33,6 +35,15 @@ auto main(int argc, char** argv) -> int {
   const std::string log_path = absl::GetFlag(FLAGS_log_path);
   CHECK(!log_path.empty());
 
+  const std::string input_mode_name = absl::GetFlag(FLAGS_ball_pathing_input_mode);
+  CHECK(input_mode_name == "rgb" || input_mode_name == "grayscale")
+      << "ball_pathing_input_mode must be rgb or grayscale";
+  const auto input_mode = input_mode_name == "rgb"
+                              ? gamepiece::UnetInputMode::kRgb
+                              : gamepiece::UnetInputMode::kGrayscale;
+  const auto decode_format = input_mode == gamepiece::UnetInputMode::kRgb
+                                 ? NVJPEG_OUTPUT_RGBI : NVJPEG_OUTPUT_Y;
+
   stop::RegisterHandler();
   control_loop::RioClock::EnableSimulation();
   // Match the production vision loop so disk replay does not overwrite
@@ -41,17 +52,17 @@ auto main(int argc, char** argv) -> int {
   control_loop::ThreadPool thread_pool(2);
 
   constexpr std::string_view kJpeg = "ball_pathing/disk_jpeg";
-  constexpr std::string_view kGray = "ball_pathing/disk_gray";
+  constexpr std::string_view kImage = "ball_pathing/disk_image";
   constexpr std::string_view kGoal = "ball_pathing/velocity_goal";
   auto disk = std::make_shared<camera::UVCDiskCameraNode>(
       log_path, kJpeg, camera::GetEarliestTimestamp(log_path));
   auto decode = std::make_shared<camera::NvjpegDecodeNode>(
-      kJpeg, kGray, NVJPEG_OUTPUT_Y, thread_pool);
+      kJpeg, kImage, decode_format, thread_pool);
   gamepiece::BallPathingConfig pathing_config;
   pathing_config.cluster_radius_m = absl::GetFlag(FLAGS_cluster_radius_m);
   auto pathing = std::make_shared<gamepiece::BallPathingNode>(
-      kGray, kGoal, absl::GetFlag(FLAGS_model_path),
-      absl::GetFlag(FLAGS_camera_config), thread_pool, pathing_config);
+      kImage, kGoal, absl::GetFlag(FLAGS_model_path),
+      absl::GetFlag(FLAGS_camera_config), input_mode, thread_pool, pathing_config);
 
   std::atomic_size_t frames{0};
   std::atomic_size_t valid{0};

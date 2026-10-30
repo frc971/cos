@@ -2,7 +2,7 @@ include(${CMAKE_CURRENT_LIST_DIR}/TargetUtils.cmake)
 
 get_all_targets(ALL_PROJECT_TARGETS ${CMAKE_CURRENT_SOURCE_DIR})
 
-set(SECOND_BOT_ENGINE "${CMAKE_SOURCE_DIR}/models/ball_unet.engine" CACHE FILEPATH
+set(SECOND_BOT_ENGINE "${CMAKE_SOURCE_DIR}/models/ball_unet_rgb.engine" CACHE FILEPATH
     "TensorRT U-Net engine to deploy to second-bot")
 
 add_custom_target(second-bot

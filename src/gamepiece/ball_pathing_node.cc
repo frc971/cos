@@ -24,7 +24,7 @@ namespace {
 
 constexpr int kInputWidth = 640;
 constexpr int kInputHeight = 400;
-constexpr size_t kInputElements = kInputWidth * kInputHeight;
+constexpr size_t kOutputElements = kInputWidth * kInputHeight;
 
 auto LoadEngine(const std::string& path) -> std::vector<char> {
   std::ifstream input(path, std::ios::binary);
@@ -35,29 +35,24 @@ auto LoadEngine(const std::string& path) -> std::vector<char> {
           std::istreambuf_iterator<char>()};
 }
 
-auto TensorVolume(const nvinfer1::Dims& dimensions) -> size_t {
-  size_t result = 1;
-  for (int i = 0; i < dimensions.nbDims; ++i) {
-    CHECK_GT(dimensions.d[i], 0) << "Dynamic TensorRT tensors are unsupported";
-    result *= static_cast<size_t>(dimensions.d[i]);
-  }
-  return result;
-}
-
 }  // namespace
 
 BallPathingNode::BallPathingNode(
     std::string_view input_path, std::string_view output_path,
     const std::string& model_path, const std::string& camera_config_path,
-    control_loop::ThreadPool& thread_pool, BallPathingConfig config)
+    UnetInputMode input_mode, control_loop::ThreadPool& thread_pool,
+    BallPathingConfig config)
     : input_path_(input_path),
       output_path_(output_path),
       thread_pool_(thread_pool),
       config_(config),
+      input_mode_(input_mode),
       intrinsics_(camera_config_path),
       dependencies_({{input_path_, typeid(camera::DecodedJpegBuffer)}}),
       publications_({control_loop::MessageDescriptor::Publication<
           BallVelocityGoalMessage>(output_path_)}) {
+  CHECK(input_mode_ == UnetInputMode::kGrayscale ||
+        input_mode_ == UnetInputMode::kRgb);
   CHECK_GE(config_.probability_threshold, 0.0F);
   CHECK_LE(config_.probability_threshold, 1.0F);
   CHECK_GT(config_.mask_sample_stride, 0);
@@ -90,10 +85,19 @@ BallPathingNode::BallPathingNode(
   }
   CHECK(!input_tensor_name_.empty());
   CHECK(!output_tensor_name_.empty());
-  CHECK_EQ(TensorVolume(engine_->getTensorShape(input_tensor_name_.c_str())),
-           kInputElements);
-  CHECK_EQ(TensorVolume(engine_->getTensorShape(output_tensor_name_.c_str())),
-           kInputElements);
+  const auto input_shape = engine_->getTensorShape(input_tensor_name_.c_str());
+  CHECK_EQ(input_shape.nbDims, 4);
+  CHECK_EQ(input_shape.d[0], 1);
+  CHECK_EQ(input_shape.d[1], static_cast<int>(input_mode_))
+      << "Engine channels do not match the constructor input mode";
+  CHECK_EQ(input_shape.d[2], kInputHeight);
+  CHECK_EQ(input_shape.d[3], kInputWidth);
+  const auto output_shape = engine_->getTensorShape(output_tensor_name_.c_str());
+  CHECK_EQ(output_shape.nbDims, 4);
+  CHECK_EQ(output_shape.d[0], 1);
+  CHECK_EQ(output_shape.d[1], 1);
+  CHECK_EQ(output_shape.d[2], kInputHeight);
+  CHECK_EQ(output_shape.d[3], kInputWidth);
   CHECK_EQ(engine_->getTensorDataType(input_tensor_name_.c_str()),
            nvinfer1::DataType::kFLOAT);
   CHECK_EQ(engine_->getTensorDataType(output_tensor_name_.c_str()),
@@ -102,10 +106,11 @@ BallPathingNode::BallPathingNode(
   context_ = engine_->createExecutionContext();
   CHECK(context_ != nullptr);
   CHECK_EQ(cudaMalloc(reinterpret_cast<void**>(&input_buffer_),
-                      kInputElements * sizeof(float)),
+                      kOutputElements * static_cast<int>(input_mode_) *
+                          sizeof(float)),
            cudaSuccess);
   CHECK_EQ(cudaMalloc(reinterpret_cast<void**>(&output_buffer_),
-                      kInputElements * sizeof(float)),
+                      kOutputElements * sizeof(float)),
            cudaSuccess);
   CHECK_EQ(cudaStreamCreate(&stream_), cudaSuccess);
 }
@@ -141,9 +146,13 @@ auto BallPathingNode::CreateCallback()
     }
     thread_pool_.Submit(
         [this, context, frame]() -> void {
-          CHECK_EQ(frame->output_format, NVJPEG_OUTPUT_Y);
-          CHECK_GE(frame->stride, static_cast<size_t>(frame->width));
-          const cv::cuda::GpuMat image(frame->height, frame->width, CV_8UC1,
+          const bool rgb = input_mode_ == UnetInputMode::kRgb;
+          CHECK_EQ(frame->output_format,
+                   rgb ? NVJPEG_OUTPUT_RGBI : NVJPEG_OUTPUT_Y);
+          CHECK_GE(frame->stride, static_cast<size_t>(frame->width) *
+                                      static_cast<int>(input_mode_));
+          const cv::cuda::GpuMat image(frame->height, frame->width,
+                                       rgb ? CV_8UC3 : CV_8UC1,
                                        frame->destination.channel[0],
                                        frame->stride);
           BallVelocityGoalMessage result;
@@ -178,13 +187,13 @@ auto BallPathingNode::GetPublications() const
 auto BallPathingNode::RunInference(const cv::cuda::GpuMat& image,
                                    cv::Size original_size) -> cv::Mat1b {
   CHECK_EQ(PreprocessUnetImage(image.data, image.cols, image.rows, image.step,
-                               input_buffer_, kInputWidth, kInputHeight,
-                               stream_),
+                               input_mode_, input_buffer_, kInputWidth,
+                               kInputHeight, stream_),
            cudaSuccess);
   CHECK(context_->setTensorAddress(input_tensor_name_.c_str(), input_buffer_));
   CHECK(context_->setTensorAddress(output_tensor_name_.c_str(), output_buffer_));
   CHECK(context_->enqueueV3(stream_));
-  std::vector<float> probabilities(kInputElements);
+  std::vector<float> probabilities(kOutputElements);
   CHECK_EQ(cudaMemcpyAsync(probabilities.data(), output_buffer_,
                            probabilities.size() * sizeof(float),
                            cudaMemcpyDeviceToHost, stream_),

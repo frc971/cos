@@ -89,6 +89,7 @@ target_sources(second_bot_main
     second_bot_main.cc
 )
 target_link_libraries(second_bot_main PRIVATE
+  absl::check
   cos::ball_pathing_node
   cos::ball_velocity_goal_streamer_node
   cos::jpeg_buffer_streamer_node
