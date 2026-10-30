@@ -9,6 +9,11 @@ radians immediately when loaded.
 
 `vision_bot_main` handles AprilTag localization and camera streaming only.
 
+Second-bot uses only its front, left, and right cameras for AprilTag
+localization. Its color camera is reserved for ball pathing, raw streaming,
+and image logging; it does not contribute detections or localization
+timestamps. Color capture remains available when ball pathing is disabled.
+
 `second_bot_main` runs the RGB ball U-Net on its gamepiece camera and
 publishes a robot-relative translation goal. The internal control-loop channel
 is `ball_pathing/velocity_goal`. NetworkTables publishes

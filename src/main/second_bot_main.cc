@@ -77,18 +77,15 @@ void AddCameraPipeline(
     localization::UnambiguousSolverNode& solver_node,
     const std::shared_ptr<streamer::PositionEstimateRioStreamerNode>&
         rio_sender_node,
-    bool pva_detection, const std::string& log_path) {
+    bool pva_detection, const std::string& log_path,
+    bool use_for_localization) {
   const camera::UVCCameraConfig config{config_path};
   const std::string jpeg_channel = "jpeg_buffer:" + config.name;
-  const std::string decoded_channel = "hardware_decoded_image:" + config.name;
-  const std::string detections_channel =
-      "hardware_apriltag_detections:" + config.name;
 
   auto uvc_camera_node = std::make_shared<camera::UVCCameraNode>(
       jpeg_channel, camera::UVCCameraConfig{config_path});
   uvc_camera_node->Start();
   control_loop.RegisterDependencyNode(uvc_camera_node);
-  rio_sender_node->AddCamera(*uvc_camera_node);
 
   auto jpeg_buffer_streamer_node =
       std::make_shared<streamer::JpegBufferStreamerNode>(
@@ -104,6 +101,12 @@ void AddCameraPipeline(
     control_loop.RegisterNode(jpeg_buffer_logger_node);
   }
 
+  if (!use_for_localization) return;
+
+  rio_sender_node->AddCamera(*uvc_camera_node);
+  const std::string decoded_channel = "hardware_decoded_image:" + config.name;
+  const std::string detections_channel =
+      "hardware_apriltag_detections:" + config.name;
   auto hardware_decode_node = std::make_shared<camera::NvjpegFdDecodeNode>(
       jpeg_channel, decoded_channel, thread_pool);
   control_loop.RegisterNode(hardware_decode_node);
@@ -136,11 +139,11 @@ auto main(int argc, char** argv) -> int {
   control_loop.SetMaxContext(absl::GetFlag(FLAGS_max_context));
   control_loop::ThreadPool thread_pool;
 
-  const std::vector<std::string> paths{
+  const std::vector<std::string> localization_paths{
       "/root/constants/second_bot/front_camera.json",
       "/root/constants/second_bot/left_camera.json",
-      "/root/constants/second_bot/right_camera.json",
-      "/root/constants/second_bot/color.json"};
+      "/root/constants/second_bot/right_camera.json"};
+  const std::string color_config_path = "/root/constants/second_bot/color.json";
 
   auto solver_node =
       std::make_shared<localization::UnambiguousSolverNode>("pose");
@@ -156,10 +159,15 @@ auto main(int argc, char** argv) -> int {
   const bool pva_detection = absl::GetFlag(FLAGS_pva_detection);
   const std::string image_log_path =
       absl::GetFlag(FLAGS_log_images) ? control_loop::GetLogPath() : "";
-  for (const auto& path : paths) {
+  for (const auto& path : localization_paths) {
     AddCameraPipeline(path, port++, control_loop, thread_pool, *solver_node,
-                      rio_sender_node, pva_detection, image_log_path);
+                      rio_sender_node, pva_detection, image_log_path, true);
   }
+  // Keep color capture, raw streaming, and logging independent of localization
+  // and available even when the ball model is disabled.
+  AddCameraPipeline(color_config_path, port, control_loop, thread_pool,
+                    *solver_node, rio_sender_node, pva_detection,
+                    image_log_path, false);
 
   const std::string input_mode_name = absl::GetFlag(FLAGS_ball_pathing_input_mode);
   CHECK(input_mode_name == "rgb" || input_mode_name == "grayscale")
@@ -175,8 +183,6 @@ auto main(int argc, char** argv) -> int {
     constexpr std::string_view kColorJpeg = "jpeg_buffer:dev_orin_color";
     constexpr std::string_view kBallImage = "ball_pathing:decoded_color";
     constexpr std::string_view kBallGoal = "ball_pathing/velocity_goal";
-    const std::string kColorConfig =
-        "/root/constants/second_bot/color.json";
     auto ball_decode_node = std::make_shared<camera::NvjpegDecodeNode>(
         kColorJpeg, kBallImage, decode_format, thread_pool);
     control_loop.RegisterNode(ball_decode_node);
@@ -200,13 +206,13 @@ auto main(int argc, char** argv) -> int {
             absl::GetFlag(FLAGS_ball_hold_seconds)),
     };
     auto ball_pathing_node = std::make_shared<gamepiece::BallPathingNode>(
-        kBallImage, kBallGoal, ball_model, kColorConfig, input_mode, thread_pool,
-        ball_config);
+        kBallImage, kBallGoal, ball_model, color_config_path, input_mode,
+        thread_pool, ball_config);
     control_loop.RegisterNode(ball_pathing_node);
     const int ball_stream_port = absl::GetFlag(FLAGS_ball_pathing_stream_port);
     if (ball_stream_port != 0) {
       auto ball_streamer = std::make_shared<streamer::BallPathingStreamerNode>(
-          kColorJpeg, kBallGoal, kColorConfig, ball_config.cluster_radius_m,
+          kColorJpeg, kBallGoal, color_config_path, ball_config.cluster_radius_m,
           "/stream", ball_stream_port,
           absl::GetFlag(FLAGS_ball_pathing_stream_rotate_180));
       control_loop.RegisterNode(ball_streamer);
