@@ -97,16 +97,15 @@ auto ChooseBallCluster(const std::vector<BallCluster>& clusters,
   return best;
 }
 
-auto ComputeVelocity(const cv::Point2d& target, double gain_per_s,
-                     double maximum_speed_mps, double stop_radius_m)
+auto ComputeVelocity(const cv::Point2d& target, double forward_gain_per_s,
+                     double lateral_gain_per_s,
+                     double minimum_speed_mps, double maximum_speed_mps)
     -> cv::Point2d {
-  const double distance = cv::norm(target);
-  if (distance <= stop_radius_m) return {};
-  cv::Point2d velocity = target * gain_per_s;
+  cv::Point2d velocity{target.x * forward_gain_per_s,
+                       target.y * lateral_gain_per_s};
   const double speed = cv::norm(velocity);
-  if (speed > maximum_speed_mps) {
-    velocity *= maximum_speed_mps / speed;
-  }
+  if (speed == 0.0) return {};
+  velocity *= std::clamp(speed, minimum_speed_mps, maximum_speed_mps) / speed;
   return velocity;
 }
 

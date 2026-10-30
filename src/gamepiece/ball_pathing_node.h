@@ -48,9 +48,10 @@ struct BallPathingConfig {
   double cluster_radius_m = 1.0;
   double grid_resolution_m = 0.20;
   double nominal_ball_area_m2 = 0.018;
-  double velocity_gain_per_s = 1.5;
+  double forward_velocity_gain_per_s = 0.75;
+  double lateral_velocity_gain_per_s = 1.5;
+  double minimum_speed_mps = 1.0;
   double maximum_speed_mps = 1.5;
-  double stop_radius_m = 0.30;
   double switch_evidence_ratio = 1.25;
   std::chrono::duration<double> hold_duration{0.5};
 };

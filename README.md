@@ -23,6 +23,18 @@ Robot coordinates are +X forward and +Y left. When no cluster is visible, the
 last goal is marked `held` for 0.5 seconds; it then becomes invalid with zero
 velocity. Heading remains under roboRIO control.
 
+Velocity favors lateral correction: `vx = 0.75 * target_x` and
+`vy = 1.5 * target_y`, with robot-relative distances in meters and velocity in
+meters per second. For nonzero target offsets, the weighted vector is scaled
+to a total speed between 1.0 and 1.5 m/s so the robot keeps moving into the
+cluster instead of stopping near its center. Tune the gains using
+`--ball_forward_velocity_gain` and `--ball_lateral_velocity_gain` (inverse
+seconds). These replace the previous `--ball_velocity_gain` flag. Configure
+speed limits with `--ball_minimum_speed_mps` and `--ball_maximum_speed_mps`;
+`--ball_stop_radius_m` has been removed. If the target offset is exactly zero,
+there is no direction to command, so the velocity is zero. The existing
+lost-target hold and invalid-goal stop behavior remain unchanged.
+
 The segmentation mask is sampled and projected onto the floor in robot
 coordinates. Each sample is weighted by its projected floor area, which
 compensates for perspective so nearby large masks do not automatically beat

@@ -60,8 +60,11 @@ BallPathingNode::BallPathingNode(
   CHECK_GT(config_.cluster_radius_m, 0.0);
   CHECK_GT(config_.grid_resolution_m, 0.0);
   CHECK_GT(config_.nominal_ball_area_m2, 0.0);
+  CHECK_GT(config_.forward_velocity_gain_per_s, 0.0);
+  CHECK_GT(config_.lateral_velocity_gain_per_s, 0.0);
   CHECK_GT(config_.maximum_speed_mps, 0.0);
-  CHECK_GE(config_.stop_radius_m, 0.0);
+  CHECK_GE(config_.minimum_speed_mps, 0.0);
+  CHECK_LE(config_.minimum_speed_mps, config_.maximum_speed_mps);
   CHECK_GE(config_.switch_evidence_ratio, 1.0);
   CHECK_GE(config_.hold_duration.count(), 0.0);
 
@@ -305,8 +308,9 @@ auto BallPathingNode::Process(const cv::cuda::GpuMat& image, double timestamp)
   have_target_ = true;
   last_seen_ = std::chrono::steady_clock::now();
   const cv::Point2d velocity = internal::ComputeVelocity(
-      selected->centroid, config_.velocity_gain_per_s,
-      config_.maximum_speed_mps, config_.stop_radius_m);
+      selected->centroid, config_.forward_velocity_gain_per_s,
+      config_.lateral_velocity_gain_per_s,
+      config_.minimum_speed_mps, config_.maximum_speed_mps);
   last_goal_ = {};
   last_goal_.valid = true;
   last_goal_.vx_mps = velocity.x;

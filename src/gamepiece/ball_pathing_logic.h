@@ -25,8 +25,9 @@ auto ChooseBallCluster(const std::vector<BallCluster>& clusters,
                        double match_radius_m, double switch_evidence_ratio)
     -> std::optional<BallCluster>;
 
-auto ComputeVelocity(const cv::Point2d& target, double gain_per_s,
-                     double maximum_speed_mps, double stop_radius_m)
+auto ComputeVelocity(const cv::Point2d& target, double forward_gain_per_s,
+                     double lateral_gain_per_s,
+                     double minimum_speed_mps, double maximum_speed_mps)
     -> cv::Point2d;
 
 }  // namespace gamepiece::internal

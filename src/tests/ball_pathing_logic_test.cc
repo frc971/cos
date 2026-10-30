@@ -46,21 +46,59 @@ TEST(BallPathingLogicTest, KeepsTrackedClusterUntilMarginIsMet) {
   EXPECT_DOUBLE_EQ(selected->centroid.x, 5.0);
 }
 
-TEST(BallPathingLogicTest, StopsNearTargetAndLimitsSpeed) {
-  EXPECT_EQ(ComputeVelocity({0.2, 0.0}, 1.5, 1.5, 0.3), cv::Point2d());
+TEST(BallPathingLogicTest, MaintainsMinimumSpeedNearTargetAndLimitsMaximum) {
+  const cv::Point2d near = ComputeVelocity({0.2, 0.0}, 0.75, 1.5, 1.0, 1.5);
+  EXPECT_NEAR(near.x, 1.0, 1e-12);
+  EXPECT_NEAR(near.y, 0.0, 1e-12);
   const cv::Point2d proportional =
-      ComputeVelocity({0.6, 0.2}, 1.5, 1.5, 0.3);
+      ComputeVelocity({1.2, 0.4}, 0.75, 1.5, 1.0, 1.5);
   EXPECT_NEAR(proportional.x, 0.9, 1e-12);
-  EXPECT_NEAR(proportional.y, 0.3, 1e-12);
-  const cv::Point2d limited = ComputeVelocity({3.0, 4.0}, 1.5, 1.5, 0.3);
+  EXPECT_NEAR(proportional.y, 0.6, 1e-12);
+  const cv::Point2d limited =
+      ComputeVelocity({3.0, 4.0}, 0.75, 1.5, 1.0, 1.5);
   EXPECT_NEAR(cv::norm(limited), 1.5, 1e-12);
   EXPECT_GT(limited.x, 0.0);
   EXPECT_GT(limited.y, 0.0);
 }
 
+TEST(BallPathingLogicTest, ZeroTargetDoesNotProduceUndefinedDirection) {
+  EXPECT_EQ(ComputeVelocity({0.0, 0.0}, 0.75, 1.5, 1.0, 1.5), cv::Point2d());
+}
+
+TEST(BallPathingLogicTest, CanDisableMinimumSpeed) {
+  const auto velocity = ComputeVelocity({0.2, 0.0}, 0.75, 1.5, 0.0, 1.5);
+  EXPECT_NEAR(velocity.x, 0.15, 1e-12);
+  EXPECT_NEAR(velocity.y, 0.0, 1e-12);
+}
+
+TEST(BallPathingLogicTest, PreservesLateralBiasAtMinimumAndMaximumSpeed) {
+  for (const double offset : {0.4, 2.0}) {
+    const cv::Point2d velocity =
+        ComputeVelocity({offset, offset}, 0.75, 1.5, 1.0, 1.5);
+    EXPECT_NEAR(velocity.y, 2.0 * velocity.x, 1e-12);
+    if (offset == 0.4) {
+      EXPECT_NEAR(cv::norm(velocity), 1.0, 1e-12);
+    } else {
+      EXPECT_NEAR(cv::norm(velocity), 1.5, 1e-12);
+    }
+  }
+}
+
+TEST(BallPathingLogicTest, PreservesForwardAndLateralSigns) {
+  for (const double x : {-2.0, 2.0}) {
+    for (const double y : {-2.0, 2.0}) {
+      const cv::Point2d velocity =
+          ComputeVelocity({x, y}, 0.75, 1.5, 1.0, 1.5);
+      EXPECT_GT(velocity.x * x, 0.0);
+      EXPECT_GT(velocity.y * y, 0.0);
+      EXPECT_NEAR(cv::norm(velocity), 1.5, 1e-12);
+    }
+  }
+}
+
 TEST(BallPathingLogicTest, CommandsNegativeXForTargetBehindRobot) {
   const cv::Point2d velocity =
-      ComputeVelocity({-2.0, 0.5}, 1.5, 1.5, 0.3);
+      ComputeVelocity({-2.0, 0.5}, 0.75, 1.5, 1.0, 1.5);
   EXPECT_NEAR(cv::norm(velocity), 1.5, 1e-12);
   EXPECT_LT(velocity.x, 0.0);
   EXPECT_GT(velocity.y, 0.0);
