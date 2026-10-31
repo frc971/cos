@@ -12,6 +12,28 @@ target_link_libraries(yolo_node_test PRIVATE
 )
 add_test(NAME yolo_node_test COMMAND yolo_node_test)
 
+add_executable(ball_pathing_logic_test ball_pathing_logic_test.cc)
+target_link_libraries(ball_pathing_logic_test PRIVATE
+  cos::ball_pathing_node
+  GTest::gtest_main
+)
+add_test(NAME ball_pathing_logic_test COMMAND ball_pathing_logic_test)
+
+add_executable(ball_pathing_node_test ball_pathing_node_test.cc)
+target_link_libraries(ball_pathing_node_test PRIVATE
+  cos::ball_pathing_node
+  GTest::gtest_main
+)
+target_compile_definitions(ball_pathing_node_test PRIVATE
+  COS_TEST_CONSTANTS_DIR="${PROJECT_SOURCE_DIR}/constants"
+)
+add_test(NAME ball_pathing_node_test COMMAND ball_pathing_node_test)
+
+add_executable(unet_preprocess_test unet_preprocess_test.cc)
+target_link_libraries(unet_preprocess_test PRIVATE
+  cos::ball_pathing_node GTest::gtest_main)
+add_test(NAME unet_preprocess_test COMMAND unet_preprocess_test)
+
 add_executable(full_robot_gamepiece_pipeline_test
   full_robot_gamepiece_pipeline_test.cc)
 target_link_libraries(full_robot_gamepiece_pipeline_test PRIVATE
@@ -168,4 +190,39 @@ target_link_libraries(unambiguous_solver_node_test PRIVATE
   absl::flags_parse
   cos::unambiguous_solver_node
   cos::simulation_position_sender_node
+)
+
+add_executable(ball_pathing_streamer_node_test ball_pathing_streamer_node_test.cc)
+target_link_libraries(ball_pathing_streamer_node_test PRIVATE
+  cos::ball_pathing_streamer_node opencv_calib3d GTest::gtest_main)
+add_test(NAME ball_pathing_streamer_node_test COMMAND ball_pathing_streamer_node_test)
+
+# Manual replay benchmark; requires camera recordings and the TensorRT engine.
+add_executable(second_bot_fps_test second_bot_fps_test.cc)
+target_link_libraries(second_bot_fps_test PRIVATE
+  cos::uvc_disk_camera_node
+  cos::get_earliest_timestamp
+  cos::ball_pathing_streamer_node
+  absl::check
+  cos::ball_pathing_node
+  cos::ball_velocity_goal_streamer_node
+  cos::jpeg_buffer_streamer_node
+  cos::uvc_camera_node
+  cos::stop
+  absl::flags_parse
+  cos::nvjpeg_decode_node
+  JPEG::JPEG
+  cos::control_loop
+  cos::wpilog_writer
+  cos::thread_pool
+  cos::cuda_utils
+  wpilibc
+  cos::nvidia_apriltag_detector_node
+  cos::unambiguous_solver_node
+  cos::variance_calculator_node
+  cos::position_estimate_rio_streamer_node
+  cos::jpeg_buffer_log_node
+  cos::simulation_position_sender_node
+  cos::connect_to_rio
+  ${OpenCV_LIBS}
 )

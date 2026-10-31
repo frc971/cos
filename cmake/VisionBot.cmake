@@ -3,9 +3,10 @@ include(${CMAKE_CURRENT_LIST_DIR}/TargetUtils.cmake)
 get_all_targets(ALL_PROJECT_TARGETS ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_custom_target(vision-bot
-    COMMAND ${CMAKE_COMMAND} -E echo "Deploying build/bin and build/lib to root@10.99.72.11:/root..."
+    COMMAND ${CMAKE_COMMAND} -E echo "Deploying binaries, configs, and models to root@10.99.72.11:/root..."
     
-    COMMAND ssh root@10.99.72.11 "mkdir -p /root"
+    COMMAND ssh root@10.99.72.11 "mkdir -p /root/models"
+    COMMAND rsync -avz --compress-level=9 --info=progress2 --checksum "${CMAKE_SOURCE_DIR}/models/" root@10.99.72.11:/root/models/
 
     COMMAND rsync -avz --no-times --compress-level=9 --info=progress2 --checksum --partial --delete ${CMAKE_BINARY_DIR}/tests/ root@10.99.72.11:/root/tests/
     COMMAND rsync -avz --no-times --compress-level=9 --info=progress2 --checksum --partial --delete ${CMAKE_BINARY_DIR}/main/ root@10.99.72.11:/root/main/

@@ -43,3 +43,38 @@ add_library(gamepiece INTERFACE)
 target_link_libraries(gamepiece INTERFACE
   yolo_inference
 )
+
+add_library(cos.ball_pathing_node)
+add_library(cos::ball_pathing_node ALIAS cos.ball_pathing_node)
+set_target_properties(cos.ball_pathing_node PROPERTIES
+  CUDA_STANDARD 20
+  CUDA_STANDARD_REQUIRED ON
+)
+target_compile_options(cos.ball_pathing_node PRIVATE
+  $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=--sysroot=${CMAKE_SYSROOT}>
+)
+target_sources(cos.ball_pathing_node
+  PRIVATE
+    ball_pathing_node.cc
+    ball_pathing_logic.cc
+    unet_preprocess.cu
+  PUBLIC
+    FILE_SET HEADERS
+    BASE_DIRS ${PROJECT_SOURCE_DIR}/src
+    FILES
+      ball_pathing_node.h
+      ball_pathing_logic.h
+      unet_preprocess.h
+)
+target_link_libraries(cos.ball_pathing_node PUBLIC
+  cos::camera_config
+  cos::control_loop
+  cos::logging_types
+  cos::nvjpeg_decode_node
+  cos::thread_pool
+  opencv_core
+  opencv_imgproc
+  opencv_calib3d
+  CUDA::cudart
+  nvinfer
+)

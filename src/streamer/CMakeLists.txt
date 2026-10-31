@@ -32,3 +32,39 @@ target_link_libraries(cos.position_estimate_rio_streamer_node PUBLIC
   wpilibc
   ntcore
 )
+
+add_library(cos.ball_velocity_goal_streamer_node)
+add_library(cos::ball_velocity_goal_streamer_node ALIAS cos.ball_velocity_goal_streamer_node)
+target_sources(cos.ball_velocity_goal_streamer_node
+  PRIVATE
+    ball_velocity_goal_streamer_node.cc
+  PUBLIC
+    FILE_SET HEADERS
+    BASE_DIRS ${PROJECT_SOURCE_DIR}/src
+    FILES
+      ball_velocity_goal_streamer_node.h
+)
+target_link_libraries(cos.ball_velocity_goal_streamer_node PUBLIC
+  cos::ball_pathing_node
+  cos::control_loop
+  ntcore
+)
+
+add_library(cos.ball_pathing_streamer_node)
+add_library(cos::ball_pathing_streamer_node ALIAS cos.ball_pathing_streamer_node)
+target_sources(cos.ball_pathing_streamer_node
+  PRIVATE ball_pathing_streamer_node.cc
+  PUBLIC
+    FILE_SET HEADERS
+    BASE_DIRS ${PROJECT_SOURCE_DIR}/src
+    FILES ball_pathing_streamer_node.h
+)
+target_link_libraries(cos.ball_pathing_streamer_node PUBLIC
+  cos::ball_pathing_node
+  cos::camera_config
+  cos::control_loop
+  cos::thread_pool
+  nadjieb_mjpeg_streamer::nadjieb_mjpeg_streamer
+  opencv_core opencv_imgproc opencv_imgcodecs
+  absl::check absl::log
+)
