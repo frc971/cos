@@ -1,9 +1,11 @@
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <iomanip>
 #include <iostream>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "absl/flags/flag.h"
 #include "absl/flags/parse.h"
@@ -22,7 +24,8 @@ using namespace std::chrono_literals;
 
 ABSL_FLAG(std::string, log_path, "", "Directory of timestamped JPEG frames");
 ABSL_FLAG(std::string, model_path, "/root/models/ball_unet_rgb.engine",
-          "TensorRT U-Net engine");
+          "TensorRT U-Net engine; empty benchmarks RGB decode without U-Net");
+ABSL_FLAG(bool, quiet, false, "Only print the replay summary");
 ABSL_FLAG(std::string, ball_pathing_input_mode, "rgb",
           "U-Net input mode: rgb or grayscale");
 ABSL_FLAG(std::string, camera_config,
@@ -62,20 +65,39 @@ auto main(int argc, char** argv) -> int {
       log_path, kJpeg, camera::GetEarliestTimestamp(log_path));
   auto decode = std::make_shared<camera::NvjpegDecodeNode>(
       kJpeg, kImage, decode_format, thread_pool);
+  decode->EnableTiming("decode_latency");
   gamepiece::BallPathingConfig pathing_config;
   pathing_config.cluster_radius_m = absl::GetFlag(FLAGS_cluster_radius_m);
-  auto pathing = std::make_shared<gamepiece::BallPathingNode>(
-      kImage, kGoal, absl::GetFlag(FLAGS_model_path),
-      absl::GetFlag(FLAGS_camera_config), input_mode, thread_pool, pathing_config);
+  std::shared_ptr<gamepiece::BallPathingNode> pathing;
+  if (!absl::GetFlag(FLAGS_model_path).empty()) {
+    pathing = std::make_shared<gamepiece::BallPathingNode>(
+        kImage, kGoal, absl::GetFlag(FLAGS_model_path),
+        absl::GetFlag(FLAGS_camera_config), input_mode, thread_pool, pathing_config);
+  }
 
   std::atomic_size_t frames{0};
   std::atomic_size_t valid{0};
-  pathing->RegisterCallback([&](const control_loop::Context& context) {
+  std::vector<double> latency_ms, decode_ms, pathing_ms;
+  std::chrono::steady_clock::time_point first, last;
+  auto completed = [&](const control_loop::Context& context) {
+    const auto* image = context->GetMessage<camera::DecodedJpegBuffer>(kImage);
+    if (image == nullptr) return;
+    const auto now = std::chrono::steady_clock::now();
+    if (frames.load() == 0) first = now;
+    last = now;
+    latency_ms.push_back(
+        std::chrono::duration<double, std::milli>(now - context->start).count());
+    const double decode_time =
+        context->GetMessage<control_loop::LatencyMessage>("decode_latency")
+            ->latency.count() * 1000;
+    decode_ms.push_back(decode_time);
+    if (pathing) pathing_ms.push_back(latency_ms.back() - decode_time);
+    ++frames;
     const auto* goal =
         context->GetMessage<gamepiece::BallVelocityGoalMessage>(kGoal);
     if (goal == nullptr) return;
-    ++frames;
     if (goal->valid) ++valid;
+    if (absl::GetFlag(FLAGS_quiet)) return;
     std::cout << std::fixed << std::setprecision(6)
               << "goal timestamp=" << goal->timestamp
               << " valid=" << goal->valid << " held=" << goal->held
@@ -83,12 +105,14 @@ auto main(int argc, char** argv) -> int {
               << ") velocity_mps=(" << goal->vx_mps << ',' << goal->vy_mps
               << ") evidence_m2=" << goal->ball_evidence_m2
               << " balls=" << goal->estimated_ball_count << '\n';
-  });
+  };
+  if (pathing) pathing->RegisterCallback(completed);
+  else decode->RegisterCallback(completed);
 
   loop.RegisterDependencyNode(disk);
   loop.RegisterNode(decode);
-  loop.RegisterNode(pathing);
-  if (absl::GetFlag(FLAGS_stream_port) != 0) {
+  if (pathing) loop.RegisterNode(pathing);
+  if (pathing && absl::GetFlag(FLAGS_stream_port) != 0) {
     auto stream = std::make_shared<streamer::BallPathingStreamerNode>(
         kJpeg, kGoal, absl::GetFlag(FLAGS_camera_config),
         pathing_config.cluster_radius_m, "/stream", absl::GetFlag(FLAGS_stream_port),
@@ -99,7 +123,22 @@ auto main(int argc, char** argv) -> int {
   stop::WaitUntilStop();
   loop.Stop();
   thread_pool.Shutdown();
-  std::cout << "summary frames=" << frames.load() << " valid=" << valid.load()
+  const double elapsed = std::chrono::duration<double>(last - first).count();
+  const auto percentile = [](std::vector<double>& values, double fraction) {
+    std::sort(values.begin(), values.end());
+    return values.empty() ? 0.0
+        : values[static_cast<size_t>(fraction * (values.size() - 1))];
+  };
+  std::cout << std::fixed << std::setprecision(3)
+            << "summary unet=" << static_cast<bool>(pathing)
+            << " seconds=" << elapsed
+            << " fps=" << (elapsed > 0 ? (frames.load() - 1) / elapsed : 0)
+            << " latency_p50_ms=" << percentile(latency_ms, 0.5)
+            << " latency_p95_ms=" << percentile(latency_ms, 0.95)
+            << " decode_p50_ms=" << percentile(decode_ms, 0.5)
+            << " pathing_p50_ms=" << percentile(pathing_ms, 0.5)
+            << " pathing_p95_ms=" << percentile(pathing_ms, 0.95)
+            << " frames=" << frames.load() << " valid=" << valid.load()
             << '\n';
-  return valid.load() > 0 ? 0 : 1;
+  return (pathing ? valid.load() : frames.load()) > 0 ? 0 : 1;
 }

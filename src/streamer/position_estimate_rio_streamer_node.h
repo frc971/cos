@@ -23,6 +23,7 @@ class PositionEstimateRioStreamerNode final : public control_loop::INode {
                             callback) override;
   // We use the camera to get a average of the timestamps to report to the rio
   void AddCamera(const camera::UVCCameraNode& camera);
+  void AddCameraTimestamp(std::string_view channel);
 
  private:
   auto GetTimestamp(const control_loop::Context& context) -> double;

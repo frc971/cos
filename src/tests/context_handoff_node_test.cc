@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstdint>
 #include <functional>
+#include <future>
 #include <memory>
 #include <stop_token>
 #include <vector>
@@ -56,6 +57,42 @@ TEST(ContextHandoffNodeTest, PublishesNullForAnEmptySourceNotification) {
   handoff.CreateCallback()(output);
   EXPECT_TRUE(output->Exists("frame"));
   EXPECT_EQ(output->GetMessage<control_loop::ValueMessage<int>>("frame"), nullptr);
+}
+
+TEST(ContextHandoffNodeTest, SlowConsumerDoesNotRetainSourceContexts) {
+  auto source = std::make_shared<SourceNode>();
+  control_loop::ContextHandoffNode handoff(source);
+  std::promise<void> entered, release;
+  auto released = release.get_future().share();
+  bool first = true;
+  handoff.RegisterCallback([&](const control_loop::Context&) {
+    if (first) entered.set_value();
+    first = false;
+    released.wait();
+  });
+  auto publish = [&](int value) {
+    auto input = MakeContext(value);
+    std::weak_ptr<control_loop::ContextInternal> weak = input;
+    input->SetMessage("frame",
+                     std::make_shared<control_loop::ValueMessage<int>>(value));
+    source->CreateCallback()(input);
+    input.reset();
+    EXPECT_TRUE(weak.expired());
+  };
+  publish(1);
+  auto consumer = std::async(std::launch::async, [&] {
+    handoff.CreateCallback()(MakeContext(10));
+  });
+  const auto status = entered.get_future().wait_for(std::chrono::seconds(2));
+  EXPECT_EQ(status, std::future_status::ready);
+  for (int i = 2; i <= 4; ++i) publish(i);
+  release.set_value();
+  consumer.get();
+
+  auto output = MakeContext(11);
+  handoff.CreateCallback()(output);
+  ASSERT_NE(output->GetMessage<control_loop::ValueMessage<int>>("frame"), nullptr);
+  EXPECT_EQ(output->GetMessage<control_loop::ValueMessage<int>>("frame")->value, 4);
 }
 
 TEST(ContextHandoffNodeTest, RetainsLatestFrameAndConsumesItOnce) {

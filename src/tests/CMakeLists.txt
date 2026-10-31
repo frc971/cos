@@ -196,3 +196,33 @@ add_executable(ball_pathing_streamer_node_test ball_pathing_streamer_node_test.c
 target_link_libraries(ball_pathing_streamer_node_test PRIVATE
   cos::ball_pathing_streamer_node opencv_calib3d GTest::gtest_main)
 add_test(NAME ball_pathing_streamer_node_test COMMAND ball_pathing_streamer_node_test)
+
+# Manual replay benchmark; requires camera recordings and the TensorRT engine.
+add_executable(second_bot_fps_test second_bot_fps_test.cc)
+target_link_libraries(second_bot_fps_test PRIVATE
+  cos::uvc_disk_camera_node
+  cos::get_earliest_timestamp
+  cos::ball_pathing_streamer_node
+  absl::check
+  cos::ball_pathing_node
+  cos::ball_velocity_goal_streamer_node
+  cos::jpeg_buffer_streamer_node
+  cos::uvc_camera_node
+  cos::stop
+  absl::flags_parse
+  cos::nvjpeg_decode_node
+  JPEG::JPEG
+  cos::control_loop
+  cos::wpilog_writer
+  cos::thread_pool
+  cos::cuda_utils
+  wpilibc
+  cos::nvidia_apriltag_detector_node
+  cos::unambiguous_solver_node
+  cos::variance_calculator_node
+  cos::position_estimate_rio_streamer_node
+  cos::jpeg_buffer_log_node
+  cos::simulation_position_sender_node
+  cos::connect_to_rio
+  ${OpenCV_LIBS}
+)

@@ -1,5 +1,6 @@
 #include <filesystem>
 #include <string>
+#include <unordered_set>
 
 #include "absl/flags/flag.h"
 #include "absl/flags/parse.h"
@@ -10,6 +11,7 @@
 #include "camera/nvjpeg_fd_decode_node.h"
 #include "camera/uvc_camera_node.h"
 #include "control_loop/connect_to_rio.h"
+#include "control_loop/context_handoff_node.h"
 #include "control_loop/control_loop.h"
 #include "control_loop/thread_pool.h"
 #include "gamepiece/ball_pathing_node.h"
@@ -18,9 +20,9 @@
 #include "logging/jpeg_buffer_log_node.h"
 #include "logging/wpilog_writer.h"
 #include "simulation/simulation_position_sender_node.h"
-#include "streamer/jpeg_buffer_streamer_node.h"
-#include "streamer/ball_velocity_goal_streamer_node.h"
 #include "streamer/ball_pathing_streamer_node.h"
+#include "streamer/ball_velocity_goal_streamer_node.h"
+#include "streamer/jpeg_buffer_streamer_node.h"
 #include "streamer/position_estimate_rio_streamer_node.h"
 #include "utils/stop.h"
 
@@ -36,8 +38,8 @@ ABSL_FLAG(                                                        // NOLINT
     bool, log_images, true,                                       // NOLINT
     "Log timestamped JPEG frames to the run's log directory in "  // NOLINT
     "per-camera subfolders");                                     // NOLINT
-ABSL_FLAG(std::string, ball_pathing_model,                         // NOLINT
-          "/root/models/ball_unet_rgb.engine",                       // NOLINT
+ABSL_FLAG(std::string, ball_pathing_model,                        // NOLINT
+          "/root/models/ball_unet_rgb.engine",                    // NOLINT
           "TensorRT U-Net engine; empty disables ball pathing");  // NOLINT
 ABSL_FLAG(std::string, ball_pathing_input_mode, "rgb",
           "U-Net input mode: rgb or grayscale");
@@ -45,47 +47,49 @@ ABSL_FLAG(int, ball_pathing_stream_port, 5805,
           "Annotated ball pathing MJPEG port; 0 disables the stream");
 ABSL_FLAG(bool, ball_pathing_stream_rotate_180, false,
           "Rotate the annotated image and overlay 180 degrees for display");
-ABSL_FLAG(double, ball_probability_threshold, 0.5,                 // NOLINT
+ABSL_FLAG(double, ball_probability_threshold, 0.5,               // NOLINT
           "U-Net foreground probability threshold");             // NOLINT
-ABSL_FLAG(double, ball_cluster_radius_m, 0.4,                      // NOLINT
-          "Robot-frame radius used to group visible balls");      // NOLINT
-ABSL_FLAG(double, ball_grid_resolution_m, 0.20,                    // NOLINT
-          "Projected ball-evidence grid resolution in meters");   // NOLINT
-ABSL_FLAG(int, ball_mask_sample_stride, 4,                         // NOLINT
-          "Pixel stride used while projecting the segmentation mask"); // NOLINT
-ABSL_FLAG(double, ball_maximum_range_m, 8.0,                       // NOLINT
+ABSL_FLAG(double, ball_cluster_radius_m, 0.4,                    // NOLINT
+          "Robot-frame radius used to group visible balls");     // NOLINT
+ABSL_FLAG(double, ball_grid_resolution_m, 0.20,                  // NOLINT
+          "Projected ball-evidence grid resolution in meters");  // NOLINT
+ABSL_FLAG(
+    int, ball_mask_sample_stride, 4,                              // NOLINT
+    "Pixel stride used while projecting the segmentation mask");  // NOLINT
+ABSL_FLAG(double, ball_maximum_range_m, 8.0,                      // NOLINT
           "Maximum projected ball range in meters");              // NOLINT
-ABSL_FLAG(double, ball_forward_velocity_gain, 0.75,  // NOLINT
-          "Forward/backward velocity gain in inverse seconds");  // NOLINT
-ABSL_FLAG(double, ball_lateral_velocity_gain, 1.5,  // NOLINT
-          "Left/right velocity gain in inverse seconds");  // NOLINT
-ABSL_FLAG(double, ball_minimum_speed_mps, 1.0,  // NOLINT
-          "Minimum speed toward a ball cluster in meters per second");  // NOLINT
-ABSL_FLAG(double, ball_maximum_speed_mps, 1.5,                     // NOLINT
-          "Maximum magnitude of the robot-relative velocity goal"); // NOLINT
-ABSL_FLAG(double, ball_hold_seconds, 0.5,                          // NOLINT
-          "Time to hold the last goal after losing its cluster"); // NOLINT
-ABSL_FLAG(double, ball_switch_evidence_ratio, 1.25,                // NOLINT
-          "Evidence ratio required to switch tracked clusters");  // NOLINT
+ABSL_FLAG(double, ball_forward_velocity_gain, 0.75,               // NOLINT
+          "Forward/backward velocity gain in inverse seconds");   // NOLINT
+ABSL_FLAG(double, ball_lateral_velocity_gain, 1.5,                // NOLINT
+          "Left/right velocity gain in inverse seconds");         // NOLINT
+ABSL_FLAG(
+    double, ball_minimum_speed_mps, 1.0,                             // NOLINT
+    "Minimum speed toward a ball cluster in meters per second");     // NOLINT
+ABSL_FLAG(double, ball_maximum_speed_mps, 1.5,                       // NOLINT
+          "Maximum magnitude of the robot-relative velocity goal");  // NOLINT
+ABSL_FLAG(double, ball_hold_seconds, 0.5,                            // NOLINT
+          "Time to hold the last goal after losing its cluster");    // NOLINT
+ABSL_FLAG(double, ball_switch_evidence_ratio, 1.25,                  // NOLINT
+          "Evidence ratio required to switch tracked clusters");     // NOLINT
 
 namespace {
 
-void AddCameraPipeline(
+auto AddCameraPipeline(
     const std::string& config_path, int stream_port,
     control_loop::ControlLoop& control_loop,
     control_loop::ThreadPool& thread_pool,
     localization::UnambiguousSolverNode& solver_node,
     const std::shared_ptr<streamer::PositionEstimateRioStreamerNode>&
         rio_sender_node,
-    bool pva_detection, const std::string& log_path,
-    bool use_for_localization) {
+    bool pva_detection, const std::string& log_path, bool use_for_localization)
+    -> std::shared_ptr<camera::UVCCameraNode> {
   const camera::UVCCameraConfig config{config_path};
   const std::string jpeg_channel = "jpeg_buffer:" + config.name;
 
-  auto uvc_camera_node = std::make_shared<camera::UVCCameraNode>(
-      jpeg_channel, camera::UVCCameraConfig{config_path});
-  uvc_camera_node->Start();
-  control_loop.RegisterDependencyNode(uvc_camera_node);
+  auto camera_node =
+      std::make_shared<camera::UVCCameraNode>(jpeg_channel, config);
+  camera_node->Start();
+  control_loop.RegisterDependencyNode(camera_node);
 
   auto jpeg_buffer_streamer_node =
       std::make_shared<streamer::JpegBufferStreamerNode>(
@@ -101,9 +105,10 @@ void AddCameraPipeline(
     control_loop.RegisterNode(jpeg_buffer_logger_node);
   }
 
-  if (!use_for_localization) return;
+  if (!use_for_localization)
+    return camera_node;
+  rio_sender_node->AddCamera(*camera_node);
 
-  rio_sender_node->AddCamera(*uvc_camera_node);
   const std::string decoded_channel = "hardware_decoded_image:" + config.name;
   const std::string detections_channel =
       "hardware_apriltag_detections:" + config.name;
@@ -124,6 +129,7 @@ void AddCameraPipeline(
   solver_node.AddCameraTimestamp(jpeg_channel);
   solver_node.AddCamera(detections_channel, camera::Intrinsics{config_path},
                         camera::Extrinsics{config_path}, control_loop);
+  return camera_node;
 }
 
 }  // namespace
@@ -138,6 +144,8 @@ auto main(int argc, char** argv) -> int {
   control_loop::ControlLoop control_loop(1ms);
   control_loop.SetMaxContext(absl::GetFlag(FLAGS_max_context));
   control_loop::ThreadPool thread_pool;
+  control_loop::ControlLoop gamepiece_loop(20ms);
+  control_loop::ThreadPool gamepiece_thread_pool(1);
 
   const std::vector<std::string> localization_paths{
       "/root/constants/second_bot/front_camera.json",
@@ -165,31 +173,35 @@ auto main(int argc, char** argv) -> int {
   }
   // Keep color capture, raw streaming, and logging independent of localization
   // and available even when the ball model is disabled.
-  AddCameraPipeline(color_config_path, port, control_loop, thread_pool,
-                    *solver_node, rio_sender_node, pva_detection,
-                    image_log_path, false);
+  auto color_camera = AddCameraPipeline(
+      color_config_path, port, control_loop, thread_pool, *solver_node,
+      rio_sender_node, pva_detection, image_log_path, false);
 
-  const std::string input_mode_name = absl::GetFlag(FLAGS_ball_pathing_input_mode);
+  const std::string input_mode_name =
+      absl::GetFlag(FLAGS_ball_pathing_input_mode);
   CHECK(input_mode_name == "rgb" || input_mode_name == "grayscale")
       << "ball_pathing_input_mode must be rgb or grayscale";
   const auto input_mode = input_mode_name == "rgb"
                               ? gamepiece::UnetInputMode::kRgb
                               : gamepiece::UnetInputMode::kGrayscale;
   const auto decode_format = input_mode == gamepiece::UnetInputMode::kRgb
-                                 ? NVJPEG_OUTPUT_RGBI : NVJPEG_OUTPUT_Y;
+                                 ? NVJPEG_OUTPUT_RGBI
+                                 : NVJPEG_OUTPUT_Y;
 
   const std::string ball_model = absl::GetFlag(FLAGS_ball_pathing_model);
   if (!ball_model.empty()) {
+    gamepiece_loop.RegisterDependencyNode(
+        std::make_shared<control_loop::ContextHandoffNode>(color_camera));
     constexpr std::string_view kColorJpeg = "jpeg_buffer:dev_orin_color";
     constexpr std::string_view kBallImage = "ball_pathing:decoded_color";
     constexpr std::string_view kBallGoal = "ball_pathing/velocity_goal";
     auto ball_decode_node = std::make_shared<camera::NvjpegDecodeNode>(
-        kColorJpeg, kBallImage, decode_format, thread_pool);
-    control_loop.RegisterNode(ball_decode_node);
+        kColorJpeg, kBallImage, decode_format, gamepiece_thread_pool);
+    gamepiece_loop.RegisterNode(ball_decode_node);
 
     gamepiece::BallPathingConfig ball_config{
-        .probability_threshold = static_cast<float>(
-            absl::GetFlag(FLAGS_ball_probability_threshold)),
+        .probability_threshold =
+            static_cast<float>(absl::GetFlag(FLAGS_ball_probability_threshold)),
         .mask_sample_stride = absl::GetFlag(FLAGS_ball_mask_sample_stride),
         .maximum_range_m = absl::GetFlag(FLAGS_ball_maximum_range_m),
         .cluster_radius_m = absl::GetFlag(FLAGS_ball_cluster_radius_m),
@@ -207,20 +219,20 @@ auto main(int argc, char** argv) -> int {
     };
     auto ball_pathing_node = std::make_shared<gamepiece::BallPathingNode>(
         kBallImage, kBallGoal, ball_model, color_config_path, input_mode,
-        thread_pool, ball_config);
-    control_loop.RegisterNode(ball_pathing_node);
+        gamepiece_thread_pool, ball_config);
+    gamepiece_loop.RegisterNode(ball_pathing_node);
     const int ball_stream_port = absl::GetFlag(FLAGS_ball_pathing_stream_port);
     if (ball_stream_port != 0) {
       auto ball_streamer = std::make_shared<streamer::BallPathingStreamerNode>(
-          kColorJpeg, kBallGoal, color_config_path, ball_config.cluster_radius_m,
-          "/stream", ball_stream_port,
+          kColorJpeg, kBallGoal, color_config_path,
+          ball_config.cluster_radius_m, "/stream", ball_stream_port,
           absl::GetFlag(FLAGS_ball_pathing_stream_rotate_180));
-      control_loop.RegisterNode(ball_streamer);
+      gamepiece_loop.RegisterNode(ball_streamer);
     }
     auto ball_goal_streamer =
         std::make_shared<streamer::BallVelocityGoalStreamerNode>(kBallGoal,
-                                                                  "/COS");
-    control_loop.RegisterNode(ball_goal_streamer);
+                                                                 "/COS");
+    gamepiece_loop.RegisterNode(ball_goal_streamer);
   }
 
   auto variance_calculator_node =
@@ -233,17 +245,36 @@ auto main(int argc, char** argv) -> int {
   control_loop.RegisterNode(simulation_position_sender_node);
   if (absl::GetFlag(FLAGS_latency_log)) {
     control_loop.EnableLatencyLog();
+    if (!ball_model.empty())
+      gamepiece_loop.EnableLatencyLog();
   }
 
+  auto publications = control_loop.GetLogPublications();
+  std::unordered_set<std::string> channels;
+  for (const auto& publication : publications) {
+    channels.insert(publication.GetChannel());
+  }
+  for (const auto& publication : gamepiece_loop.GetLogPublications()) {
+    if (channels.insert(publication.GetChannel()).second) {
+      publications.push_back(publication);
+    }
+  }
   auto wpilog_writer = std::make_shared<logging::WPILogWriter>(
       (std::filesystem::path(control_loop::GetLogPath()) / "cos.wpilog")
           .string(),
-      control_loop.GetLogPublications());
+      publications);
   control_loop.EnableWPILog(wpilog_writer);
+  if (!ball_model.empty()) {
+    gamepiece_loop.EnableWPILog(wpilog_writer);
+    gamepiece_loop.Start();
+  }
   control_loop.Start();
 
   stop::WaitUntilStop();
 
+  if (!ball_model.empty())
+    gamepiece_loop.Stop();
+  gamepiece_thread_pool.Shutdown();
   control_loop.Stop();
   thread_pool.Shutdown();
 }

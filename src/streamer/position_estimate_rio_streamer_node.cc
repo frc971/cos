@@ -85,8 +85,12 @@ void PositionEstimateRioStreamerNode::RegisterCallback(
 
 void PositionEstimateRioStreamerNode::AddCamera(
     const camera::UVCCameraNode& camera) {
+  AddCameraTimestamp(camera.GetOutputPath());
+}
+
+void PositionEstimateRioStreamerNode::AddCameraTimestamp(std::string_view channel) {
   get_camera_timestamps_.emplace_back(
-      [path = camera.GetOutputPath()](
+      [path = std::string(channel)](
           const control_loop::Context& context) -> std::optional<double> {
         auto jpeg_buffer = context->GetMessage<camera::JpegBuffer>(path);
         if (jpeg_buffer == nullptr) {
