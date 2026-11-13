@@ -1,3 +1,22 @@
+add_library(cos.navgrid_streamer_node)
+add_library(cos::navgrid_streamer_node ALIAS cos.navgrid_streamer_node)
+target_sources(cos.navgrid_streamer_node
+  PRIVATE
+    navgrid_streamer_node.cc
+  PUBLIC
+    FILE_SET HEADERS
+    BASE_DIRS ${PROJECT_SOURCE_DIR}/src
+    FILES
+      navgrid_streamer_node.h
+)
+target_link_libraries(cos.navgrid_streamer_node PUBLIC
+  cos::control_loop
+  absl::log
+  nlohmann_json::nlohmann_json
+  ${OpenCV_LIBS}
+  nadjieb_mjpeg_streamer::nadjieb_mjpeg_streamer
+)
+
 add_library(cos.jpeg_buffer_streamer_node)
 add_library(cos::jpeg_buffer_streamer_node ALIAS cos.jpeg_buffer_streamer_node)
 target_sources(cos.jpeg_buffer_streamer_node

@@ -1,5 +1,13 @@
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
 
+add_executable(navgrid_streamer_test navgrid_streamer_test.cc)
+target_link_libraries(navgrid_streamer_test PRIVATE
+  cos::navgrid_streamer_node
+  cos::stop
+  absl::flags_parse
+  absl::log_initialize
+)
+
 add_executable(context_handoff_node_test context_handoff_node_test.cc)
 target_link_libraries(context_handoff_node_test PRIVATE
   cos::control_loop GTest::gtest_main)
