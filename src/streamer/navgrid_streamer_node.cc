@@ -27,9 +27,13 @@ auto NavgridStreamerNode::CreateCallback()
     cv::Mat new_image = base_image_.clone();
     for (const auto& dependency : dependencies_) {
       if (context->Exists(dependency.GetChannel())) {
-        auto* navgrid_message =
-            context->GetMessage<NavgridMessage>(dependency.GetChannel());
-        DrawNavgrid(new_image, navgrid_message);
+        if (auto* navgrid =
+                context->GetMessage<NavgridMessage>(dependency.GetChannel())) {
+          DrawNavgrid(new_image, navgrid);
+        } else if (auto* polyline = context->GetMessage<PolylineMessage>(
+                       dependency.GetChannel())) {
+          DrawPolyline(new_image, *polyline);
+        }
       }
     }
     if (!cv::imencode(".jpg", new_image, jpeg_buffer_)) {
@@ -66,6 +70,61 @@ void NavgridStreamerNode::RegisterCallback(
 
 void NavgridStreamerNode::AddNavgrid(std::string_view input_path) {
   dependencies_.emplace_back(input_path, typeid(NavgridMessage));
+}
+
+void NavgridStreamerNode::AddPolyline(std::string_view input_path) {
+  dependencies_.emplace_back(input_path, typeid(PolylineMessage));
+}
+
+void NavgridStreamerNode::DrawPolyline(cv::Mat& image,
+                                       const PolylineMessage& polyline) {
+  if (!std::isfinite(polyline.field_size_x) || polyline.field_size_x <= 0 ||
+      !std::isfinite(polyline.field_size_y) || polyline.field_size_y <= 0) {
+    return;
+  }
+  std::vector<cv::Point> pixels;
+  pixels.reserve(polyline.points.size());
+  for (const auto& point : polyline.points) {
+    if (!std::isfinite(point.x) || !std::isfinite(point.y) || point.x < 0 ||
+        point.y < 0 || point.x >= polyline.field_size_x ||
+        point.y >= polyline.field_size_y) {
+      return;
+    }
+    pixels.emplace_back(
+        cvRound(point.x / polyline.field_size_x * (image.cols - 1)),
+        image.rows - 1 -
+            cvRound(point.y / polyline.field_size_y * (image.rows - 1)));
+  }
+  const cv::Scalar color(polyline.b, polyline.g, polyline.r);
+  if (polyline.arrow_head && pixels.size() == 2) {
+    cv::arrowedLine(image, pixels.front(), pixels.back(), cv::Scalar(0, 0, 0),
+                    5, cv::LINE_AA, 0, 0.25);
+    cv::arrowedLine(image, pixels.front(), pixels.back(), color, 3, cv::LINE_AA,
+                    0, 0.25);
+    cv::circle(image, pixels.front(), 4, cv::Scalar(0, 0, 0), cv::FILLED,
+               cv::LINE_AA);
+    cv::circle(image, pixels.front(), 2, color, cv::FILLED, cv::LINE_AA);
+  } else if (pixels.size() == 1) {
+    cv::circle(image, pixels.front(), 3, color, cv::FILLED, cv::LINE_AA);
+  } else if (!pixels.empty()) {
+    cv::polylines(image, pixels, false, color, 2, cv::LINE_AA);
+  }
+  for (const auto& point : polyline.markers) {
+    if (!std::isfinite(point.x) || !std::isfinite(point.y) || point.x < 0 ||
+        point.y < 0 || point.x >= polyline.field_size_x ||
+        point.y >= polyline.field_size_y) {
+      continue;
+    }
+    const cv::Point pixel(
+        cvRound(point.x / polyline.field_size_x * (image.cols - 1)),
+        image.rows - 1 -
+            cvRound(point.y / polyline.field_size_y * (image.rows - 1)));
+    cv::circle(image, pixel, 7, cv::Scalar(255, 255, 255), cv::FILLED,
+               cv::LINE_AA);
+    cv::circle(image, pixel, 5, cv::Scalar(255, 0, 255), cv::FILLED,
+               cv::LINE_AA);
+    cv::circle(image, pixel, 7, cv::Scalar(0, 0, 0), 1, cv::LINE_AA);
+  }
 }
 
 void NavgridStreamerNode::DrawNavgrid(cv::Mat& image,

@@ -10,6 +10,7 @@
 #include <units/velocity.h>
 
 #include "control_loop/node.h"
+#include "pathing/dijkstra_planner.h"
 #include "streamer/navgrid_streamer_node.h"
 
 namespace pathing {
@@ -70,13 +71,7 @@ class DijkstraPathNode final : public control_loop::INode {
                             callback) override;
 
  private:
-  struct Cell {
-    int x;
-    int y;
-  };
-  auto IsFree(Cell cell) const -> bool;
-  auto IsVisible(double x0, double y0, double x1, double y1) const -> bool;
-  auto FindPath(Cell start, Cell goal) const -> std::vector<Cell>;
+  using Cell = DijkstraPlanner::Cell;
   auto Calculate(const PoseMessage* pose, const PoseMessage* goal,
                  std::vector<Cell>& route) const -> VelocityGoalMessage;
 
@@ -84,7 +79,7 @@ class DijkstraPathNode final : public control_loop::INode {
   std::string goal_path_;
   std::string output_path_;
   std::string debug_path_;
-  streamer::NavgridMessage grid_;
+  DijkstraPlanner planner_;
   MotionSettings settings_;
   std::mutex mutex_;
   std::vector<control_loop::MessageDescriptor> dependencies_;

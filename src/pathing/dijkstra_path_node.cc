@@ -1,24 +1,14 @@
 #include "pathing/dijkstra_path_node.h"
 
 #include <algorithm>
-#include <array>
 #include <cmath>
-#include <limits>
 #include <numbers>
-#include <queue>
 #include <ranges>
 #include <stdexcept>
 #include <utility>
 
 namespace pathing {
 namespace {
-// Counterclockwise travel directions; adjacent entries differ by 45 degrees.
-constexpr std::array<std::pair<int, int>, 8> kDirections{
-    {{1, 0}, {1, 1}, {0, 1}, {-1, 1},
-     {-1, 0}, {-1, -1}, {0, -1}, {1, -1}}};
-constexpr int kNoDirection = 8;
-constexpr int kStatesPerCell = 9;
-
 auto Positive(double value) -> bool {
   return std::isfinite(value) && value > 0;
 }
@@ -32,7 +22,7 @@ DijkstraPathNode::DijkstraPathNode(std::string_view pose_path,
     : pose_path_(pose_path),
       goal_path_(goal_path),
       output_path_(output_path),
-      grid_(navgrid_path),
+      planner_(navgrid_path, settings.turn_penalty),
       settings_(settings),
       dependencies_({{pose_path_, typeid(PoseMessage)},
                      {goal_path_, typeid(PoseMessage)}}),
@@ -52,28 +42,6 @@ DijkstraPathNode::DijkstraPathNode(std::string_view pose_path,
     throw std::invalid_argument(
         "Planner motion settings must be finite and positive");
   }
-  if (!std::isfinite(settings.turn_penalty) || settings.turn_penalty < 0) {
-    throw std::invalid_argument("Turn penalty must be finite and nonnegative");
-  }
-  if (!Positive(grid_.field_size_x) || !Positive(grid_.field_size_y) ||
-      !Positive(grid_.node_size_meters) || grid_.navgrid.empty() ||
-      grid_.navgrid.front().empty()) {
-    throw std::invalid_argument("Invalid navgrid dimensions");
-  }
-  const auto width = grid_.navgrid.front().size();
-  for (const auto& row : grid_.navgrid) {
-    if (row.size() != width) {
-      throw std::invalid_argument("Navgrid must be rectangular");
-    }
-  }
-  if (width != std::ceil(grid_.field_size_x / grid_.node_size_meters) ||
-      grid_.navgrid.size() !=
-          std::ceil(grid_.field_size_y / grid_.node_size_meters) ||
-      width * static_cast<double>(grid_.navgrid.size()) >
-          std::numeric_limits<int>::max() / kStatesPerCell) {
-    throw std::invalid_argument(
-        "Navgrid dimensions do not match field coverage");
-  }
 }
 
 void DijkstraPathNode::EnableNavgridDebug(std::string_view output_path) {
@@ -91,107 +59,6 @@ void DijkstraPathNode::EnableNavgridDebug(std::string_view output_path) {
   publications_.emplace_back(debug_path_, typeid(streamer::NavgridMessage));
 }
 
-auto DijkstraPathNode::IsFree(Cell cell) const -> bool {
-  return cell.y >= 0 && cell.x >= 0 &&
-         cell.y < static_cast<int>(grid_.navgrid.size()) &&
-         cell.x < static_cast<int>(grid_.navgrid.front().size()) &&
-         !grid_.navgrid[cell.y][cell.x];
-}
-
-// Closed rectangle intersection deliberately rejects touching blocked corners.
-auto DijkstraPathNode::IsVisible(double x0, double y0, double x1,
-                                 double y1) const -> bool {
-  const double size = grid_.node_size_meters;
-  for (int y = 0; y < static_cast<int>(grid_.navgrid.size()); ++y) {
-    for (int x = 0; x < static_cast<int>(grid_.navgrid[y].size()); ++x) {
-      if (!grid_.navgrid[y][x])
-        continue;
-      double lo = 0, hi = 1;
-      const auto clip = [&](double origin, double delta, double minimum,
-                            double maximum) -> bool {
-        if (delta == 0)
-          return origin >= minimum && origin <= maximum;
-        double a = (minimum - origin) / delta;
-        double b = (maximum - origin) / delta;
-        if (a > b)
-          std::swap(a, b);
-        lo = std::max(lo, a);
-        hi = std::min(hi, b);
-        return lo <= hi;
-      };
-      if (clip(x0, x1 - x0, x * size, (x + 1) * size) &&
-          clip(y0, y1 - y0, y * size, (y + 1) * size))
-        return false;
-    }
-  }
-  return true;
-}
-
-auto DijkstraPathNode::FindPath(Cell start, Cell goal) const
-    -> std::vector<Cell> {
-  const int width = static_cast<int>(grid_.navgrid.front().size());
-  const int count = width * static_cast<int>(grid_.navgrid.size());
-  // A cell reached from different directions can have different future costs.
-  // Keep independent distances and parents for each incoming direction.
-  const int source = (start.y * width + start.x) * kStatesPerCell + kNoDirection;
-  const int target = goal.y * width + goal.x;
-  std::vector<double> distance(count * kStatesPerCell,
-                              std::numeric_limits<double>::infinity());
-  std::vector<int> parent(count * kStatesPerCell, -1);
-  using Entry = std::pair<double, int>;
-  std::priority_queue<Entry, std::vector<Entry>, std::greater<>> queue;
-  distance[source] = 0;
-  queue.emplace(0, source);
-  int destination = -1;
-  while (!queue.empty()) {
-    const auto [cost, state] = queue.top();
-    queue.pop();
-    if (cost > distance[state])
-      continue;
-    const int index = state / kStatesPerCell;
-    const int incoming = state % kStatesPerCell;
-    if (index == target) {
-      destination = state;
-      break;
-    }
-    const Cell cell{.x = index % width, .y = index / width};
-    for (int direction = 0; direction < kNoDirection; ++direction) {
-      const auto [dx, dy] = kDirections[direction];
-      const Cell next{.x = cell.x + dx, .y = cell.y + dy};
-      if (!IsFree(next))
-        continue;
-      if (dx != 0 && dy != 0 &&
-          (!IsFree({.x = cell.x + dx, .y = cell.y}) ||
-           !IsFree({.x = cell.x, .y = cell.y + dy})))
-        continue;
-      double turn_cost = 0;
-      if (incoming != kNoDirection) {
-        const int difference = std::abs(direction - incoming);
-        const int turns = std::min(difference, kNoDirection - difference);
-        turn_cost = settings_.turn_penalty * (turns * std::numbers::pi / 4);
-      }
-      const int neighbor =
-          (next.y * width + next.x) * kStatesPerCell + direction;
-      const double next_cost =
-          cost + std::hypot(dx, dy) * grid_.node_size_meters + turn_cost;
-      if (next_cost < distance[neighbor]) {
-        distance[neighbor] = next_cost;
-        parent[neighbor] = state;
-        queue.emplace(next_cost, neighbor);
-      }
-    }
-  }
-  if (destination == -1)
-    return {};
-  std::vector<Cell> route;
-  for (int state = destination; state != -1; state = parent[state]) {
-    const int index = state / kStatesPerCell;
-    route.push_back({.x = index % width, .y = index / width});
-  }
-  std::ranges::reverse(route);
-  return route;
-}
-
 auto DijkstraPathNode::Calculate(const PoseMessage* pose_message,
                                  const PoseMessage* goal_message,
                                  std::vector<Cell>& route) const
@@ -201,36 +68,24 @@ auto DijkstraPathNode::Calculate(const PoseMessage* pose_message,
     return output;
   const auto& pose = pose_message->goal_position;
   const auto& goal = goal_message->goal_position;
-  const auto valid = [&](const frc::Pose2d& value) -> bool {
-    return std::isfinite(value.X().value()) &&
-           std::isfinite(value.Y().value()) &&
-           std::isfinite(value.Rotation().Radians().value()) &&
-           value.X().value() >= 0 && value.X().value() < grid_.field_size_x &&
-           value.Y().value() >= 0 && value.Y().value() < grid_.field_size_y;
-  };
-  if (!valid(pose) || !valid(goal))
+  if (!planner_.IsValidPose(pose) || !planner_.IsValidPose(goal))
     return output;
-  const double size = grid_.node_size_meters;
-  const auto cell = [size](const frc::Pose2d& value) -> Cell {
-    return {.x = static_cast<int>(value.X().value() / size),
-            .y = static_cast<int>(value.Y().value() / size)};
-  };
-  if (!IsFree(cell(pose)) || !IsFree(cell(goal)))
-    return output;
-  route = FindPath(cell(pose), cell(goal));
+  const auto& grid = planner_.GetGrid();
+  const double size = grid.node_size_meters;
+  route = planner_.FindPath(planner_.CellFor(pose), planner_.CellFor(goal));
   output.status = PathStatus::NoPath;
   if (route.empty())
     return output;
   const double x = pose.X().value(), y = pose.Y().value();
   double target_x = goal.X().value(), target_y = goal.Y().value();
-  if (!IsVisible(x, y, target_x, target_y)) {
+  if (!planner_.IsVisible(x, y, target_x, target_y)) {
     bool found = false;
     for (auto& it : std::views::reverse(route)) {
       target_x =
-          (it.x * size + std::min((it.x + 1) * size, grid_.field_size_x)) / 2;
+          (it.x * size + std::min((it.x + 1) * size, grid.field_size_x)) / 2;
       target_y =
-          (it.y * size + std::min((it.y + 1) * size, grid_.field_size_y)) / 2;
-      if (IsVisible(x, y, target_x, target_y)) {
+          (it.y * size + std::min((it.y + 1) * size, grid.field_size_y)) / 2;
+      if (planner_.IsVisible(x, y, target_x, target_y)) {
         found = true;
         break;
       }
@@ -281,7 +136,8 @@ auto DijkstraPathNode::CreateCallback()
           Calculate(context->GetMessage<PoseMessage>(pose_path_),
                     context->GetMessage<PoseMessage>(goal_path_), route));
       if (!debug_path_.empty()) {
-        auto debug = std::make_shared<streamer::NavgridMessage>(grid_);
+        auto debug =
+            std::make_shared<streamer::NavgridMessage>(planner_.GetGrid());
         debug->r = 0;
         debug->g = 255;
         debug->b = 0;

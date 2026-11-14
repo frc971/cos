@@ -13,6 +13,28 @@
 
 namespace streamer {
 
+// A field-coordinate polyline, independent of a planner or spline type.
+class PolylineMessage final : public control_loop::IMessage {
+ public:
+  auto GetType() -> const std::type_info& override {
+    return typeid(PolylineMessage);
+  }
+  auto GetSize() -> size_t override {
+    return sizeof(*this) +
+           (points.size() + markers.size()) * sizeof(cv::Point2d);
+  }
+  double field_size_x = 0;
+  double field_size_y = 0;
+  uint8_t r = 0;
+  uint8_t g = 128;
+  uint8_t b = 255;
+  // Render a two-point line as a velocity/direction arrow.
+  bool arrow_head = false;
+  std::vector<cv::Point2d> points;
+  // Highlighted field positions, drawn as magenta circles over the line.
+  std::vector<cv::Point2d> markers;
+};
+
 class NavgridMessage final : public control_loop::IMessage {
  public:
   explicit NavgridMessage(const std::filesystem::path& path)
@@ -56,9 +78,11 @@ class NavgridStreamerNode final : public control_loop::INode {
   void RegisterCallback(const std::function<void(const control_loop::Context&)>&
                             callback) override;
   void AddNavgrid(std::string_view input_path);
+  void AddPolyline(std::string_view input_path);
 
  private:
   void DrawNavgrid(cv::Mat& image, NavgridMessage* navgrid_message);
+  void DrawPolyline(cv::Mat& image, const PolylineMessage& polyline);
 
  private:
   std::string path_;

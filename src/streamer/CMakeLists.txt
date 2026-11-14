@@ -13,7 +13,9 @@ target_link_libraries(cos.navgrid_streamer_node PUBLIC
   cos::control_loop
   absl::log
   nlohmann_json::nlohmann_json
-  ${OpenCV_LIBS}
+  opencv_core
+  opencv_imgcodecs
+  opencv_imgproc
   nadjieb_mjpeg_streamer::nadjieb_mjpeg_streamer
 )
 
