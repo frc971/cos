@@ -3,6 +3,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
 add_executable(navgrid_streamer_test navgrid_streamer_test.cc)
 target_link_libraries(navgrid_streamer_test PRIVATE
   cos::navgrid_streamer_node
+  cos::dijkstra_path_node
   cos::stop
   absl::flags_parse
   absl::log_initialize

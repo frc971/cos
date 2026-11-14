@@ -8,14 +8,12 @@
 
 namespace streamer {
 NavgridStreamerNode::NavgridStreamerNode(
-    std::string_view input_path, std::string_view path, int port,
+    std::string_view path, int port,
     const std::filesystem::path& field_image_path)
-    : input_path_(input_path),
-      path_(path),
+    : path_(path),
       port_(port),
-      dependencies_({{input_path_, typeid(NavgridMessage)}}),
-      field_image_(cv::imread(field_image_path.string())) {
-  if (field_image_.empty()) {
+      base_image_(cv::imread(field_image_path.string())) {
+  if (base_image_.empty()) {
     throw std::runtime_error("Failed to load field image: " +
                              field_image_path.string());
   }
@@ -26,40 +24,12 @@ NavgridStreamerNode::NavgridStreamerNode(
 auto NavgridStreamerNode::CreateCallback()
     -> std::function<void(const control_loop::Context&)> {
   return [this](const control_loop::Context& context) -> void {
-    auto* navgrid_message = context->GetMessage<NavgridMessage>(input_path_);
-    if (navgrid_message == nullptr) {
-      return;
-    }
-    if (!std::isfinite(navgrid_message->field_size_x) ||
-        !std::isfinite(navgrid_message->field_size_y) ||
-        !std::isfinite(navgrid_message->node_size_meters) ||
-        navgrid_message->field_size_x <= 0 ||
-        navgrid_message->field_size_y <= 0 ||
-        navgrid_message->node_size_meters <= 0) {
-      LOG(WARNING) << "Invalid navgrid dimensions";
-      return;
-    }
-    cv::Mat new_image = field_image_.clone();
-    const double cell_width = navgrid_message->node_size_meters *
-                              new_image.cols / navgrid_message->field_size_x;
-    const double cell_height = navgrid_message->node_size_meters *
-                               new_image.rows / navgrid_message->field_size_y;
-    for (size_t y = 0; y < navgrid_message->navgrid.size(); ++y) {
-      const auto& row = navgrid_message->navgrid[y];
-      for (size_t x = 0; x < row.size(); ++x) {
-        // Navgrid coordinates start at the bottom left of the field.
-        const cv::Point top_left(
-            cvRound(x * cell_width),
-            new_image.rows - cvRound((y + 1) * cell_height));
-        const cv::Point bottom_right(
-            cvRound((x + 1) * cell_width) - 1,
-            new_image.rows - cvRound(y * cell_height) - 1);
-        if (row[x]) {
-          cv::rectangle(new_image, top_left, bottom_right,
-                        cv::Scalar(0, 0, 255), cv::FILLED);
-        }
-        cv::rectangle(new_image, top_left, bottom_right,
-                      cv::Scalar(128, 128, 128), 1);
+    cv::Mat new_image = base_image_.clone();
+    for (const auto& dependency : dependencies_) {
+      if (context->Exists(dependency.GetChannel())) {
+        auto* navgrid_message =
+            context->GetMessage<NavgridMessage>(dependency.GetChannel());
+        DrawNavgrid(new_image, navgrid_message);
       }
     }
     if (!cv::imencode(".jpg", new_image, jpeg_buffer_)) {
@@ -69,6 +39,7 @@ auto NavgridStreamerNode::CreateCallback()
       }
       return;
     }
+
     const std::string payload(jpeg_buffer_.begin(), jpeg_buffer_.end());
     streamer_.publish(path_, payload);
 
@@ -91,5 +62,44 @@ auto NavgridStreamerNode::GetPublications() const
 void NavgridStreamerNode::RegisterCallback(
     const std::function<void(const control_loop::Context&)>& callback) {
   callbacks_.emplace_back(callback);
+}
+
+void NavgridStreamerNode::AddNavgrid(std::string_view input_path) {
+  dependencies_.emplace_back(input_path, typeid(NavgridMessage));
+}
+
+void NavgridStreamerNode::DrawNavgrid(cv::Mat& image,
+                                      NavgridMessage* navgrid_message) {
+  if (!std::isfinite(navgrid_message->field_size_x) ||
+      !std::isfinite(navgrid_message->field_size_y) ||
+      !std::isfinite(navgrid_message->node_size_meters) ||
+      navgrid_message->field_size_x <= 0 ||
+      navgrid_message->field_size_y <= 0 ||
+      navgrid_message->node_size_meters <= 0) {
+    LOG(WARNING) << "Invalid navgrid dimensions";
+    return;
+  }
+  const double cell_width = navgrid_message->node_size_meters * image.cols /
+                            navgrid_message->field_size_x;
+  const double cell_height = navgrid_message->node_size_meters * image.rows /
+                             navgrid_message->field_size_y;
+  for (size_t y = 0; y < navgrid_message->navgrid.size(); ++y) {
+    const auto& row = navgrid_message->navgrid[y];
+    for (size_t x = 0; x < row.size(); ++x) {
+      // Navgrid coordinates start at the bottom left of the field.
+      const cv::Point top_left(cvRound(x * cell_width),
+                               image.rows - cvRound((y + 1) * cell_height));
+      const cv::Point bottom_right(cvRound((x + 1) * cell_width) - 1,
+                                   image.rows - cvRound(y * cell_height) - 1);
+      if (row[x]) {
+        cv::rectangle(image, top_left, bottom_right,
+                      cv::Scalar(navgrid_message->b, navgrid_message->g,
+                                 navgrid_message->r),
+                      cv::FILLED);
+      }
+      cv::rectangle(image, top_left, bottom_right, cv::Scalar(128, 128, 128),
+                    1);
+    }
+  }
 }
 }  // namespace streamer

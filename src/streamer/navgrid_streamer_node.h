@@ -15,7 +15,8 @@ namespace streamer {
 
 class NavgridMessage final : public control_loop::IMessage {
  public:
-  explicit NavgridMessage(const std::filesystem::path& path) {
+  explicit NavgridMessage(const std::filesystem::path& path)
+      : r(255), g(0), b(0) {
     std::ifstream file(path);
     if (!file.is_open()) {
       throw std::runtime_error("Failed to open navgrid file: " + path.string());
@@ -35,13 +36,15 @@ class NavgridMessage final : public control_loop::IMessage {
   double field_size_x;
   double field_size_y;
   double node_size_meters;
+  uint8_t r;
+  uint8_t g;
+  uint8_t b;
   std::vector<std::vector<bool>> navgrid;
 };
 
 class NavgridStreamerNode final : public control_loop::INode {
  public:
-  NavgridStreamerNode(std::string_view input_path, std::string_view path,
-                      int port,
+  NavgridStreamerNode(std::string_view path, int port,
                       const std::filesystem::path& field_image_path =
                           "/root/constants/assets/field.png");
   auto CreateCallback()
@@ -52,15 +55,18 @@ class NavgridStreamerNode final : public control_loop::INode {
       -> const std::vector<control_loop::MessageDescriptor>& override;
   void RegisterCallback(const std::function<void(const control_loop::Context&)>&
                             callback) override;
+  void AddNavgrid(std::string_view input_path);
 
  private:
-  std::string input_path_;
+  void DrawNavgrid(cv::Mat& image, NavgridMessage* navgrid_message);
+
+ private:
   std::string path_;
   int port_;
   std::vector<control_loop::MessageDescriptor> dependencies_;
   std::vector<control_loop::MessageDescriptor> publications_;
   std::vector<std::function<void(const control_loop::Context&)>> callbacks_;
-  cv::Mat field_image_;
+  cv::Mat base_image_;
   std::vector<unsigned char> jpeg_buffer_;
   nadjieb::MJPEGStreamer streamer_;
 };
