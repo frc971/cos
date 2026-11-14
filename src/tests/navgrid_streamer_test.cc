@@ -28,6 +28,9 @@ ABSL_FLAG(double, start_heading, 0.0,                               // NOLINT
 ABSL_FLAG(double, goal_x, 15.0, "Goal field x in meters.");         // NOLINT
 ABSL_FLAG(double, goal_y, 7.0, "Goal field y in meters.");          // NOLINT
 ABSL_FLAG(double, goal_heading, 90.0, "Goal heading in degrees.");  // NOLINT
+ABSL_FLAG(double, turn_penalty, 0.3,  // NOLINT
+          "Extra path cost in meters per radian of travel-direction change; "
+          "0 disables the penalty.");
 
 auto main(int argc, char** argv) -> int {
   absl::ParseCommandLine(argc, argv);
@@ -38,8 +41,10 @@ auto main(int argc, char** argv) -> int {
   try {
     auto navgrid = std::make_shared<streamer::NavgridMessage>(
         absl::GetFlag(FLAGS_navgrid));
+    pathing::MotionSettings settings;
+    settings.turn_penalty = absl::GetFlag(FLAGS_turn_penalty);
     pathing::DijkstraPathNode planner("pose", "goal", "velocity",
-                                      absl::GetFlag(FLAGS_navgrid));
+                                     absl::GetFlag(FLAGS_navgrid), settings);
     planner.EnableNavgridDebug("route");
     streamer::NavgridStreamerNode streamer("/navgrid",
                                            absl::GetFlag(FLAGS_port),

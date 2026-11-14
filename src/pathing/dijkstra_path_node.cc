@@ -1,6 +1,7 @@
 #include "pathing/dijkstra_path_node.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <numbers>
@@ -11,6 +12,13 @@
 
 namespace pathing {
 namespace {
+// Counterclockwise travel directions; adjacent entries differ by 45 degrees.
+constexpr std::array<std::pair<int, int>, 8> kDirections{
+    {{1, 0}, {1, 1}, {0, 1}, {-1, 1},
+     {-1, 0}, {-1, -1}, {0, -1}, {1, -1}}};
+constexpr int kNoDirection = 8;
+constexpr int kStatesPerCell = 9;
+
 auto Positive(double value) -> bool {
   return std::isfinite(value) && value > 0;
 }
@@ -44,6 +52,9 @@ DijkstraPathNode::DijkstraPathNode(std::string_view pose_path,
     throw std::invalid_argument(
         "Planner motion settings must be finite and positive");
   }
+  if (!std::isfinite(settings.turn_penalty) || settings.turn_penalty < 0) {
+    throw std::invalid_argument("Turn penalty must be finite and nonnegative");
+  }
   if (!Positive(grid_.field_size_x) || !Positive(grid_.field_size_y) ||
       !Positive(grid_.node_size_meters) || grid_.navgrid.empty() ||
       grid_.navgrid.front().empty()) {
@@ -59,7 +70,7 @@ DijkstraPathNode::DijkstraPathNode(std::string_view pose_path,
       grid_.navgrid.size() !=
           std::ceil(grid_.field_size_y / grid_.node_size_meters) ||
       width * static_cast<double>(grid_.navgrid.size()) >
-          std::numeric_limits<int>::max()) {
+          std::numeric_limits<int>::max() / kStatesPerCell) {
     throw std::invalid_argument(
         "Navgrid dimensions do not match field coverage");
   }
@@ -120,46 +131,61 @@ auto DijkstraPathNode::FindPath(Cell start, Cell goal) const
     -> std::vector<Cell> {
   const int width = static_cast<int>(grid_.navgrid.front().size());
   const int count = width * static_cast<int>(grid_.navgrid.size());
-  const int source = start.y * width + start.x;
+  // A cell reached from different directions can have different future costs.
+  // Keep independent distances and parents for each incoming direction.
+  const int source = (start.y * width + start.x) * kStatesPerCell + kNoDirection;
   const int target = goal.y * width + goal.x;
-  std::vector<double> distance(count, std::numeric_limits<double>::infinity());
-  std::vector<int> parent(count, -1);
+  std::vector<double> distance(count * kStatesPerCell,
+                              std::numeric_limits<double>::infinity());
+  std::vector<int> parent(count * kStatesPerCell, -1);
   using Entry = std::pair<double, int>;
   std::priority_queue<Entry, std::vector<Entry>, std::greater<>> queue;
   distance[source] = 0;
   queue.emplace(0, source);
+  int destination = -1;
   while (!queue.empty()) {
-    const auto [cost, index] = queue.top();
+    const auto [cost, state] = queue.top();
     queue.pop();
-    if (cost > distance[index])
+    if (cost > distance[state])
       continue;
-    if (index == target)
+    const int index = state / kStatesPerCell;
+    const int incoming = state % kStatesPerCell;
+    if (index == target) {
+      destination = state;
       break;
+    }
     const Cell cell{.x = index % width, .y = index / width};
-    for (int dy = -1; dy <= 1; ++dy) {
-      for (int dx = -1; dx <= 1; ++dx) {
-        const Cell next{.x = cell.x + dx, .y = cell.y + dy};
-        if ((dx == 0 && dy == 0) || !IsFree(next))
-          continue;
-        if (dx != 0 && dy != 0 &&
-            (!IsFree({.x = cell.x + dx, .y = cell.y}) ||
-             !IsFree({.x = cell.x, .y = cell.y + dy})))
-          continue;
-        const int neighbor = next.y * width + next.x;
-        const double next_cost =
-            cost + std::hypot(dx, dy) * grid_.node_size_meters;
-        if (next_cost < distance[neighbor]) {
-          distance[neighbor] = next_cost;
-          parent[neighbor] = index;
-          queue.emplace(next_cost, neighbor);
-        }
+    for (int direction = 0; direction < kNoDirection; ++direction) {
+      const auto [dx, dy] = kDirections[direction];
+      const Cell next{.x = cell.x + dx, .y = cell.y + dy};
+      if (!IsFree(next))
+        continue;
+      if (dx != 0 && dy != 0 &&
+          (!IsFree({.x = cell.x + dx, .y = cell.y}) ||
+           !IsFree({.x = cell.x, .y = cell.y + dy})))
+        continue;
+      double turn_cost = 0;
+      if (incoming != kNoDirection) {
+        const int difference = std::abs(direction - incoming);
+        const int turns = std::min(difference, kNoDirection - difference);
+        turn_cost = settings_.turn_penalty * (turns * std::numbers::pi / 4);
+      }
+      const int neighbor =
+          (next.y * width + next.x) * kStatesPerCell + direction;
+      const double next_cost =
+          cost + std::hypot(dx, dy) * grid_.node_size_meters + turn_cost;
+      if (next_cost < distance[neighbor]) {
+        distance[neighbor] = next_cost;
+        parent[neighbor] = state;
+        queue.emplace(next_cost, neighbor);
       }
     }
   }
-  if (!std::isfinite(distance[target]))
+  if (destination == -1)
     return {};
   std::vector<Cell> route;
-  for (int index = target; index != -1; index = parent[index]) {
+  for (int state = destination; state != -1; state = parent[state]) {
+    const int index = state / kStatesPerCell;
     route.push_back({.x = index % width, .y = index / width});
   }
   std::ranges::reverse(route);

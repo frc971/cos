@@ -9,6 +9,11 @@ target_link_libraries(navgrid_streamer_test PRIVATE
   absl::log_initialize
 )
 
+add_executable(dijkstra_path_node_test dijkstra_path_node_test.cc)
+target_link_libraries(dijkstra_path_node_test PRIVATE
+  cos::dijkstra_path_node GTest::gtest_main)
+add_test(NAME dijkstra_path_node_test COMMAND dijkstra_path_node_test)
+
 add_executable(context_handoff_node_test context_handoff_node_test.cc)
 target_link_libraries(context_handoff_node_test PRIVATE
   cos::control_loop GTest::gtest_main)
