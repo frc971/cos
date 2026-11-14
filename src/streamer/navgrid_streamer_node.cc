@@ -47,16 +47,19 @@ auto NavgridStreamerNode::CreateCallback()
     for (size_t y = 0; y < navgrid_message->navgrid.size(); ++y) {
       const auto& row = navgrid_message->navgrid[y];
       for (size_t x = 0; x < row.size(); ++x) {
+        // Navgrid coordinates start at the bottom left of the field.
+        const cv::Point top_left(
+            cvRound(x * cell_width),
+            new_image.rows - cvRound((y + 1) * cell_height));
+        const cv::Point bottom_right(
+            cvRound((x + 1) * cell_width) - 1,
+            new_image.rows - cvRound(y * cell_height) - 1);
         if (row[x]) {
-          // Navgrid coordinates start at the bottom left of the field.
-          cv::rectangle(
-              new_image,
-              cv::Point(cvRound(x * cell_width),
-                        new_image.rows - cvRound((y + 1) * cell_height)),
-              cv::Point(cvRound((x + 1) * cell_width) - 1,
-                        new_image.rows - cvRound(y * cell_height) - 1),
-              cv::Scalar(0, 0, 255), cv::FILLED);
+          cv::rectangle(new_image, top_left, bottom_right,
+                        cv::Scalar(0, 0, 255), cv::FILLED);
         }
+        cv::rectangle(new_image, top_left, bottom_right,
+                      cv::Scalar(128, 128, 128), 1);
       }
     }
     if (!cv::imencode(".jpg", new_image, jpeg_buffer_)) {
