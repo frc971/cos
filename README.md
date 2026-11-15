@@ -47,3 +47,12 @@ with the raw route retained and no usable spline or samples. Sampling is bounded
 to 100000 points and subdivision depth 24; collision subdivision depth is 16.
 Call `EnableSplineDebug(channel)` before registration to publish a
 `streamer::PolylineMessage`, and register it using `NavgridStreamerNode::AddPolyline`.
+
+`vision_bot_main` also supports live pathing from roboRIO NetworkTables pose and
+goal inputs. See [the pathing contract](src/pathing/README.md) for topic names,
+command fields, freshness requirements, and configuration flags. The roboRIO
+publisher and drive-command consumer must be implemented separately.
+
+Vision-bot's live pathing visualization is enabled by default at
+`http://vision-bot:4975/navgrid`. Disable it with `--nonavgrid_streamer`, or change
+its port with `--navgrid_streamer_port`.

@@ -31,3 +31,16 @@ target_sources(cos.dijkstra_spline_node
     FILES dijkstra_spline_node.h
 )
 target_link_libraries(cos.dijkstra_spline_node PUBLIC cos::dijkstra_path_node)
+
+add_library(cos.networktables_pathing)
+add_library(cos::networktables_pathing ALIAS cos.networktables_pathing)
+target_sources(cos.networktables_pathing
+  PRIVATE networktables_pathing.cc
+  PUBLIC FILE_SET HEADERS
+    BASE_DIRS ${PROJECT_SOURCE_DIR}/src
+    FILES networktables_pathing.h
+)
+target_link_libraries(cos.networktables_pathing
+  PUBLIC cos::dijkstra_spline_node cos::control_loop ntcore
+  PRIVATE absl::log cos::navgrid_streamer_node
+)
