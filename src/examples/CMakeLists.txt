@@ -58,3 +58,9 @@ target_link_libraries(connect_to_rio PRIVATE
   absl::log_initialize
   cos::connect_to_rio
 )
+
+add_executable(rplidar)
+target_sources(rplidar PRIVATE
+  rplidar.cc
+)
+target_link_libraries(rplidar PRIVATE rplidar::sdk)
