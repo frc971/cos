@@ -1,0 +1,15 @@
+{
+  "name": "rplidar",
+  "camera_type": "rplidar",
+  "port": "/dev/ttyUSB0",
+  "motor_speed": null,
+  "baudrate": 115200,
+  "extrinsics": {
+    "translation_x": 0.0,
+    "translation_y": 0.0,
+    "translation_z": 0.0,
+    "rotation_x": 0.0,
+    "rotation_y": 0.0,
+    "rotation_z": 0.0
+  }
+}

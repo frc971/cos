@@ -64,3 +64,13 @@ target_sources(rplidar PRIVATE
   rplidar.cc
 )
 target_link_libraries(rplidar PRIVATE rplidar::sdk)
+
+add_executable(rplidar_node)
+target_sources(rplidar_node PRIVATE rplidar_node.cc)
+target_link_libraries(rplidar_node PRIVATE
+  cos::rplidar_node
+  cos::control_loop
+  absl::flags
+  absl::flags_parse
+  absl::log_initialize
+)

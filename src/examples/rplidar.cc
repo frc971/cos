@@ -4,8 +4,6 @@
 #include <memory>
 #include <print>
 #include <thread>
-#include <vector>
-#include "sl_lidar.h"
 #include "sl_lidar_driver.h"
 
 #ifndef _countof
