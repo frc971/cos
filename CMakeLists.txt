@@ -69,5 +69,6 @@ target_compile_options(ixwebsocket PRIVATE
 add_subdirectory(src)
 
 include(cmake/DevOrin.cmake)
+include(cmake/LidarOrin.cmake)
 include(cmake/VisionBot.cmake)
 include(cmake/SecondBot.cmake)
