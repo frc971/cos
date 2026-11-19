@@ -45,12 +45,11 @@ RPLidarNode::RPLidarNode(const std::filesystem::path& config_path,
               << static_cast<unsigned>(info.hardware_version) << '\n';
   }
 
+  CHECK(SL_IS_OK(lidar_->startScan(false, true)));
+  // Scan startup applies the SDK's default motor speed internally.
   if (motor_speed_.has_value()) {
-    lidar_->setMotorSpeed(motor_speed_.value());
-  } else {
-    lidar_->setMotorSpeed();
+    CHECK(SL_IS_OK(lidar_->setMotorSpeed(motor_speed_.value())));
   }
-  lidar_->startScan(false, true);
 }
 
 auto RPLidarNode::CreateCallback()

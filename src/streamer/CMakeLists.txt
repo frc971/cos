@@ -1,3 +1,17 @@
+add_library(cos.rplidar_scan_streamer_node)
+add_library(cos::rplidar_scan_streamer_node ALIAS cos.rplidar_scan_streamer_node)
+target_sources(cos.rplidar_scan_streamer_node
+  PRIVATE rplidar_scan_streamer_node.cc
+  PUBLIC FILE_SET HEADERS
+    BASE_DIRS ${PROJECT_SOURCE_DIR}/src
+    FILES rplidar_scan_streamer_node.h
+)
+target_link_libraries(cos.rplidar_scan_streamer_node
+  PUBLIC cos::rplidar_node cos::control_loop opencv_core
+    nadjieb_mjpeg_streamer::nadjieb_mjpeg_streamer
+  PRIVATE opencv_imgcodecs opencv_imgproc absl::log
+)
+
 add_library(cos.navgrid_streamer_node)
 add_library(cos::navgrid_streamer_node ALIAS cos.navgrid_streamer_node)
 target_sources(cos.navgrid_streamer_node
