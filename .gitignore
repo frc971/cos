@@ -6,6 +6,7 @@ bos-logs/
 **/*.wpilog
 **/*.jpg
 **/*.png
+!constants/field-2d/*.png
 **/*.pt
 **/__pycache__/
 .cache

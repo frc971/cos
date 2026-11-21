@@ -66,7 +66,8 @@ class MessageDescriptor {
     if constexpr (requires { T::RegisterWPILog; }) {
       descriptor.registration_ = T::RegisterWPILog;
     } else if constexpr (std::is_arithmetic_v<T> ||
-                         std::is_same_v<T, std::string>) {
+                         std::is_same_v<T, std::string> ||
+                         std::is_same_v<T, std::vector<double>>) {
       descriptor.registration_ = &logging::RegisterFields<T>;
     } else {
       descriptor.registration_ = nullptr;

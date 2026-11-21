@@ -1,5 +1,5 @@
 {
-  "name": "dev_orin_color",
+  "name": "gamepiece",
   "camera_type": "uvc",
   "serial_id": "gamepiece",
   "height": 800,
@@ -12,10 +12,10 @@
   "extrinsics": {
     "translation_x": 0.0,
     "translation_y": 0.0,
-    "translation_z": 0.0,
-    "rotation_x": 180,
-    "rotation_y": 0.0,
-    "rotation_z": 0.0
+    "translation_z": 0.4,
+    "rotation_x": 180.0,
+    "rotation_y": -8.0,
+    "rotation_z": 180.0
   },
   "intrinsics": {
     "cx": 631.1807078641325,

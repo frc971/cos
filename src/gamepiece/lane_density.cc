@@ -10,8 +10,8 @@
 #include <opencv2/calib3d.hpp>
 #include <opencv2/imgproc.hpp>
 
+#include "gamepiece/image_utils.h"
 #include "utils/cv_geometry.h"
-#include "utils/image_utils.h"
 
 ABSL_FLAG(int, lane_minimum_hue, 18,                       // NOLINT
           "Minimum lane hue in OpenCV HSV units.");       // NOLINT
@@ -95,10 +95,10 @@ auto LaneDensityTracker::GetLaneDensities(const cv::Mat& color_image,
   std::vector<cv::Point2f> thresholded_points;
   cv::Mat3b hsv_image;
   cv::Mat1b threshold_mask;
-  utils::HSVThreshold(color_image, absl::GetFlag(FLAGS_lane_minimum_hue),
-                      absl::GetFlag(FLAGS_lane_maximum_hue),
-                      absl::GetFlag(FLAGS_lane_minimum_saturation),
-                      thresholded_points, hsv_image, threshold_mask);
+  HSVThreshold(color_image, absl::GetFlag(FLAGS_lane_minimum_hue),
+               absl::GetFlag(FLAGS_lane_maximum_hue),
+               absl::GetFlag(FLAGS_lane_minimum_saturation),
+               thresholded_points, hsv_image, threshold_mask);
   cv::undistortImagePoints(thresholded_points, thresholded_points,
                           camera_to_image_, distortion_coeffs_);
   const auto image_relative_lanes = GetImageLaneBoundaries(robot_pose);
