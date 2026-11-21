@@ -200,3 +200,7 @@ target_link_libraries(unambiguous_solver_node_test PRIVATE
   cos::unambiguous_solver_node
   cos::simulation_position_sender_node
 )
+
+add_executable(unet_mask_test unet_mask_test.cc)
+target_link_libraries(unet_mask_test PRIVATE unet_mask opencv_imgcodecs GTest::gtest_main)
+add_test(NAME unet_mask_test COMMAND unet_mask_test)

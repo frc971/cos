@@ -94,6 +94,7 @@ void AddCameraPipeline(
         static_cast<std::size_t>(config.width) * config.height);
     tracker->EnablePoseOutput("gamepiece/pose");
     tracker->EnableMaskOutput("gamepiece/mask");
+    tracker->EnableUnetControl("/root/gamepiece_models/ball_unet.engine");  // NT /COS/Gamepiece/UseUnet
     control_loop.RegisterNode(tracker);
     control_loop.RegisterNode(
         std::make_shared<streamer::DensestClusterRioStreamerNode>(

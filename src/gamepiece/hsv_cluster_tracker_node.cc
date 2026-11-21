@@ -20,6 +20,7 @@
 #include "camera/nvjpeg_decode_node.h"
 #include "control_loop/thread_pool.h"
 #include "gamepiece/image_utils.h"
+#include "gamepiece/unet_mask.h"
 #include "gamepiece/yolo_node.h"
 #include "localization/position.h"
 #include "utils/cv_geometry.h"
@@ -114,6 +115,35 @@ HSVClusterTrackerNode::HSVClusterTrackerNode(
   camera_position_ =
       cv::Vec3f{camera_extrinsics_cv_(0, 3), camera_extrinsics_cv_(1, 3),
                 camera_extrinsics_cv_(2, 3)};
+}
+
+void HSVClusterTrackerNode::EnableUnetControl(
+    std::string_view engine_path, bool use_unet, double confidence,
+    nt::NetworkTableInstance instance, std::string_view prefix) {
+  const std::string base(prefix);
+  std::scoped_lock lock(processing_mutex_);
+  use_unet_entry_ = instance.GetBooleanTopic(base + "/UseUnet").GetEntry(use_unet);
+  unet_confidence_entry_ = instance.GetDoubleTopic(base + "/UnetConfidence").GetEntry(confidence);
+  unet_engine_entry_ = instance.GetStringTopic(base + "/UnetEngine").GetEntry(std::string(engine_path));
+  use_unet_entry_.SetDefault(use_unet);
+  unet_confidence_entry_.SetDefault(confidence);
+  unet_engine_entry_.SetDefault(std::string(engine_path));
+}
+
+void HSVClusterTrackerNode::PollUnetControl() {
+  if (!unet_engine_entry_) return;
+  use_unet_ = use_unet_entry_.Get();
+  unet_confidence_ = static_cast<float>(unet_confidence_entry_.Get());
+  if (const auto path = unet_engine_entry_.Get(); path != unet_path_) {
+    unet_path_ = path;
+    try {
+      unet_ = path.empty() ? nullptr : std::make_shared<UnetMask>(path);
+      LOG(INFO) << "U-Net engine " << (unet_ ? "loaded: " : "unloaded: ") << path;
+    } catch (const std::exception& error) {
+      unet_ = nullptr;
+      LOG(ERROR) << "U-Net unavailable, using HSV threshold: " << error.what();
+    }
+  }
 }
 
 void HSVClusterTrackerNode::SetStrategy(

@@ -26,6 +26,7 @@ ABSL_FLAG(std::string, config, "/root/constants/second_bot/color.json", "Gamepie
 ABSL_FLAG(std::string, log_path, "", "Replay timestamped JPEG directory instead of a live camera");
 ABSL_FLAG(std::string, nt_server, "10.9.71.2", "NT server supplying /Drive/Pose (read only)");
 ABSL_FLAG(std::vector<std::string>, pose, {}, "Optional fixed field pose: x,y,yaw (meters, radians)");
+ABSL_FLAG(std::string, unet_engine, "", "U-Net engine replacing the HSV threshold; toggled via NT /COS/Gamepiece/UseUnet");
 ABSL_FLAG(int, port, 5806, "HTTP port: /stream ellipses, /hsv threshold mask, /clusters densest ellipse, /balls ball circles");
 
 auto main(int argc, char** argv) -> int {
@@ -67,6 +68,8 @@ auto main(int argc, char** argv) -> int {
         gamepiece::DensityHistory::kPredict, true, "/Drive/Pose", pose_instance);
     tracker->EnablePoseOutput("pose");
     tracker->EnableMaskOutput("mask");
+    if (const auto engine = absl::GetFlag(FLAGS_unet_engine); !engine.empty())
+      tracker->EnableUnetControl(engine, true, 0.05, pose_instance);
     loop.RegisterNode(decoder);
     loop.RegisterNode(tracker);
     loop.RegisterNode(std::make_shared<streamer::DensestClusterRioStreamerNode>("clusters", "pose", "/COS/DensestCluster", preview));

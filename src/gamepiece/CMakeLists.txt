@@ -39,6 +39,10 @@ target_include_directories(yolo_inference PUBLIC
   ${CMAKE_SOURCE_DIR}/src
 )
 
+add_library(unet_mask unet_mask.cc)
+target_link_libraries(unet_mask PUBLIC opencv_core CUDA::cudart PRIVATE opencv_imgproc absl::check absl::log nvinfer)
+target_include_directories(unet_mask PUBLIC ${CMAKE_SOURCE_DIR}/src)
+
 add_library(image_utils)
 add_library(cos::image_utils ALIAS image_utils)
 target_sources(image_utils PRIVATE
@@ -64,7 +68,7 @@ add_library(hsv_cluster_tracker_node
   hybrid_cluster_strategy.cc)
 target_link_libraries(hsv_cluster_tracker_node PUBLIC
   opencv_core wpimath ntcore cos::control_loop PRIVATE
-  image_utils cos::cv_geometry_utils opencv_imgproc yolo_inference
+  image_utils cos::cv_geometry_utils opencv_imgproc yolo_inference unet_mask
   cos::nvjpeg_decode_node cos::thread_pool)
 target_include_directories(hsv_cluster_tracker_node PUBLIC ${CMAKE_SOURCE_DIR}/src)
 add_library(cos::hsv_cluster_tracker_node ALIAS hsv_cluster_tracker_node)

@@ -1,4 +1,5 @@
 #include "gamepiece/cluster_strategy.h"
+#include "gamepiece/unet_mask.h"
 #include "gamepiece/hsv_cluster_tracker_node.h"
 
 #include <algorithm>
@@ -43,6 +44,11 @@ void AnalyticalClusterStrategy::Process(
 
 void HSVClusterTrackerNode::ThresholdFuel(const cv::Mat& frame,
                                           cv::Mat1b& mask) {
+  PollUnetControl();
+  if (use_unet_ && unet_) {
+    unet_->Threshold(frame, unet_confidence_, mask);
+    return;
+  }
   cv::cvtColor(frame, hsv_image_, cv::COLOR_BGR2HSV);
   cv::inRange(hsv_image_,
               cv::Scalar{hsv_color_range.first, minimum_saturation, 0},

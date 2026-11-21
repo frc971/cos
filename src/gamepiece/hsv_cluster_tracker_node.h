@@ -12,6 +12,9 @@
 #include <frc/geometry/Pose2d.h>
 #include <frc/geometry/Pose3d.h>
 #include <frc/geometry/Translation2d.h>
+#include <networktables/BooleanTopic.h>
+#include <networktables/DoubleTopic.h>
+#include <networktables/StringTopic.h>
 #include <networktables/StructTopic.h>
 #include <opencv2/core.hpp>
 
@@ -20,6 +23,7 @@
 #include "utils/disjoint_set_union.h"
 
 namespace gamepiece {
+class UnetMask;
 struct Ellipse {
   cv::Point2d center;
   cv::Size2d semi_axes;
@@ -75,6 +79,12 @@ class HSVClusterTrackerNode final : public control_loop::INode {
       std::string_view yolo_model = "/root/gamepiece_models/best_nms_gray.engine");
   // Switch between frames; clears IDs and density history for the new algorithm.
   void SetStrategy(std::unique_ptr<ClusterStrategy> strategy);
+  // Hot-swappable U-Net thresholding in place of the HSV threshold. Polled every frame on
+  // <prefix>/UseUnet (bool), UnetConfidence (double) and UnetEngine (string path; reloaded on change).
+  // A missing or invalid engine falls back to HSV.
+  void EnableUnetControl(std::string_view engine_path, bool use_unet = true, double confidence = 0.05,
+                         nt::NetworkTableInstance instance = nt::NetworkTableInstance::GetDefault(),
+                         std::string_view prefix = "/COS/Gamepiece");
   // Accepts CPU or GPU BGR frames; serialize access with callbacks and SetStrategy.
   void ProcessFrame(cv::InputArray frame,
                     std::optional<frc::Pose2d> robot_pose = std::nullopt);
@@ -106,6 +116,7 @@ class HSVClusterTrackerNode final : public control_loop::INode {
   static constexpr float kFuelRadiusM = 0.075f;
   static auto Covariance(const std::vector<cv::Point2f>& points) -> cv::Matx22f;
   void ThresholdFuel(const cv::Mat& frame, cv::Mat1b& mask);
+  void PollUnetControl();
   void ProcessAnalytical(const cv::Mat& frame, const std::optional<frc::Pose2d>& pose);
   [[nodiscard]] auto NormalizedPointOffset(const cv::Point2f& point) const
       -> frc::Translation2d;
@@ -148,6 +159,13 @@ class HSVClusterTrackerNode final : public control_loop::INode {
   std::string pose_output_path_;
   std::string mask_output_path_;
   nt::StructSubscriber<frc::Pose2d> pose_subscriber_;
+  nt::BooleanEntry use_unet_entry_;
+  nt::DoubleEntry unet_confidence_entry_;
+  nt::StringEntry unet_engine_entry_;
+  std::shared_ptr<UnetMask> unet_;
+  std::string unet_path_;
+  bool use_unet_ = false;
+  float unet_confidence_ = 0.05f;
   std::vector<std::function<void(const control_loop::Context&)>> callbacks_;
   std::vector<control_loop::MessageDescriptor> dependencies_;
   std::vector<control_loop::MessageDescriptor> publications_;
