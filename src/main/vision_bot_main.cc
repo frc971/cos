@@ -1,4 +1,6 @@
+#include <chrono>
 #include <filesystem>
+#include <memory>
 #include <string>
 
 #include "absl/flags/flag.h"
@@ -15,6 +17,7 @@
 #include "localization/variance_calculator_node.h"
 #include "logging/jpeg_buffer_log_node.h"
 #include "logging/wpilog_writer.h"
+#include "pathing/networktables_pathing.h"
 #include "simulation/simulation_position_sender_node.h"
 #include "streamer/jpeg_buffer_streamer_node.h"
 #include "streamer/position_estimate_rio_streamer_node.h"
@@ -28,10 +31,40 @@ ABSL_FLAG(uint, max_context, 1,                                   // NOLINT
           "Maximum number of concurrent control-loop contexts");  // NOLINT
 ABSL_FLAG(bool, latency_log, false,                               // NOLINT
           "Log control-loop latency and loops per second");       // NOLINT
-ABSL_FLAG(  // NOLINT
+ABSL_FLAG(                                                        // NOLINT
     bool, log_images, false,                                      // NOLINT
     "Log timestamped JPEG frames to the run's log directory in "  // NOLINT
     "per-camera subfolders");                                     // NOLINT
+
+ABSL_FLAG(bool, pathing, true,                      // NOLINT
+          "Enable NetworkTables spline pathing.");  // NOLINT
+ABSL_FLAG(bool, navgrid_streamer, true,             // NOLINT
+          "Stream the live pathing navgrid, spline, and target velocity.");
+ABSL_FLAG(int, navgrid_streamer_port, 4975, "Navgrid MJPEG port.");  // NOLINT
+ABSL_FLAG(std::string, navgrid_streamer_field_image,                 // NOLINT
+          "/root/constants/assets/field.png", "Navgrid stream field image.");
+ABSL_FLAG(std::string, pathing_navgrid,           // NOLINT
+          "/root/constants/assets/navgrid.json",  // NOLINT
+          "Navgrid used by vision-bot pathing.");
+ABSL_FLAG(std::string, pathing_pose_topic, "/DriveState/Pose",  // NOLINT
+          "Rio current pose topic (Pose2d struct).");
+ABSL_FLAG(std::string, pathing_goal_topic, "/COS/Pathing/Goal",  // NOLINT
+          "Continuously streamed rio goal topic (Pose2d struct).");
+ABSL_FLAG(std::string, pathing_command_topic, "/COS/Pathing/Command",  // NOLINT
+          "Field-relative velocity command topic (double array).");
+ABSL_FLAG(int, pathing_period_ms, 20, "Pathing loop period in ms.");  // NOLINT
+ABSL_FLAG(int, pathing_input_timeout_ms, 250,                         // NOLINT
+          "Pose/goal timeout in ms.");                                // NOLINT
+ABSL_FLAG(int, pathing_command_timeout_ms, 250,                       // NOLINT
+          "Maximum duration the rio may hold a pathing command, in ms.");
+ABSL_FLAG(double, pathing_lookahead_m, 0.5,          // NOLINT
+          "Spline lookahead in meters.");            // NOLINT
+ABSL_FLAG(double, pathing_max_translation_mps, 1.0,  // NOLINT
+          "Maximum pathing translation speed in m/s.");
+ABSL_FLAG(double, pathing_max_rotation_radps, 2.0,  // NOLINT
+          "Maximum pathing rotation speed in rad/s.");
+ABSL_FLAG(double, pathing_turn_penalty, 0.3,  // NOLINT
+          "Dijkstra travel-direction penalty in meters per radian.");
 
 namespace {
 
@@ -101,6 +134,35 @@ auto main(int argc, char** argv) -> int {
   control_loop.SetMaxContext(absl::GetFlag(FLAGS_max_context));
   control_loop::ThreadPool thread_pool;
 
+  std::unique_ptr<pathing::NetworkTablesPathing> pathing_pipeline;
+  if (absl::GetFlag(FLAGS_pathing)) {
+    pathing::NetworkTablesPathingSettings settings;
+    settings.navgrid_path = absl::GetFlag(FLAGS_pathing_navgrid);
+    settings.pose_topic = absl::GetFlag(FLAGS_pathing_pose_topic);
+    settings.goal_topic = absl::GetFlag(FLAGS_pathing_goal_topic);
+    settings.command_topic = absl::GetFlag(FLAGS_pathing_command_topic);
+    settings.navgrid_streamer = absl::GetFlag(FLAGS_navgrid_streamer);
+    settings.navgrid_streamer_port = absl::GetFlag(FLAGS_navgrid_streamer_port);
+    settings.field_image_path =
+        absl::GetFlag(FLAGS_navgrid_streamer_field_image);
+    settings.period =
+        std::chrono::milliseconds(absl::GetFlag(FLAGS_pathing_period_ms));
+    settings.input_timeout = std::chrono::milliseconds(
+        absl::GetFlag(FLAGS_pathing_input_timeout_ms));
+    settings.command_timeout = std::chrono::milliseconds(
+        absl::GetFlag(FLAGS_pathing_command_timeout_ms));
+    settings.lookahead =
+        units::meter_t{absl::GetFlag(FLAGS_pathing_lookahead_m)};
+    settings.motion.max_translation = units::meters_per_second_t{
+        absl::GetFlag(FLAGS_pathing_max_translation_mps)};
+    settings.motion.max_rotation = units::radians_per_second_t{
+        absl::GetFlag(FLAGS_pathing_max_rotation_radps)};
+    settings.spline.turn_penalty = absl::GetFlag(FLAGS_pathing_turn_penalty);
+    settings.motion.turn_penalty = settings.spline.turn_penalty;
+    pathing_pipeline =
+        std::make_unique<pathing::NetworkTablesPathing>(settings);
+  }
+
   const std::vector<std::string> paths{"/root/constants/vision-bot/front.json",
                                        "/root/constants/vision-bot/left.json",
                                        "/root/constants/vision-bot/back.json",
@@ -139,13 +201,18 @@ auto main(int argc, char** argv) -> int {
   }
 
   auto wpilog_writer = std::make_shared<logging::WPILogWriter>(
-      (std::filesystem::path(control_loop::GetLogPath()) / "cos.wpilog").string(),
+      (std::filesystem::path(control_loop::GetLogPath()) / "cos.wpilog")
+          .string(),
       control_loop.GetLogPublications());
   control_loop.EnableWPILog(wpilog_writer);
+  if (pathing_pipeline)
+    pathing_pipeline->Start();
   control_loop.Start();
 
   stop::WaitUntilStop();
 
+  if (pathing_pipeline)
+    pathing_pipeline->Stop();
   control_loop.Stop();
   thread_pool.Shutdown();
 }
