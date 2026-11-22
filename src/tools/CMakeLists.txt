@@ -100,3 +100,10 @@ target_link_libraries(intrinsics_calibrate_disk PRIVATE
 target_include_directories(intrinsics_calibrate_disk PRIVATE
   ${OpenCV_INCLUDE_DIRS}
 )
+
+add_executable(set_ip_address set_ip_address.cpp)
+target_link_libraries(set_ip_address PRIVATE
+  absl::flags
+  absl::flags_parse
+  unilidar_sdk2
+)
