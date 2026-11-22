@@ -164,7 +164,7 @@ DijkstraSplineNode::DijkstraSplineNode(
     : pose_path_(pose_path),
       goal_path_(goal_path),
       output_path_(output_path),
-      planner_(navgrid_path, settings.turn_penalty),
+      planner_(navgrid_path, settings.turn_penalty, settings.robot_radius_meters),
       settings_(settings),
       dependencies_({{pose_path_, typeid(PoseMessage)},
                      {goal_path_, typeid(PoseMessage)}}),

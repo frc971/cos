@@ -1,8 +1,10 @@
 #include "streamer/navgrid_streamer_node.h"
 
 #include <cmath>
+#include <memory>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
+#include <turbojpeg.h>
 
 #include "absl/log/log.h"
 
@@ -36,7 +38,21 @@ auto NavgridStreamerNode::CreateCallback()
         }
       }
     }
-    if (!cv::imencode(".jpg", new_image, jpeg_buffer_)) {
+    // OpenCV's jpeg_* calls can bind to NVIDIA's incompatible libnvmm_jpeg
+    // ABI when camera FD decoding is linked into the same executable.
+    // TurboJPEG exposes tj* entry points and keeps its JPEG implementation
+    // private, so hardware decoding and software encoding can coexist.
+    const std::unique_ptr<void, decltype(&tjDestroy)> encoder(tjInitCompress(),
+                                                           tjDestroy);
+    unsigned char* data = nullptr;
+    unsigned long size = 0;
+    const int result = encoder
+        ? tjCompress2(encoder.get(), new_image.data, new_image.cols,
+                      static_cast<int>(new_image.step), new_image.rows,
+                      TJPF_BGR, &data, &size, TJSAMP_420, 95, 0)
+        : -1;
+    const std::unique_ptr<unsigned char, decltype(&tjFree)> encoded(data, tjFree);
+    if (result != 0) {
       LOG(WARNING) << "Failed to encode";
       for (const auto& callback : callbacks_) {
         callback(context);
@@ -44,7 +60,7 @@ auto NavgridStreamerNode::CreateCallback()
       return;
     }
 
-    const std::string payload(jpeg_buffer_.begin(), jpeg_buffer_.end());
+    const std::string payload(reinterpret_cast<const char*>(encoded.get()), size);
     streamer_.publish(path_, payload);
 
     for (const auto& callback : callbacks_) {

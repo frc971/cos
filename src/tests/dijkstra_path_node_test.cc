@@ -29,7 +29,7 @@ class DijkstraPathNodeTest : public testing::Test {
 
   void TearDown() override { std::filesystem::remove(grid_path_); }
 
-  void WriteGrid(const std::vector<std::string>& rows) {
+  void WriteGrid(const std::vector<std::string>& rows, double node_size = 1.0) {
     std::vector<std::vector<bool>> grid;
     for (const auto& row : rows) {
       auto& cells = grid.emplace_back();
@@ -39,8 +39,9 @@ class DijkstraPathNodeTest : public testing::Test {
     }
     std::ofstream file(grid_path_);
     file << nlohmann::json{
-        {"field_size", {{"x", rows.front().size()}, {"y", rows.size()}}},
-        {"nodeSizeMeters", 1.0}, {"grid", grid}};
+        {"field_size", {{"x", rows.front().size() * node_size},
+                        {"y", rows.size() * node_size}}},
+        {"nodeSizeMeters", node_size}, {"grid", grid}};
   }
 
   auto Plan(double penalty, double goal_x = 6.5, double goal_y = 3.5)
@@ -74,6 +75,46 @@ TEST_F(DijkstraPathNodeTest, ZeroPenaltySelectsShorterWindingCorridor) {
   ASSERT_NE(route, nullptr);
   EXPECT_TRUE(route->navgrid[4][1]);
   EXPECT_FALSE(route->navgrid[0][3]);
+}
+
+TEST_F(DijkstraPathNodeTest, RobotRadiusChecksPosesSweptSegmentsAndSplineBoxes) {
+  WriteGrid({".......", ".......", "..#....", ".......", ".......", ".......", "......."});
+  pathing::DijkstraPlanner point_robot(grid_path_, 0, 0);
+  pathing::DijkstraPlanner robot(grid_path_, 0, 0.38);
+  const auto pose = [](double x, double y) {
+    return frc::Pose2d{units::meter_t{x}, units::meter_t{y}, frc::Rotation2d{}};
+  };
+  EXPECT_TRUE(point_robot.IsValidPose(pose(1.7, 2.5)));
+  EXPECT_FALSE(robot.IsValidPose(pose(1.7, 2.5)));
+  EXPECT_TRUE(robot.IsValidPose(pose(1.5, 2.5)));
+  EXPECT_FALSE(robot.IsValidPose(pose(0.2, 1.5)));
+  EXPECT_FALSE(robot.IsValidPose(pose(6.8, 1.5)));
+  EXPECT_TRUE(robot.IsValidPose(pose(0.5, 1.5)));
+  EXPECT_TRUE(point_robot.IsVisible(1.7, 1.5, 1.7, 3.5));
+  EXPECT_FALSE(robot.IsVisible(1.7, 1.5, 1.7, 3.5));
+  EXPECT_TRUE(robot.IsVisible(1.5, 1.5, 1.5, 3.5));
+  // A circular footprint can clear a corner diagonally even when its square
+  // bounding box overlaps the obstacle.
+  EXPECT_TRUE(robot.IsVisible(1.7, 1.7, 1.7, 1.7));
+  EXPECT_FALSE(robot.IsBoxFree(1.0, 1.5, 1.7, 3.5));
+  EXPECT_TRUE(robot.IsBoxFree(1.0, 1.5, 1.5, 3.5));
+}
+
+TEST_F(DijkstraPathNodeTest, RobotDiameterCannotFitThroughNarrowCorridor) {
+  WriteGrid(std::vector<std::string>(7, ".#...#."), 0.2);
+  pathing::DijkstraPlanner small(grid_path_, 0, 0.28);
+  pathing::DijkstraPlanner robot(grid_path_, 0, 0.38);
+  EXPECT_TRUE(small.IsFree({3, 3}));
+  EXPECT_FALSE(robot.IsFree({3, 3}));
+  EXPECT_FALSE(small.FindPath({3, 2}, {3, 4}).empty());
+}
+
+TEST_F(DijkstraPathNodeTest, RejectsNegativeAndNonfiniteRobotRadii) {
+  for (double radius : {-0.1, std::numeric_limits<double>::infinity(),
+                        std::numeric_limits<double>::quiet_NaN()}) {
+    EXPECT_THROW((pathing::DijkstraPlanner(grid_path_, 0, radius)),
+                 std::invalid_argument);
+  }
 }
 
 TEST_F(DijkstraPathNodeTest, TurnPenaltySelectsLongerStraighterCorridor) {

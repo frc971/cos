@@ -84,6 +84,7 @@ add_test(NAME single_tag_rotation_test COMMAND single_tag_rotation_test)
 add_executable(nvjpeg_fd_decode_node_test nvjpeg_fd_decode_node_test.cc)
 target_link_libraries(nvjpeg_fd_decode_node_test PRIVATE
   cos::nvjpeg_fd_decode_node
+  cos::navgrid_streamer_node
   cos::control_loop
   cos::thread_pool
   GTest::gtest_main

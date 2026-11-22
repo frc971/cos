@@ -21,8 +21,12 @@ constexpr int kStatesPerCell = 9;
 }  // namespace
 
 DijkstraPlanner::DijkstraPlanner(const std::filesystem::path& navgrid_path,
-                                 double turn_penalty)
-    : grid_(navgrid_path), turn_penalty_(turn_penalty) {
+                                 double turn_penalty, double robot_radius_meters)
+    : grid_(navgrid_path), obstacles_(grid_.navgrid),
+      turn_penalty_(turn_penalty), robot_radius_(robot_radius_meters) {
+  if (!std::isfinite(robot_radius_) || robot_radius_ < 0) {
+    throw std::invalid_argument("Robot radius must be finite and nonnegative");
+  }
   if (!std::isfinite(turn_penalty) || turn_penalty < 0) {
     throw std::invalid_argument("Turn penalty must be finite and nonnegative");
   }
@@ -46,6 +50,33 @@ DijkstraPlanner::DijkstraPlanner(const std::filesystem::path& navgrid_path,
     throw std::invalid_argument(
         "Navgrid dimensions do not match field coverage");
   }
+  if (robot_radius_ > 0) {
+    for (int y = 0; y < static_cast<int>(grid_.navgrid.size()); ++y) {
+      for (int x = 0; x < static_cast<int>(width); ++x) {
+        const auto center = Center({x, y});
+        grid_.navgrid[y][x] = !IsBoxFree(center.X().value(), center.Y().value(),
+                                        center.X().value(), center.Y().value());
+      }
+    }
+    // Geometry is immutable. Cache swept-footprint checks once instead of
+    // repeating them for every incoming-direction state in every search.
+    free_edges_.resize(width * grid_.navgrid.size(), 0);
+    for (int y = 0; y < static_cast<int>(grid_.navgrid.size()); ++y) {
+      for (int x = 0; x < static_cast<int>(width); ++x) {
+        if (!IsFree({x, y}))
+          continue;
+        const auto a = Center({x, y});
+        for (int direction = 0; direction < kNoDirection; ++direction) {
+          const auto [dx, dy] = kDirections[direction];
+          if (!IsFree({x + dx, y + dy}))
+            continue;
+          const auto b = Center({x + dx, y + dy});
+          if (IsVisible(a.X().value(), a.Y().value(), b.X().value(), b.Y().value()))
+            free_edges_[y * width + x] |= uint8_t{1} << direction;
+        }
+      }
+    }
+  }
 }
 
 auto DijkstraPlanner::IsValidPose(const frc::Pose2d& pose) const -> bool {
@@ -53,7 +84,10 @@ auto DijkstraPlanner::IsValidPose(const frc::Pose2d& pose) const -> bool {
          std::isfinite(pose.Rotation().Radians().value()) &&
          pose.X().value() >= 0 && pose.X().value() < grid_.field_size_x &&
          pose.Y().value() >= 0 && pose.Y().value() < grid_.field_size_y &&
-         IsFree(CellFor(pose));
+         IsFree(CellFor(pose)) &&
+         (robot_radius_ == 0 ||
+          IsBoxFree(pose.X().value(), pose.Y().value(),
+                    pose.X().value(), pose.Y().value()));
 }
 
 auto DijkstraPlanner::CellFor(const frc::Pose2d& pose) const -> Cell {
@@ -74,16 +108,22 @@ auto DijkstraPlanner::Center(Cell cell) const -> frc::Translation2d {
 auto DijkstraPlanner::IsBoxFree(double min_x, double min_y, double max_x,
                                 double max_y) const -> bool {
   if (!std::isfinite(min_x) || !std::isfinite(min_y) || !std::isfinite(max_x) ||
-      !std::isfinite(max_y) || min_x < 0 || min_y < 0 ||
-      max_x >= grid_.field_size_x || max_y >= grid_.field_size_y ||
+      !std::isfinite(max_y) || min_x < robot_radius_ || min_y < robot_radius_ ||
+      max_x + robot_radius_ >= grid_.field_size_x ||
+      max_y + robot_radius_ >= grid_.field_size_y ||
       min_x > max_x || min_y > max_y) {
     return false;
   }
   const double size = grid_.node_size_meters;
   for (int y = 0; y < static_cast<int>(grid_.navgrid.size()); ++y) {
     for (int x = 0; x < static_cast<int>(grid_.navgrid[y].size()); ++x) {
-      if (grid_.navgrid[y][x] && min_x <= (x + 1) * size && max_x >= x * size &&
-          min_y <= (y + 1) * size && max_y >= y * size) {
+      if (!obstacles_[y][x])
+        continue;
+      const double dx = std::max({x * size - max_x,
+                                  min_x - (x + 1) * size, 0.0});
+      const double dy = std::max({y * size - max_y,
+                                  min_y - (y + 1) * size, 0.0});
+      if (std::hypot(dx, dy) <= robot_radius_) {
         return false;
       }
     }
@@ -101,10 +141,13 @@ auto DijkstraPlanner::IsFree(Cell cell) const -> bool {
 // Closed rectangle intersection deliberately rejects touching blocked corners.
 auto DijkstraPlanner::IsVisible(double x0, double y0, double x1,
                                 double y1) const -> bool {
+  if (robot_radius_ > 0 &&
+      (!IsBoxFree(x0, y0, x0, y0) || !IsBoxFree(x1, y1, x1, y1)))
+    return false;
   const double size = grid_.node_size_meters;
   for (int y = 0; y < static_cast<int>(grid_.navgrid.size()); ++y) {
     for (int x = 0; x < static_cast<int>(grid_.navgrid[y].size()); ++x) {
-      if (!grid_.navgrid[y][x])
+      if (!obstacles_[y][x])
         continue;
       double lo = 0, hi = 1;
       const auto clip = [&](double origin, double delta, double minimum,
@@ -122,6 +165,29 @@ auto DijkstraPlanner::IsVisible(double x0, double y0, double x1,
       if (clip(x0, x1 - x0, x * size, (x + 1) * size) &&
           clip(y0, y1 - y0, y * size, (y + 1) * size))
         return false;
+      if (robot_radius_ > 0) {
+        // Endpoint-to-box and corner-to-segment distances cover the closest
+        // pair between a segment and a disjoint axis-aligned obstacle box.
+        const auto endpoint_distance = [&](double px, double py) {
+          return std::hypot(std::max({x * size - px, px - (x + 1) * size, 0.0}),
+                            std::max({y * size - py, py - (y + 1) * size, 0.0}));
+        };
+        double distance = std::min(endpoint_distance(x0, y0),
+                                   endpoint_distance(x1, y1));
+        const double dx = x1 - x0, dy = y1 - y0;
+        const double length_squared = dx * dx + dy * dy;
+        for (int corner_y = y; corner_y <= y + 1; ++corner_y) {
+          for (int corner_x = x; corner_x <= x + 1; ++corner_x) {
+            const double px = corner_x * size, py = corner_y * size;
+            const double t = length_squared == 0 ? 0 : std::clamp(
+                ((px - x0) * dx + (py - y0) * dy) / length_squared, 0.0, 1.0);
+            distance = std::min(distance,
+                std::hypot(px - (x0 + t * dx), py - (y0 + t * dy)));
+          }
+        }
+        if (distance <= robot_radius_)
+          return false;
+      }
     }
   }
   return true;
@@ -160,6 +226,9 @@ auto DijkstraPlanner::FindPath(Cell start, Cell goal) const
       const auto [dx, dy] = kDirections[direction];
       const Cell next{.x = cell.x + dx, .y = cell.y + dy};
       if (!IsFree(next))
+        continue;
+      if (robot_radius_ > 0 &&
+          !(free_edges_[index] & (uint8_t{1} << direction)))
         continue;
       if (dx != 0 && dy != 0 &&
           (!IsFree({.x = cell.x + dx, .y = cell.y}) ||

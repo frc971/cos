@@ -38,6 +38,8 @@ ABSL_FLAG(                                                        // NOLINT
 
 ABSL_FLAG(bool, pathing, true,                      // NOLINT
           "Enable NetworkTables spline pathing.");  // NOLINT
+ABSL_FLAG(double, pathing_robot_radius_m, 0.38,  // NOLINT
+          "Circular robot footprint radius in meters.");
 ABSL_FLAG(bool, navgrid_streamer, true,             // NOLINT
           "Stream the live pathing navgrid, spline, and target velocity.");
 ABSL_FLAG(int, navgrid_streamer_port, 4975, "Navgrid MJPEG port.");  // NOLINT
@@ -137,6 +139,7 @@ auto main(int argc, char** argv) -> int {
   std::unique_ptr<pathing::NetworkTablesPathing> pathing_pipeline;
   if (absl::GetFlag(FLAGS_pathing)) {
     pathing::NetworkTablesPathingSettings settings;
+    settings.robot_radius_meters = absl::GetFlag(FLAGS_pathing_robot_radius_m);
     settings.navgrid_path = absl::GetFlag(FLAGS_pathing_navgrid);
     settings.pose_topic = absl::GetFlag(FLAGS_pathing_pose_topic);
     settings.goal_topic = absl::GetFlag(FLAGS_pathing_goal_topic);

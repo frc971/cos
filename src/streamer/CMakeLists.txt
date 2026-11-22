@@ -13,6 +13,11 @@ target_link_libraries(cos.rplidar_scan_streamer_node
 )
 
 add_library(cos.navgrid_streamer_node)
+find_library(TURBOJPEG_LIBRARY NAMES turbojpeg REQUIRED)
+# The Jetson image need not include TurboJPEG. Deployment copies build/lib,
+# and executables already search it through their $ORIGIN/../lib RPATH.
+file(COPY "${TURBOJPEG_LIBRARY}" DESTINATION "${CMAKE_BINARY_DIR}/lib"
+  FOLLOW_SYMLINK_CHAIN)
 add_library(cos::navgrid_streamer_node ALIAS cos.navgrid_streamer_node)
 target_sources(cos.navgrid_streamer_node
   PRIVATE
@@ -31,6 +36,7 @@ target_link_libraries(cos.navgrid_streamer_node PUBLIC
   opencv_imgcodecs
   opencv_imgproc
   nadjieb_mjpeg_streamer::nadjieb_mjpeg_streamer
+  PRIVATE ${TURBOJPEG_LIBRARY}
 )
 
 add_library(cos.jpeg_buffer_streamer_node)

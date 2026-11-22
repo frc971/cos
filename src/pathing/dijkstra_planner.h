@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <cstdint>
 #include <vector>
 
 #include <frc/geometry/Pose2d.h>
@@ -18,7 +19,8 @@ class DijkstraPlanner {
   };
 
   explicit DijkstraPlanner(const std::filesystem::path& navgrid_path,
-                           double turn_penalty = 0.3);
+                           double turn_penalty = 0.3,
+                           double robot_radius_meters = 0);
   auto IsValidPose(const frc::Pose2d& pose) const -> bool;
   // CellFor requires a validated pose; FindPath requires free endpoints.
   auto CellFor(const frc::Pose2d& pose) const -> Cell;
@@ -33,7 +35,10 @@ class DijkstraPlanner {
 
  private:
   streamer::NavgridMessage grid_;
+  std::vector<std::vector<bool>> obstacles_;
+  std::vector<uint8_t> free_edges_;
   double turn_penalty_;
+  double robot_radius_;
 };
 
 }  // namespace pathing

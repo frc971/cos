@@ -41,6 +41,7 @@ class VelocityGoalMessage final : public control_loop::IMessage {
 };
 
 struct MotionSettings {
+  double robot_radius_meters = 0;
   units::meters_per_second_t max_translation{1};
   units::radians_per_second_t max_rotation{2};
   double translation_gain = 1;  // 1/s

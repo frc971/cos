@@ -1,5 +1,6 @@
 #include "pathing/dijkstra_spline_node.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -226,6 +227,26 @@ TEST_F(DijkstraSplineNodeTest, DoesNotCutOrTouchBlockedCorners) {
   EXPECT_EQ(result->status, pathing::SplineStatus::FitFailed);
   EXPECT_TRUE(result->splines.empty());
   EXPECT_TRUE(result->samples.empty());
+}
+
+TEST_F(DijkstraSplineNodeTest, SplinePreservesRobotRadiusAroundObstacles) {
+  WriteGrid({"......", "......", "..#...", "......", "......", "......"});
+  pathing::SplineSettings settings;
+  settings.robot_radius_meters = 0.38;
+  EXPECT_EQ(Plan(Pose(1.7, 2.5), Pose(4.5, 2.5), settings)->status,
+            pathing::SplineStatus::InvalidInput);
+  const auto result = Plan(Pose(0.5, 2.5), Pose(4.5, 2.5), settings);
+  ExpectClear(*result);
+  for (const auto& sample : result->samples) {
+    const double x = sample.X().value(), y = sample.Y().value();
+    const double dx = std::max({2.0 - x, x - 3.0, 0.0});
+    const double dy = std::max({2.0 - y, y - 3.0, 0.0});
+    EXPECT_GT(std::hypot(dx, dy), 0.38);
+    EXPECT_GE(x, 0.38);
+    EXPECT_GE(y, 0.38);
+    EXPECT_LT(x + 0.38, 6.0);
+    EXPECT_LT(y + 0.38, 6.0);
+  }
 }
 
 TEST_F(DijkstraSplineNodeTest, StreamerSkipsMissingAndNullLayers) {

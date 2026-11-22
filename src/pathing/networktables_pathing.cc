@@ -250,7 +250,8 @@ class FollowerNode final : public Node {
               {kInput, typeid(InputMessage)},
               {kSpline, typeid(SplinePathMessage)}},
              {{kCommand, typeid(CommandMessage)}}),
-        planner_(settings.navgrid_path, settings.spline.turn_penalty),
+        planner_(settings.navgrid_path, settings.spline.turn_penalty,
+                 settings.robot_radius_meters),
         settings_(settings) {}
 
   auto CreateCallback()
@@ -459,7 +460,9 @@ class VisualizationNode final : public Node {
               {kRouteOverlay, typeid(streamer::NavgridMessage)},
               {kVelocityOverlay, typeid(streamer::PolylineMessage)}}),
         grid_(
-            std::make_shared<streamer::NavgridMessage>(settings.navgrid_path)),
+            std::make_shared<streamer::NavgridMessage>(
+                DijkstraPlanner(settings.navgrid_path, settings.spline.turn_penalty,
+                                settings.robot_radius_meters).GetGrid())),
         input_(std::move(input)),
         streamer_("/navgrid", settings.navgrid_streamer_port,
                   settings.field_image_path),
@@ -586,8 +589,10 @@ class NetworkTablesPathing::Impl {
       : loop(settings.period) {
     Validate(settings, clock);
     auto input = std::make_shared<InputNode>(settings, instance, clock);
+    auto spline_settings = settings.spline;
+    spline_settings.robot_radius_meters = settings.robot_radius_meters;
     auto spline = std::make_shared<DijkstraSplineNode>(
-        kPose, kGoal, kSpline, settings.navgrid_path, settings.spline);
+        kPose, kGoal, kSpline, settings.navgrid_path, spline_settings);
     if (settings.navgrid_streamer)
       spline->EnableSplineDebug(kSplineOverlay);
     auto follower = std::make_shared<FollowerNode>(settings);

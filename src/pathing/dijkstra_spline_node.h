@@ -38,6 +38,7 @@ class SplinePathMessage final : public control_loop::IMessage {
 };
 
 struct SplineSettings {
+  double robot_radius_meters = 0;
   double turn_penalty = 0.3;  // meters/radian, as in MotionSettings
   size_t max_refinement_passes = 32;
   size_t max_control_points = 4096;

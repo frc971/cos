@@ -91,7 +91,6 @@ class NavgridStreamerNode final : public control_loop::INode {
   std::vector<control_loop::MessageDescriptor> publications_;
   std::vector<std::function<void(const control_loop::Context&)>> callbacks_;
   cv::Mat base_image_;
-  std::vector<unsigned char> jpeg_buffer_;
   nadjieb::MJPEGStreamer streamer_;
 };
 
