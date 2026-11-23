@@ -1,0 +1,31 @@
+{
+  "name": "gamepiece",
+  "camera_type": "uvc",
+  "serial_id": "front",
+  "height": 1080,
+  "width": 1920,
+  "fps": 100,
+  "exposure_time_ms": 2.5,
+  "auto_exposure": false,
+  "max_payload_size": 1600,
+  "max_frame_size": 2048589,
+  "extrinsics": {
+    "translation_x": 0.0964692,
+    "translation_y": 0.0662178,
+    "translation_z": 0.6267,
+    "rotation_x": 0.0,
+    "rotation_y": -4.0,
+    "rotation_z": 0.0
+  },
+  "intrinsics": {
+      "cx": 905.0642886611503,
+      "cy": 496.38167582251765,
+      "fx": 1002.4958690474144,
+      "fy": 998.538536703553,
+      "k1": -0.24512403608194944,
+      "k2": 0.07928932589087268,
+      "k3": -0.014384100028709823,
+      "p1": 0.0014182760627837333,
+      "p2": 0.0010892061255345102
+    }
+}

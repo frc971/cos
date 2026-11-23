@@ -32,7 +32,9 @@ class FieldRenderer {
               const std::vector<std::array<double, 3>>* probes = nullptr) -> cv::Mat;
   void SetFuelLayout(double entropy, uint32_t seed);
   void SetFuelClusters(const std::vector<FuelCluster>& clusters,
-                       double noise_m, uint32_t seed);
+                       double noise_m, uint32_t seed, double separation_m = 0);
+  void SetFuelAppearance(float soot, uint32_t seed) { soot_ = soot; appearance_seed_ = seed; }
+  void SetPracticeRoom(const std::filesystem::path& config);
   auto FuelClusterIds() const -> const std::vector<std::size_t>& { return fuel_cluster_ids_; }
   auto FuelPositions() const -> const std::vector<std::array<double, 3>>&;
 
@@ -47,6 +49,8 @@ class FieldRenderer {
     GLenum index_type;
     size_t index_offset;
     bool transparent;
+    GLuint buffer = 0;
+    int material = 0;
   };
 
   cv::Size image_size_;
@@ -58,6 +62,8 @@ class FieldRenderer {
   std::vector<std::size_t> fuel_cluster_ids_;
   float field_length_ = 0;
   float field_width_ = 0;
+  float soot_ = 0;
+  uint32_t appearance_seed_ = 0;
   EGLDisplay display_ = EGL_NO_DISPLAY;
   EGLSurface surface_ = EGL_NO_SURFACE;
   EGLContext context_ = EGL_NO_CONTEXT;
@@ -66,6 +72,8 @@ class FieldRenderer {
   GLuint color_buffer_ = 0;
   GLuint depth_buffer_ = 0;
   GLuint program_ = 0;
+  GLuint room_buffer_ = 0;
+  std::array<GLuint, 2> room_textures_{};
 };
 
 }  // namespace path_camera_sim

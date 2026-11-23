@@ -6,7 +6,7 @@
 #include <cstddef>
 #include <functional>
 #include <mutex>
-#include <opencv2/core/types.hpp>
+#include <opencv2/core/cuda.hpp>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -32,7 +32,9 @@ class YoloNode final : public control_loop::INode, private nvinfer1::ILogger {
            const std::vector<std::string>& class_names,
            control_loop::ThreadPool& thread_pool);
   ~YoloNode() override;
-
+  // GPU BGR or grayscale input; results remain in the supplied image coordinates.
+  auto Detect(const cv::cuda::GpuMat& image, float confidence = .25f)
+      -> bounding_box_detections_t;
   YoloNode(const YoloNode&) = delete;
   auto operator=(const YoloNode&) -> YoloNode& = delete;
 
@@ -46,8 +48,6 @@ class YoloNode final : public control_loop::INode, private nvinfer1::ILogger {
       -> const std::vector<control_loop::MessageDescriptor>& override;
 
  private:
-  auto Detect(const cv::cuda::GpuMat& image)
-      -> std::vector<labeled_bounding_box_t>;
   void log(Severity severity, const char* message) noexcept override;
   void Preprocess(const cv::cuda::GpuMat& image);
   auto Run(const cv::cuda::GpuMat& image) -> std::vector<float>;
@@ -70,6 +70,9 @@ class YoloNode final : public control_loop::INode, private nvinfer1::ILogger {
   float* input_buffer_ = nullptr;
   float* output_buffer_ = nullptr;
   size_t output_size_ = 0;
+  cv::cuda::GpuMat converted_, padded_, normalized_;
+  int input_channels_ = 1;
+  int target_size_ = 640;
 };
 
 }  // namespace gamepiece

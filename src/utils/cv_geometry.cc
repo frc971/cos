@@ -4,17 +4,18 @@
 #include <map>
 #include <numbers>
 
-#include <opencv2/calib3d.hpp>
 #include <frc/apriltag/AprilTagFieldLayout.h>
 #include <frc/geometry/Rotation3d.h>
 #include <frc/geometry/Translation3d.h>
+#include <opencv2/calib3d.hpp>
 
 namespace utils {
 
-static const cv::Matx44d kCvToWpilib{
-    0, 0, 1, 0, -1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 0, 1};
+static const cv::Matx44d kCvToWpilib{0, 0,  1, 0, -1, 0, 0, 0,
+                                     0, -1, 0, 0, 0,  0, 0, 1};
 static const std::map<Basis, cv::Matx44d> kCvBases = {
-    {Basis::kWpiToCv, kCvToWpilib.t()}, {Basis::kCvToWpi, kCvToWpilib}};
+    {Basis::kWpiToCv, kCvToWpilib.t()},
+    {Basis::kCvToWpi, kCvToWpilib}};
 
 static auto ConvertOpencvCoordinateToWpilib(cv::Vec3d& vec) -> void {
   vec = {vec[2], -vec[0], -vec[1]};
@@ -29,24 +30,21 @@ auto HomogenizePoint3d(cv::Point3d point) -> cv::Vec4d {
 }
 
 auto QuadAreaPixels(const std::array<cv::Point2d, 4>& corners) -> double {
-  return 0.5 * std::abs((corners[0].x - corners[2].x) *
-                            (corners[1].y - corners[3].y) -
-                        (corners[1].x - corners[3].x) *
-                            (corners[0].y - corners[2].y));
+  return 0.5 *
+         std::abs(
+             (corners[0].x - corners[2].x) * (corners[1].y - corners[3].y) -
+             (corners[1].x - corners[3].x) * (corners[0].y - corners[2].y));
 }
 
-auto MakeTransform(const cv::Vec3d& rvec, const cv::Vec3d& tvec) -> cv::Matx44d {
+auto MakeTransform(const cv::Vec3d& rvec, const cv::Vec3d& tvec)
+    -> cv::Matx44d {
   cv::Matx33d rotation;
   cv::Rodrigues(rvec, rotation);
+  // clang-format off
   return {rotation(0, 0), rotation(0, 1), rotation(0, 2), tvec[0],
           rotation(1, 0), rotation(1, 1), rotation(1, 2), tvec[1],
           rotation(2, 0), rotation(2, 1), rotation(2, 2), tvec[2],
-          0.0, 0.0, 0.0, 1.0};
-}
-
-auto ChangeBasis(cv::Matx44d& mat, Basis basis) -> void {
-  const cv::Matx44d& basis_mat = kCvBases.at(basis);
-  mat = basis_mat * mat * basis_mat.t();
+          0.0, 0.0, 0.0, 1.0}; //clang-format on
 }
 
 auto BasisMatrix(Basis basis) -> Eigen::Matrix4d {

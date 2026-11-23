@@ -28,7 +28,7 @@ target_link_libraries(yolo_inference PUBLIC
   cos::nvjpeg_decode_node
   cos::control_loop
   cos::thread_pool
-  ${OpenCV_LIBS}
+  opencv_core opencv_imgproc opencv_cudaarithm opencv_cudaimgproc opencv_cudawarping
   CUDA::cudart
   absl::check
   absl::log
@@ -39,7 +39,38 @@ target_include_directories(yolo_inference PUBLIC
   ${CMAKE_SOURCE_DIR}/src
 )
 
+add_library(image_utils)
+add_library(cos::image_utils ALIAS image_utils)
+target_sources(image_utils PRIVATE
+  image_utils.cc
+)
+target_link_libraries(image_utils PUBLIC
+  opencv_core
+  opencv_imgproc
+  wpimath
+)
+target_include_directories(image_utils PUBLIC
+  ${CMAKE_SOURCE_DIR}/src
+)
+
+add_library(image_utils_cuda image_utils_cuda.cc)
+target_link_libraries(image_utils_cuda PUBLIC
+  image_utils opencv_cudaarithm opencv_cudaimgproc)
+
+add_library(hsv_cluster_tracker_node
+  hsv_cluster_tracker_node.cc
+  analytical_cluster_strategy.cc
+  yolo_cluster_strategy.cc
+  hybrid_cluster_strategy.cc)
+target_link_libraries(hsv_cluster_tracker_node PUBLIC
+  opencv_core wpimath ntcore cos::control_loop PRIVATE
+  image_utils cos::cv_geometry_utils opencv_imgproc yolo_inference
+  cos::nvjpeg_decode_node cos::thread_pool)
+target_include_directories(hsv_cluster_tracker_node PUBLIC ${CMAKE_SOURCE_DIR}/src)
+add_library(cos::hsv_cluster_tracker_node ALIAS hsv_cluster_tracker_node)
+
 add_library(gamepiece INTERFACE)
 target_link_libraries(gamepiece INTERFACE
   yolo_inference
+  hsv_cluster_tracker_node
 )

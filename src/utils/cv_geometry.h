@@ -2,11 +2,11 @@
 
 #include <array>
 
+#include <frc/geometry/Pose3d.h>
+#include <frc/geometry/Transform3d.h>
 #include <Eigen/Core>
 #include <opencv2/core/matx.hpp>
 #include <opencv2/core/types.hpp>
-#include <frc/geometry/Pose3d.h>
-#include <frc/geometry/Transform3d.h>
 
 namespace frc {
 class AprilTagFieldLayout;
@@ -23,7 +23,8 @@ auto MakeTransform(const cv::Vec3d& rvec, const cv::Vec3d& tvec) -> cv::Matx44d;
 
 template <typename Derived>
 auto EigenToCvMat(const Eigen::MatrixBase<Derived>& matrix)
-    -> cv::Matx<double, Derived::RowsAtCompileTime, Derived::ColsAtCompileTime> {
+    -> cv::Matx<double, Derived::RowsAtCompileTime,
+                Derived::ColsAtCompileTime> {
   static_assert(Derived::RowsAtCompileTime != Eigen::Dynamic &&
                 Derived::ColsAtCompileTime != Eigen::Dynamic);
   cv::Matx<double, Derived::RowsAtCompileTime, Derived::ColsAtCompileTime>
@@ -48,8 +49,13 @@ auto CvMatToEigen(const cv::Matx<double, rows, cols>& matrix)
   return converted;
 }
 
-auto ChangeBasis(cv::Matx44d& mat, Basis basis) -> void;
 auto BasisMatrix(Basis basis) -> Eigen::Matrix4d;
+
+template <typename T>
+auto ChangeBasis(cv::Matx<T, 4, 4>& mat, Basis basis) -> void {
+  const cv::Matx<T, 4, 4> basis_mat(EigenToCvMat(BasisMatrix(basis)));
+  mat = basis_mat * mat * basis_mat.t();
+}
 
 template <typename Derived>
 auto ChangeBasis(Eigen::MatrixBase<Derived>& matrix, Basis basis) -> void {

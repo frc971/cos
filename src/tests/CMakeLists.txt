@@ -1,5 +1,36 @@
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
 
+add_executable(cluster_rio_streamer_node_test cluster_rio_streamer_node_test.cc)
+target_link_libraries(cluster_rio_streamer_node_test PRIVATE
+  cos::cluster_rio_streamer_node cos::densest_cluster_rio_streamer_node
+  opencv_core wpimath GTest::gtest_main)
+add_test(NAME cluster_rio_streamer_node_test COMMAND cluster_rio_streamer_node_test)
+
+add_executable(cluster_nt_java_publisher cluster_nt_java_publisher.cc)
+target_link_libraries(cluster_nt_java_publisher PRIVATE
+  cos::cluster_rio_streamer_node opencv_core wpimath)
+
+add_executable(image_utils_test image_utils_test.cc)
+target_link_libraries(image_utils_test PRIVATE image_utils_cuda GTest::gtest_main)
+add_test(NAME image_utils_test COMMAND image_utils_test)
+
+add_executable(hsv_cluster_tracker_node_test hsv_cluster_tracker_node_test.cc)
+target_link_libraries(hsv_cluster_tracker_node_test PRIVATE
+  hsv_cluster_tracker_node cos::nvjpeg_decode_node cos::densest_cluster_rio_streamer_node opencv_imgproc
+  GTest::gtest_main)
+add_test(NAME hsv_cluster_tracker_node_test COMMAND hsv_cluster_tracker_node_test)
+
+add_executable(hsv_cluster_pipeline_test hsv_cluster_pipeline_test.cc)
+target_link_libraries(hsv_cluster_pipeline_test PRIVATE
+  "-Wl,--push-state,--no-as-needed" JPEG::JPEG "-Wl,--pop-state"
+  hsv_cluster_tracker_node cos::uvc_disk_camera_node cos::nvjpeg_decode_node
+  cos::nvidia_apriltag_detector_node cos::unambiguous_solver_node
+  cos::camera_config cos::rio_clock cos::thread_pool
+  absl::flags_parse absl::log_initialize opencv_imgcodecs opencv_imgproc
+  GTest::gtest)
+add_test(NAME hsv_cluster_pipeline_input_test
+  COMMAND hsv_cluster_pipeline_test --self_test)
+
 add_executable(context_handoff_node_test context_handoff_node_test.cc)
 target_link_libraries(context_handoff_node_test PRIVATE
   cos::control_loop GTest::gtest_main)

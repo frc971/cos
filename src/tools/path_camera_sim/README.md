@@ -111,6 +111,26 @@ Simulator output defaults to `/root/debug-output/path-camera-sim`. Visualizer
 output defaults to `/root/debug-output/<run-name>/<layout>/clusters`.
 Pass `--output_dir=DIR` to override either output directory.
 
+`--exposure_ms=16 --exposure_samples=9` simulates motion blur with a centered
+box shutter. RGB samples use interpolated translations and shortest-path
+rotations, averaged in linear light before lens distortion. Exposure defaults
+to zero (sharp); endpoint poses clamp to the path, so exclude endpoints when
+measuring full-shutter behavior. Visibility labels remain instantaneous at the
+exposure center and do not count every ball visible during the shutter interval.
+The manifest records these settings. This models global shutter integration;
+rolling shutter, sensor noise and image delivery latency are separate effects.
+Increase temporal samples for long exposures or fast motion and check convergence:
+undersampling can introduce repeated edges and change detection counts.
+
+For serial geometry diagnosis without frame drops, run the current tracker on
+timestamped PNGs or JPEGs using `tests/hsv_cluster_pipeline_test --offline
+--gamepiece_log=DIR --gamepiece_config=CAMERA_JSON --poses=POSE_JSON
+--output_dir=NEW_DIR`. Pose JSON is an array of `{timestamp,x,y,yaw}` in seconds,
+meters and radians. `--undistort_input` rectifies images before pinhole tracking.
+Outputs include heatmaps and per-frame `clusters.json` with field centers,
+sampled contour support, verified sphere centers and unverified-fallback counters.
+Offline execution evaluates geometry and does not test hardware throughput.
+
 For ground-truth validation, `--fuel_truth` adds `cluster_id` to generated Fuel
 entries in cluster mode and `visible_fuel_pixels` to each frame. A separate
 unlit integer-ID pass preserves opaque field/Fuel depth occlusion and applies
