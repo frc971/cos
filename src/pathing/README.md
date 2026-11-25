@@ -96,8 +96,8 @@ the lookahead distance divided by the command hold interval, so nominal motion
 during that interval cannot pass the selected point. Heading follows the goal
 rotation independently, using the shortest angular error, capped at 2 rad/s.
 Within 5 cm of the goal, translation stops; `ReachedGoal` requires heading to
-also be within 3 degrees. Live pathing uses a circular robot radius of **0.38 m**
-(0.76 m diameter). Route search, spline collision checks, field boundaries,
+also be within 3 degrees. Live pathing uses a circular robot radius of **0.19 m**
+(0.38 m diameter). Route search, spline collision checks, field boundaries,
 and follower lookahead all enforce this clearance from blocked navgrid cells.
 The stream shows cells whose centers cannot accommodate the footprint in red.
 The navgrid should describe obstacles without pre-inflating for the robot;
@@ -107,7 +107,7 @@ existing baked-in margins remain additional clearance. Set
 | Flag | Default |
 | --- | --- |
 | `--pathing` / `--nopathing` | Enabled |
-| `--pathing_robot_radius_m` | 0.38 meters |
+| `--pathing_robot_radius_m` | 0.19 meters |
 | `--navgrid_streamer` / `--nonavgrid_streamer` | Enabled with pathing |
 | `--navgrid_streamer_port` | 4975 |
 | `--navgrid_streamer_field_image` | `/root/constants/assets/field.png` |

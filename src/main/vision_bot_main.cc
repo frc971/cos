@@ -38,9 +38,9 @@ ABSL_FLAG(                                                        // NOLINT
 
 ABSL_FLAG(bool, pathing, true,                      // NOLINT
           "Enable NetworkTables spline pathing.");  // NOLINT
-ABSL_FLAG(double, pathing_robot_radius_m, 0.38,  // NOLINT
+ABSL_FLAG(double, pathing_robot_radius_m, 0.19,     // NOLINT
           "Circular robot footprint radius in meters.");
-ABSL_FLAG(bool, navgrid_streamer, true,             // NOLINT
+ABSL_FLAG(bool, navgrid_streamer, true,  // NOLINT
           "Stream the live pathing navgrid, spline, and target velocity.");
 ABSL_FLAG(int, navgrid_streamer_port, 4975, "Navgrid MJPEG port.");  // NOLINT
 ABSL_FLAG(std::string, navgrid_streamer_field_image,                 // NOLINT
@@ -166,10 +166,7 @@ auto main(int argc, char** argv) -> int {
         std::make_unique<pathing::NetworkTablesPathing>(settings);
   }
 
-  const std::vector<std::string> paths{"/root/constants/vision-bot/front.json",
-                                       "/root/constants/vision-bot/left.json",
-                                       "/root/constants/vision-bot/back.json",
-                                       "/root/constants/vision-bot/right.json"};
+  const std::vector<std::string> paths{"/root/constants/vision-bot/front.json"};
 
   auto solver_node =
       std::make_shared<localization::UnambiguousSolverNode>("pose");

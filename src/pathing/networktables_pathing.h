@@ -26,7 +26,7 @@ enum class PathingStatus : std::uint8_t {
 };
 
 struct NetworkTablesPathingSettings {
-  double robot_radius_meters = 0.38;
+  double robot_radius_meters = 0.19;
   std::filesystem::path navgrid_path = "/root/constants/assets/navgrid.json";
   std::string pose_topic = "/DriveState/Pose";
   std::string goal_topic = "/COS/Pathing/Goal";
