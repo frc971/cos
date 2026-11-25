@@ -47,7 +47,8 @@ auto Split(const Bezier& b) -> std::pair<Bezier, Bezier> {
 
 // The entire curve lies inside its control hull. A free bounding box certifies
 // clearance; ambiguous hulls must be subdivided, never accepted by sampling.
-auto IsClear(const DijkstraPlanner& planner, const Bezier& b, int depth = 0)
+auto IsClear(const DijkstraPlanner& planner, const Bezier& b,
+             std::optional<DijkstraPlanner::Cell> cleared, int depth = 0)
     -> bool {
   double min_x = b[0].x, max_x = b[0].x;
   double min_y = b[0].y, max_y = b[0].y;
@@ -59,13 +60,13 @@ auto IsClear(const DijkstraPlanner& planner, const Bezier& b, int depth = 0)
     max_x = std::max(max_x, p.x);
     max_y = std::max(max_y, p.y);
   }
-  if (planner.IsBoxFree(min_x, min_y, max_x, max_y))
+  if (planner.IsBoxFree(min_x, min_y, max_x, max_y, cleared))
     return true;
   if (depth == kCollisionDepth)
     return false;
   const auto [left, right] = Split(b);
-  return IsClear(planner, left, depth + 1) &&
-         IsClear(planner, right, depth + 1);
+  return IsClear(planner, left, cleared, depth + 1) &&
+         IsClear(planner, right, cleared, depth + 1);
 }
 
 // Control-polygon length bounds arc length, so emitted points are at most the
@@ -202,13 +203,16 @@ auto DijkstraSplineNode::Calculate(const PoseMessage* pose,
                                    const PoseMessage* goal) const
     -> SplinePathMessage {
   SplinePathMessage output;
-  if (!pose || !goal || !planner_.IsValidPose(pose->goal_position) ||
-      !planner_.IsValidPose(goal->goal_position))
+  if (!pose || !goal)
     return output;
   const auto& start = pose->goal_position;
   const auto& end = goal->goal_position;
+  const auto cleared = planner_.BlockedStartCell(start);
+  if (!planner_.IsValidPose(start, cleared) ||
+      !planner_.IsValidPose(end, cleared))
+    return output;
   const auto route =
-      planner_.FindPath(planner_.CellFor(start), planner_.CellFor(end));
+      planner_.FindPath(planner_.CellFor(start), planner_.CellFor(end), cleared);
   output.status = SplineStatus::NoPath;
   if (route.empty())
     return output;
@@ -227,7 +231,7 @@ auto DijkstraSplineNode::Calculate(const PoseMessage* pose,
   output.status = SplineStatus::FitFailed;
   if (output.raw_route.size() == 1) {
     const auto p = Point(output.raw_route.front());
-    if (planner_.IsBoxFree(p.x, p.y, p.x, p.y)) {
+    if (planner_.IsBoxFree(p.x, p.y, p.x, p.y, cleared)) {
       output.status = SplineStatus::Ready;
       output.samples = output.waypoints = output.raw_route;
     }
@@ -244,7 +248,7 @@ auto DijkstraSplineNode::Calculate(const PoseMessage* pose,
     const auto a = Point(output.raw_route[i]);
     while (next > i) {
       const auto b = Point(output.raw_route[next]);
-      if (planner_.IsVisible(a.x, a.y, b.x, b.y))
+      if (planner_.IsVisible(a.x, a.y, b.x, b.y, cleared))
         break;
       --next;
     }
@@ -261,7 +265,7 @@ auto DijkstraSplineNode::Calculate(const PoseMessage* pose,
     std::vector<bool> unsafe;
     bool clear = true;
     for (const auto& spline : splines) {
-      const bool collides = !IsClear(planner_, Controls(spline));
+      const bool collides = !IsClear(planner_, Controls(spline), cleared);
       unsafe.push_back(collides);
       clear &= !collides;
     }

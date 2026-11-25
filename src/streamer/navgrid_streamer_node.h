@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <fstream>
 #include <opencv4/opencv2/core/mat.hpp>
+#include <optional>
 #include <stdexcept>
 #include <vector>
 
@@ -62,6 +63,8 @@ class NavgridMessage final : public control_loop::IMessage {
   uint8_t g;
   uint8_t b;
   std::vector<std::vector<bool>> navgrid;
+  // Grid indices, with the origin at the bottom left.
+  std::optional<cv::Point> robot_cell;
 };
 
 class NavgridStreamerNode final : public control_loop::INode {

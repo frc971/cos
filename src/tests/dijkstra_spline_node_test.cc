@@ -218,6 +218,23 @@ TEST_F(DijkstraSplineNodeTest, ReportsInvalidAndUnreachableGoals) {
       pathing::SplineStatus::InvalidInput);
 }
 
+TEST_F(DijkstraSplineNodeTest, PlansOutOfOnlyTheOccupiedObstacleCell) {
+  WriteGrid({".....", ".#.#.", "....."});
+  pathing::SplineSettings settings;
+  settings.robot_radius_meters = 0.19;
+  const auto start = Pose(1.5, 1.5);
+  const auto goal = Pose(2.5, 1.5);
+  const auto result = Plan(start, goal, settings);
+  ASSERT_EQ(result->status, pathing::SplineStatus::Ready);
+  ASSERT_GE(result->samples.size(), 2);
+  EXPECT_EQ(result->samples.front(), start.Translation());
+  EXPECT_EQ(result->samples.back(), goal.Translation());
+  EXPECT_EQ(Plan(start, Pose(3.5, 1.5), settings)->status,
+            pathing::SplineStatus::InvalidInput);
+  EXPECT_EQ(Plan(goal, start, settings)->status,
+            pathing::SplineStatus::InvalidInput);
+}
+
 TEST_F(DijkstraSplineNodeTest, DoesNotCutOrTouchBlockedCorners) {
   WriteGrid({".#", "#."});
   EXPECT_EQ(Plan(Pose(0.5, 0.5), Pose(1.5, 1.5))->status,

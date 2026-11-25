@@ -73,6 +73,7 @@ class InputMessage final : public control_loop::IMessage {
   }
   auto GetSize() -> size_t override { return sizeof(*this); }
   PathingStatus status = PathingStatus::Inactive;
+  frc::Pose2d pose;
   frc::Pose2d goal;
   int64_t pose_local_us = 0;
   int64_t goal_local_us = 0;
@@ -210,6 +211,7 @@ class InputNode final : public Node {
         const auto pose = pose_.GetAtomic();
         const auto goal = goal_.GetAtomic();
         auto input = std::make_shared<InputMessage>();
+        input->pose = pose.value;
         input->goal = goal.value;
         input->pose_local_us = pose.time;
         input->goal_local_us = goal.time;
@@ -283,9 +285,11 @@ class FollowerNode final : public Node {
     const auto* goal = context->GetMessage<PoseMessage>(kGoal);
     const auto* spline = context->GetMessage<SplinePathMessage>(kSpline);
     command.status = PathingStatus::InvalidInput;
-    if (!pose || !goal || !spline ||
-        !planner_.IsValidPose(pose->goal_position) ||
-        !planner_.IsValidPose(goal->goal_position))
+    if (!pose || !goal || !spline)
+      return;
+    const auto cleared = planner_.BlockedStartCell(pose->goal_position);
+    if (!planner_.IsValidPose(pose->goal_position, cleared) ||
+        !planner_.IsValidPose(goal->goal_position, cleared))
       return;
     switch (spline->status) {
       case SplineStatus::InvalidInput:
@@ -336,7 +340,7 @@ class FollowerNode final : public Node {
         const auto point = samples[i - 1] +
                            (samples[i] - samples[i - 1]) * (distance / length);
         if (planner_.IsVisible(current.X().value(), current.Y().value(),
-                               point.X().value(), point.Y().value()))
+                               point.X().value(), point.Y().value(), cleared))
           lookahead = point;
         walked += length;
         if (walked >= settings_.lookahead.value())
@@ -453,6 +457,7 @@ class VisualizationNode final : public Node {
   VisualizationNode(const NetworkTablesPathingSettings& settings,
                     std::shared_ptr<InputNode> input)
       : Node({{kPose, typeid(PoseMessage)},
+              {kInput, typeid(InputMessage)},
               {kSpline, typeid(SplinePathMessage)},
               {kSplineOverlay, typeid(streamer::PolylineMessage)},
               {kCommand, typeid(CommandMessage)}},
@@ -478,7 +483,8 @@ class VisualizationNode final : public Node {
     return [this](const control_loop::Context& context) {
       {
         std::scoped_lock lock(mutex_);
-        if (!context->Exists(kPose) || !context->Exists(kSpline) ||
+        if (!context->Exists(kPose) || !context->Exists(kInput) ||
+            !context->Exists(kSpline) ||
             !context->Exists(kSplineOverlay) || !context->Exists(kCommand) ||
             context->Exists(kGrid))
           return;
@@ -490,13 +496,27 @@ class VisualizationNode final : public Node {
           return;
         }
         next_frame_ = now + std::chrono::milliseconds(100);
-        context->SetMessage(kGrid, grid_);
 
         auto route = std::make_shared<streamer::NavgridMessage>(*grid_);
         route->r = route->b = 0;
         route->g = 255;
         for (auto& row : route->navgrid)
           std::ranges::fill(row, false);
+        const auto* input = context->GetMessage<InputMessage>(kInput);
+        if (input && input->pose_local_us != 0) {
+          const double x = input->pose.X().value();
+          const double y = input->pose.Y().value();
+          if (x >= 0 && x < grid_->field_size_x &&
+              y >= 0 && y < grid_->field_size_y) {
+            const auto col = static_cast<size_t>(x / grid_->node_size_meters);
+            const auto row = static_cast<size_t>(y / grid_->node_size_meters);
+            if (row < route->navgrid.size() &&
+                col < route->navgrid[row].size()) {
+              route->robot_cell =
+                  cv::Point(static_cast<int>(col), static_cast<int>(row));
+            }
+          }
+        }
         if (const auto* spline =
                 context->GetMessage<SplinePathMessage>(kSpline)) {
           for (const auto& point : spline->raw_route) {
@@ -511,6 +531,7 @@ class VisualizationNode final : public Node {
             }
           }
         }
+        context->SetMessage(kGrid, grid_);
         context->SetMessage(kRouteOverlay, std::move(route));
 
         auto velocity = std::make_shared<streamer::PolylineMessage>();

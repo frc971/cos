@@ -68,24 +68,27 @@ auto DijkstraPathNode::Calculate(const PoseMessage* pose_message,
     return output;
   const auto& pose = pose_message->goal_position;
   const auto& goal = goal_message->goal_position;
-  if (!planner_.IsValidPose(pose) || !planner_.IsValidPose(goal))
+  const auto cleared = planner_.BlockedStartCell(pose);
+  if (!planner_.IsValidPose(pose, cleared) ||
+      !planner_.IsValidPose(goal, cleared))
     return output;
   const auto& grid = planner_.GetGrid();
   const double size = grid.node_size_meters;
-  route = planner_.FindPath(planner_.CellFor(pose), planner_.CellFor(goal));
+  route = planner_.FindPath(planner_.CellFor(pose), planner_.CellFor(goal),
+                            cleared);
   output.status = PathStatus::NoPath;
   if (route.empty())
     return output;
   const double x = pose.X().value(), y = pose.Y().value();
   double target_x = goal.X().value(), target_y = goal.Y().value();
-  if (!planner_.IsVisible(x, y, target_x, target_y)) {
+  if (!planner_.IsVisible(x, y, target_x, target_y, cleared)) {
     bool found = false;
     for (auto& it : std::views::reverse(route)) {
       target_x =
           (it.x * size + std::min((it.x + 1) * size, grid.field_size_x)) / 2;
       target_y =
           (it.y * size + std::min((it.y + 1) * size, grid.field_size_y)) / 2;
-      if (planner_.IsVisible(x, y, target_x, target_y)) {
+      if (planner_.IsVisible(x, y, target_x, target_y, cleared)) {
         found = true;
         break;
       }

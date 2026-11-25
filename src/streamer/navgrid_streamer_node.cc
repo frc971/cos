@@ -158,6 +158,7 @@ void NavgridStreamerNode::DrawNavgrid(cv::Mat& image,
                             navgrid_message->field_size_x;
   const double cell_height = navgrid_message->node_size_meters * image.rows /
                              navgrid_message->field_size_y;
+  cv::Rect robot_cell_bounds;
   for (size_t y = 0; y < navgrid_message->navgrid.size(); ++y) {
     const auto& row = navgrid_message->navgrid[y];
     for (size_t x = 0; x < row.size(); ++x) {
@@ -174,7 +175,14 @@ void NavgridStreamerNode::DrawNavgrid(cv::Mat& image,
       }
       cv::rectangle(image, top_left, bottom_right, cv::Scalar(128, 128, 128),
                     1);
+      if (navgrid_message->robot_cell ==
+          cv::Point(static_cast<int>(x), static_cast<int>(y))) {
+        robot_cell_bounds =
+            cv::Rect(top_left, bottom_right + cv::Point(1, 1));
+      }
     }
   }
+  if (!robot_cell_bounds.empty())
+    cv::rectangle(image, robot_cell_bounds, cv::Scalar(255, 0, 255), 2);
 }
 }  // namespace streamer

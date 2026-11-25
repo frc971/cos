@@ -37,7 +37,10 @@ There is no separate active boolean. Stop publishing the goal to cancel pathing;
 unpublishing it is also accepted. COS returns zero commands when either input is
 missing or older than 250 ms. A connection or time-synchronization transition
 invalidates cached inputs until fresh samples arrive. Malformed/wrong-type,
-nonfinite, out-of-field, and blocked-cell poses do not produce drive commands.
+nonfinite and out-of-field poses do not produce drive commands. For each plan,
+COS treats the map cell containing the robot's current pose as free. Collision
+and robot-radius checks still apply to every other obstacle and the field
+boundary.
 
 ## Command to the roboRIO
 
