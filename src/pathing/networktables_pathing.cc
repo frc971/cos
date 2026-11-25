@@ -287,8 +287,8 @@ class FollowerNode final : public Node {
     command.status = PathingStatus::InvalidInput;
     if (!pose || !goal || !spline)
       return;
-    const auto cleared = planner_.BlockedStartCell(pose->goal_position);
-    if (!planner_.IsValidPose(pose->goal_position, cleared) ||
+    const auto cleared = planner_.BlockedStartCells(pose->goal_position);
+    if (!planner_.IsValidStartPose(pose->goal_position, cleared) ||
         !planner_.IsValidPose(goal->goal_position, cleared))
       return;
     switch (spline->status) {

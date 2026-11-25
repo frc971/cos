@@ -1,8 +1,8 @@
 #pragma once
 
-#include <filesystem>
-#include <optional>
 #include <cstdint>
+#include <filesystem>
+#include <span>
 #include <vector>
 
 #include <frc/geometry/Pose2d.h>
@@ -23,21 +23,24 @@ class DijkstraPlanner {
   explicit DijkstraPlanner(const std::filesystem::path& navgrid_path,
                            double turn_penalty = 0.3,
                            double robot_radius_meters = 0);
-  // Ignore only the mapped obstacle containing the current robot position.
-  auto BlockedStartCell(const frc::Pose2d& pose) const -> std::optional<Cell>;
+  // Ignore mapped obstacles overlapping the current robot footprint.
+  auto BlockedStartCells(const frc::Pose2d& pose) const -> std::vector<Cell>;
+  auto IsValidStartPose(const frc::Pose2d& pose,
+                        std::span<const Cell> cleared) const -> bool;
   auto IsValidPose(const frc::Pose2d& pose,
-                   std::optional<Cell> cleared = std::nullopt) const -> bool;
-  // CellFor requires a validated pose; FindPath requires free endpoints.
+                   std::span<const Cell> cleared = {}) const -> bool;
+  // CellFor requires an in-bounds pose.
   auto CellFor(const frc::Pose2d& pose) const -> Cell;
   auto Center(Cell cell) const -> frc::Translation2d;
-  auto IsFree(Cell cell, std::optional<Cell> cleared = std::nullopt) const -> bool;
+  auto IsFree(Cell cell, std::span<const Cell> cleared = {}) const -> bool;
   auto IsVisible(double x0, double y0, double x1, double y1,
-                 std::optional<Cell> cleared = std::nullopt) const -> bool;
+                 std::span<const Cell> cleared = {}) const -> bool;
   // A conservative certificate: touching blocked cells is not free.
   auto IsBoxFree(double min_x, double min_y, double max_x, double max_y,
-                 std::optional<Cell> cleared = std::nullopt) const -> bool;
+                 std::span<const Cell> cleared = {}) const -> bool;
+  // Requires in-bounds endpoints and a free goal.
   auto FindPath(Cell start, Cell goal,
-                std::optional<Cell> cleared = std::nullopt) const -> std::vector<Cell>;
+                std::span<const Cell> cleared = {}) const -> std::vector<Cell>;
   auto GetGrid() const -> const streamer::NavgridMessage& { return grid_; }
 
  private:

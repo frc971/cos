@@ -38,7 +38,7 @@ unpublishing it is also accepted. COS returns zero commands when either input is
 missing or older than 250 ms. A connection or time-synchronization transition
 invalidates cached inputs until fresh samples arrive. Malformed/wrong-type,
 nonfinite and out-of-field poses do not produce drive commands. For each plan,
-COS treats the map cell containing the robot's current pose as free. Collision
+COS treats mapped obstacle cells overlapping the robot's starting footprint as free. Collision
 and robot-radius checks still apply to every other obstacle and the field
 boundary.
 

@@ -48,7 +48,7 @@ auto Split(const Bezier& b) -> std::pair<Bezier, Bezier> {
 // The entire curve lies inside its control hull. A free bounding box certifies
 // clearance; ambiguous hulls must be subdivided, never accepted by sampling.
 auto IsClear(const DijkstraPlanner& planner, const Bezier& b,
-             std::optional<DijkstraPlanner::Cell> cleared, int depth = 0)
+             std::span<const DijkstraPlanner::Cell> cleared, int depth = 0)
     -> bool {
   double min_x = b[0].x, max_x = b[0].x;
   double min_y = b[0].y, max_y = b[0].y;
@@ -207,8 +207,8 @@ auto DijkstraSplineNode::Calculate(const PoseMessage* pose,
     return output;
   const auto& start = pose->goal_position;
   const auto& end = goal->goal_position;
-  const auto cleared = planner_.BlockedStartCell(start);
-  if (!planner_.IsValidPose(start, cleared) ||
+  const auto cleared = planner_.BlockedStartCells(start);
+  if (!planner_.IsValidStartPose(start, cleared) ||
       !planner_.IsValidPose(end, cleared))
     return output;
   const auto route =

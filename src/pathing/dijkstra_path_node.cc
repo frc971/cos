@@ -68,8 +68,8 @@ auto DijkstraPathNode::Calculate(const PoseMessage* pose_message,
     return output;
   const auto& pose = pose_message->goal_position;
   const auto& goal = goal_message->goal_position;
-  const auto cleared = planner_.BlockedStartCell(pose);
-  if (!planner_.IsValidPose(pose, cleared) ||
+  const auto cleared = planner_.BlockedStartCells(pose);
+  if (!planner_.IsValidStartPose(pose, cleared) ||
       !planner_.IsValidPose(goal, cleared))
     return output;
   const auto& grid = planner_.GetGrid();

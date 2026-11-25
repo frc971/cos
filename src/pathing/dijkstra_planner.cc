@@ -84,16 +84,43 @@ auto DijkstraPlanner::IsOnField(const frc::Pose2d& pose) const -> bool {
          pose.Y().value() >= 0 && pose.Y().value() < grid_.field_size_y;
 }
 
-auto DijkstraPlanner::BlockedStartCell(const frc::Pose2d& pose) const
-    -> std::optional<Cell> {
+auto DijkstraPlanner::BlockedStartCells(const frc::Pose2d& pose) const
+    -> std::vector<Cell> {
   if (!IsOnField(pose))
-    return std::nullopt;
-  const auto cell = CellFor(pose);
-  return obstacles_[cell.y][cell.x] ? std::optional{cell} : std::nullopt;
+    return {};
+  if (robot_radius_ == 0) {
+    const auto cell = CellFor(pose);
+    if (obstacles_[cell.y][cell.x])
+      return {cell};
+    return {};
+  }
+  const double px = pose.X().value(), py = pose.Y().value();
+  const double size = grid_.node_size_meters;
+  std::vector<Cell> cleared;
+  for (int y = 0; y < static_cast<int>(obstacles_.size()); ++y) {
+    for (int x = 0; x < static_cast<int>(obstacles_[y].size()); ++x) {
+      if (!obstacles_[y][x])
+        continue;
+      const double dx = std::max({x * size - px, px - (x + 1) * size, 0.0});
+      const double dy = std::max({y * size - py, py - (y + 1) * size, 0.0});
+      if (std::hypot(dx, dy) <= robot_radius_)
+        cleared.push_back({x, y});
+    }
+  }
+  return cleared;
+}
+
+auto DijkstraPlanner::IsValidStartPose(const frc::Pose2d& pose,
+                                       std::span<const Cell> cleared) const
+    -> bool {
+  return IsOnField(pose) && std::isfinite(pose.Rotation().Radians().value()) &&
+         (robot_radius_ == 0 ||
+          IsBoxFree(pose.X().value(), pose.Y().value(),
+                    pose.X().value(), pose.Y().value(), cleared));
 }
 
 auto DijkstraPlanner::IsValidPose(const frc::Pose2d& pose,
-                                  std::optional<Cell> cleared) const -> bool {
+                                  std::span<const Cell> cleared) const -> bool {
   return IsOnField(pose) &&
          std::isfinite(pose.Rotation().Radians().value()) &&
          IsFree(CellFor(pose), cleared) &&
@@ -119,7 +146,7 @@ auto DijkstraPlanner::Center(Cell cell) const -> frc::Translation2d {
 
 auto DijkstraPlanner::IsBoxFree(double min_x, double min_y, double max_x,
                                 double max_y,
-                                std::optional<Cell> cleared) const -> bool {
+                                std::span<const Cell> cleared) const -> bool {
   if (!std::isfinite(min_x) || !std::isfinite(min_y) || !std::isfinite(max_x) ||
       !std::isfinite(max_y) || min_x < robot_radius_ || min_y < robot_radius_ ||
       max_x + robot_radius_ >= grid_.field_size_x ||
@@ -130,7 +157,7 @@ auto DijkstraPlanner::IsBoxFree(double min_x, double min_y, double max_x,
   const double size = grid_.node_size_meters;
   for (int y = 0; y < static_cast<int>(grid_.navgrid.size()); ++y) {
     for (int x = 0; x < static_cast<int>(grid_.navgrid[y].size()); ++x) {
-      if (!obstacles_[y][x] || cleared == Cell{x, y})
+      if (!obstacles_[y][x] || std::ranges::find(cleared, Cell{x, y}) != cleared.end())
         continue;
       const double dx = std::max({x * size - max_x,
                                   min_x - (x + 1) * size, 0.0});
@@ -144,7 +171,7 @@ auto DijkstraPlanner::IsBoxFree(double min_x, double min_y, double max_x,
   return true;
 }
 
-auto DijkstraPlanner::IsFree(Cell cell, std::optional<Cell> cleared) const
+auto DijkstraPlanner::IsFree(Cell cell, std::span<const Cell> cleared) const
     -> bool {
   if (cell.x < 0 || cell.y < 0 ||
       cell.x >= static_cast<int>(grid_.navgrid.front().size()) ||
@@ -152,10 +179,10 @@ auto DijkstraPlanner::IsFree(Cell cell, std::optional<Cell> cleared) const
     return false;
   if (!grid_.navgrid[cell.y][cell.x])
     return true;
-  if (!cleared)
+  if (cleared.empty())
     return false;
   if (robot_radius_ == 0)
-    return cleared == cell;
+    return std::ranges::find(cleared, cell) != cleared.end();
   const auto center = Center(cell);
   return IsBoxFree(center.X().value(), center.Y().value(),
                    center.X().value(), center.Y().value(), cleared);
@@ -163,7 +190,7 @@ auto DijkstraPlanner::IsFree(Cell cell, std::optional<Cell> cleared) const
 
 // Closed rectangle intersection deliberately rejects touching blocked corners.
 auto DijkstraPlanner::IsVisible(double x0, double y0, double x1,
-                                double y1, std::optional<Cell> cleared) const
+                                double y1, std::span<const Cell> cleared) const
     -> bool {
   if (robot_radius_ > 0 &&
       (!IsBoxFree(x0, y0, x0, y0, cleared) ||
@@ -172,7 +199,7 @@ auto DijkstraPlanner::IsVisible(double x0, double y0, double x1,
   const double size = grid_.node_size_meters;
   for (int y = 0; y < static_cast<int>(grid_.navgrid.size()); ++y) {
     for (int x = 0; x < static_cast<int>(grid_.navgrid[y].size()); ++x) {
-      if (!obstacles_[y][x] || cleared == Cell{x, y})
+      if (!obstacles_[y][x] || std::ranges::find(cleared, Cell{x, y}) != cleared.end())
         continue;
       double lo = 0, hi = 1;
       const auto clip = [&](double origin, double delta, double minimum,
@@ -219,7 +246,7 @@ auto DijkstraPlanner::IsVisible(double x0, double y0, double x1,
 }
 
 auto DijkstraPlanner::FindPath(Cell start, Cell goal,
-                                std::optional<Cell> cleared) const
+                                std::span<const Cell> cleared) const
     -> std::vector<Cell> {
   const int width = static_cast<int>(grid_.navgrid.front().size());
   const int count = width * static_cast<int>(grid_.navgrid.size());
@@ -259,7 +286,7 @@ auto DijkstraPlanner::FindPath(Cell start, Cell goal,
         continue;
       if (robot_radius_ > 0 &&
           !(free_edges_[index] & (uint8_t{1} << direction))) {
-        if (!cleared)
+        if (cleared.empty())
           continue;
         // Removing an obstacle can open previously blocked edges.
         const auto a = Center(cell);

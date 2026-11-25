@@ -235,6 +235,17 @@ TEST_F(DijkstraSplineNodeTest, PlansOutOfOnlyTheOccupiedObstacleCell) {
             pathing::SplineStatus::InvalidInput);
 }
 
+TEST_F(DijkstraSplineNodeTest, ClearsAllObstaclesOverlappingStartFootprint) {
+  WriteGrid({"......", ".##.#.", "......"});
+  pathing::SplineSettings settings;
+  settings.robot_radius_meters = 0.19;
+  const auto start = Pose(1.95, 1.5);
+  const auto goal = Pose(3.5, 1.5);
+  EXPECT_EQ(Plan(start, goal, settings)->status, pathing::SplineStatus::Ready);
+  EXPECT_EQ(Plan(start, Pose(4.5, 1.5), settings)->status,
+            pathing::SplineStatus::InvalidInput);
+}
+
 TEST_F(DijkstraSplineNodeTest, DoesNotCutOrTouchBlockedCorners) {
   WriteGrid({".#", "#."});
   EXPECT_EQ(Plan(Pose(0.5, 0.5), Pose(1.5, 1.5))->status,
@@ -251,7 +262,7 @@ TEST_F(DijkstraSplineNodeTest, SplinePreservesRobotRadiusAroundObstacles) {
   pathing::SplineSettings settings;
   settings.robot_radius_meters = 0.38;
   EXPECT_EQ(Plan(Pose(1.7, 2.5), Pose(4.5, 2.5), settings)->status,
-            pathing::SplineStatus::InvalidInput);
+            pathing::SplineStatus::Ready);
   const auto result = Plan(Pose(0.5, 2.5), Pose(4.5, 2.5), settings);
   ExpectClear(*result);
   for (const auto& sample : result->samples) {
