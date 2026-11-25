@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -40,7 +41,9 @@ class DijkstraPlanner {
                  std::span<const Cell> cleared = {}) const -> bool;
   // Requires in-bounds endpoints and a free goal.
   auto FindPath(Cell start, Cell goal,
-                std::span<const Cell> cleared = {}) const -> std::vector<Cell>;
+                std::span<const Cell> cleared = {},
+                std::optional<frc::Translation2d> start_position = std::nullopt)
+      const -> std::vector<Cell>;
   auto GetGrid() const -> const streamer::NavgridMessage& { return grid_; }
 
  private:

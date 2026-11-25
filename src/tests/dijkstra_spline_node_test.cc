@@ -246,6 +246,19 @@ TEST_F(DijkstraSplineNodeTest, ClearsAllObstaclesOverlappingStartFootprint) {
             pathing::SplineStatus::InvalidInput);
 }
 
+TEST_F(DijkstraSplineNodeTest, LeavesAClearPoseInACellWithABlockedCenter) {
+  WriteGrid({".....", ".....", ".....", "..#..", "....."});
+  pathing::SplineSettings settings;
+  settings.robot_radius_meters = 0.55;
+  const auto start = Pose(2.5, 2.4);
+  const auto goal = Pose(2.5, 1.5);
+  const auto result = Plan(start, goal, settings);
+  ASSERT_EQ(result->status, pathing::SplineStatus::Ready);
+  EXPECT_EQ(result->samples.front(), start.Translation());
+  EXPECT_EQ(result->samples.back(), goal.Translation());
+  EXPECT_EQ(result->raw_route.size(), 2);
+}
+
 TEST_F(DijkstraSplineNodeTest, DoesNotCutOrTouchBlockedCorners) {
   WriteGrid({".#", "#."});
   EXPECT_EQ(Plan(Pose(0.5, 0.5), Pose(1.5, 1.5))->status,

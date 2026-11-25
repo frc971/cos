@@ -19,7 +19,7 @@ enum class PathingStatus : std::uint8_t {
   Following = 1,
   ReachedGoal = 2,
   InvalidInput = 3,
-  StaleInput = 4,
+  StaleInput = 4,  // Reserved for command protocol compatibility.
   NoPath = 5,
   FitFailed = 6,
   Disconnected = 7,
@@ -32,6 +32,7 @@ struct NetworkTablesPathingSettings {
   std::string goal_topic = "/COS/Pathing/Goal";
   std::string command_topic = "/COS/Pathing/Command";
   std::chrono::milliseconds period{20};
+  // Retained for configuration compatibility. Inputs no longer expire.
   std::chrono::milliseconds input_timeout{250};
   // The rio must stop holding a command within this interval. Translation is
   // capped so it cannot pass the collision-checked lookahead point in that time.
@@ -48,7 +49,7 @@ struct NetworkTablesPathingSettings {
 // Uses an already connected instance; never creates a client/server itself.
 class NetworkTablesPathing {
  public:
-  // NT local time in microseconds; also called from NT listener threads.
+  // NT local time in microseconds.
   using Clock = std::function<int64_t()>;
   explicit NetworkTablesPathing(NetworkTablesPathingSettings settings = {},
                                 nt::NetworkTableInstance instance =

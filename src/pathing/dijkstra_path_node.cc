@@ -75,7 +75,7 @@ auto DijkstraPathNode::Calculate(const PoseMessage* pose_message,
   const auto& grid = planner_.GetGrid();
   const double size = grid.node_size_meters;
   route = planner_.FindPath(planner_.CellFor(pose), planner_.CellFor(goal),
-                            cleared);
+                            cleared, pose.Translation());
   output.status = PathStatus::NoPath;
   if (route.empty())
     return output;

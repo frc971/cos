@@ -56,15 +56,15 @@ ABSL_FLAG(std::string, pathing_command_topic, "/COS/Pathing/Command",  // NOLINT
           "Field-relative velocity command topic (double array).");
 ABSL_FLAG(int, pathing_period_ms, 20, "Pathing loop period in ms.");  // NOLINT
 ABSL_FLAG(int, pathing_input_timeout_ms, 250,                         // NOLINT
-          "Pose/goal timeout in ms.");                                // NOLINT
+          "Deprecated. Pose and goal samples no longer expire.");                                // NOLINT
 ABSL_FLAG(int, pathing_command_timeout_ms, 250,                       // NOLINT
           "Maximum duration the rio may hold a pathing command, in ms.");
 ABSL_FLAG(double, pathing_lookahead_m, 0.5,          // NOLINT
           "Spline lookahead in meters.");            // NOLINT
-ABSL_FLAG(double, pathing_max_translation_mps, 1.0,  // NOLINT
+ABSL_FLAG(double, pathing_max_translation_mps, 2.0,  // NOLINT
           "Maximum pathing translation speed in m/s.");
-ABSL_FLAG(double, pathing_max_rotation_radps, 2.0,  // NOLINT
-          "Maximum pathing rotation speed in rad/s.");
+ABSL_FLAG(double, pathing_max_rotation_radps, 1.0,  // NOLINT
+          "Maximum pathing rotation speed in rad/s (0 disables rotation).");
 ABSL_FLAG(double, pathing_turn_penalty, 0.3,  // NOLINT
           "Dijkstra travel-direction penalty in meters per radian.");
 

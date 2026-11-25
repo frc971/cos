@@ -26,18 +26,11 @@ use the WPILib struct representation. Both poses must use the navgrid's fixed
 field coordinate frame. COS does not mirror the goal for alliance color. The
 roboRIO is responsible for any alliance conversion before publishing.
 
-The rio must **stream both poses continuously**, normally every 20 ms, including
-unchanged values. Enable `keepDuplicates` on both rio publishers (and a 20 ms
-publication period); COS subscribes with duplicate updates enabled too. Existing
-pose telemetry that suppresses unchanged values must be adjusted by the rio
-integrator. A stationary robot still needs fresh pose timestamps, and holding
-the same goal still needs fresh goal timestamps.
-
-There is no separate active boolean. Stop publishing the goal to cancel pathing;
-unpublishing it is also accepted. COS returns zero commands when either input is
-missing or older than 250 ms. A connection or time-synchronization transition
-invalidates cached inputs until fresh samples arrive. Malformed/wrong-type,
-nonfinite and out-of-field poses do not produce drive commands. For each plan,
+Publish the robot pose as it changes. COS uses the latest available pose and goal
+without an input age limit. To cancel pathing, unpublish the goal topic. Pausing
+updates leaves the last goal active while the topic exists. COS returns zero
+commands when either input is missing, and rejects malformed, wrong-type,
+nonfinite, and out-of-field poses. For each plan,
 COS treats mapped obstacle cells overlapping the robot's starting footprint as free. Collision
 and robot-radius checks still apply to every other obstacle and the field
 boundary.
@@ -69,14 +62,14 @@ unavailable server-time offset are represented by zero, never NaN.
 | 1 | Following | Valid translation and/or rotation command |
 | 2 | ReachedGoal | Within both position and heading tolerances |
 | 3 | InvalidInput | Invalid topic type, pose, or nonfinite output |
-| 4 | StaleInput | Input timed out, belongs to a previous connection, or the goal changed during calculation |
+| 4 | StaleInput | Reserved for command protocol compatibility |
 | 5 | NoPath | No grid route exists |
 | 6 | FitFailed | No usable clear spline/lookahead could be produced |
 | 7 | Disconnected | NT connection or server time synchronization is unavailable |
 
 Only status **1** can have nonzero velocity components. All other statuses set
-all three components to zero. COS rechecks timestamps, connection state, and
-target changes immediately before publication. Status changes are logged once
+all three components to zero. COS rechecks topic availability, topic types, and connection state immediately
+before publication. Status changes are logged once
 per transition. An orderly stop joins the pathing worker and publishes a final
 zero command; a disconnected client cannot deliver that zero until reconnecting.
 
@@ -94,12 +87,13 @@ are not implemented in this repository.
 Each cycle fits a new spline from the current pose. The follower picks a point
 approximately 0.5 meters ahead along its samples, shortening the lookahead to
 keep the direct translation segment clear of obstacles. Speed depends on
-remaining path distance and is limited to 1 m/s. It is additionally capped by
+remaining path distance and is limited to 2 m/s by default. It is additionally capped by
 the lookahead distance divided by the command hold interval, so nominal motion
-during that interval cannot pass the selected point. Heading follows the goal
-rotation independently, using the shortest angular error, capped at 2 rad/s.
-Within 5 cm of the goal, translation stops; `ReachedGoal` requires heading to
-also be within 3 degrees. Live pathing uses a circular robot radius of **0.19 m**
+during that interval cannot pass the selected point. Within 5 cm of the goal,
+translation stops. The follower uses the shortest angular error and caps rotation
+at 1 rad/s by default. `ReachedGoal` also requires heading to be within 3 degrees.
+Set the rotation cap to zero to disable rotation and use position alone for goal
+completion. Live pathing uses a circular robot radius of **0.19 m**
 (0.38 m diameter). Route search, spline collision checks, field boundaries,
 and follower lookahead all enforce this clearance from blocked navgrid cells.
 The stream shows cells whose centers cannot accommodate the footprint in red.
@@ -119,11 +113,11 @@ existing baked-in margins remain additional clearance. Set
 | `--pathing_goal_topic` | `/COS/Pathing/Goal` |
 | `--pathing_command_topic` | `/COS/Pathing/Command` |
 | `--pathing_period_ms` | 20 |
-| `--pathing_input_timeout_ms` | 250 |
+| `--pathing_input_timeout_ms` | 250 (deprecated, ignored) |
 | `--pathing_command_timeout_ms` | 250 |
 | `--pathing_lookahead_m` | 0.5 |
-| `--pathing_max_translation_mps` | 1.0 |
-| `--pathing_max_rotation_radps` | 2.0 |
+| `--pathing_max_translation_mps` | 2.0 |
+| `--pathing_max_rotation_radps` | 1.0 |
 | `--pathing_turn_penalty` | 0.3 meters/radian |
 
 The C++ `NetworkTablesPathingSettings` also exposes the existing motion gains,

@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <array>
-#include <atomic>
 #include <cmath>
 #include <mutex>
 #include <numbers>
@@ -14,7 +13,6 @@
 
 #include <frc/geometry/struct/Pose2dStruct.h>
 #include <networktables/DoubleArrayTopic.h>
-#include <networktables/NetworkTableListener.h>
 #include <networktables/StructTopic.h>
 
 #include "absl/log/log.h"
@@ -79,7 +77,6 @@ class InputMessage final : public control_loop::IMessage {
   int64_t goal_local_us = 0;
   int64_t pose_server_us = 0;
   int64_t goal_server_us = 0;
-  int64_t connection_epoch_us = 0;
 };
 
 class CommandMessage final : public control_loop::IMessage {
@@ -94,11 +91,6 @@ class CommandMessage final : public control_loop::IMessage {
   PathingStatus status = PathingStatus::Inactive;
   std::shared_ptr<const InputMessage> input;
 };
-
-auto SamePose(const frc::Pose2d& a, const frc::Pose2d& b) -> bool {
-  return a.X().value() == b.X().value() && a.Y().value() == b.Y().value() &&
-         a.Rotation().Radians().value() == b.Rotation().Radians().value();
-}
 
 auto FinitePose(const frc::Pose2d& pose) -> bool {
   return std::isfinite(pose.X().value()) && std::isfinite(pose.Y().value()) &&
@@ -130,15 +122,11 @@ auto StatusName(PathingStatus status) -> const char* {
 class InputNode final : public Node {
  public:
   InputNode(const NetworkTablesPathingSettings& settings,
-            nt::NetworkTableInstance instance, Clock clock)
+            nt::NetworkTableInstance instance)
       : Node({}, {{kPose, typeid(PoseMessage)},
                   {kGoal, typeid(PoseMessage)},
                   {kInput, typeid(InputMessage)}}),
         instance_(instance),
-        clock_(std::move(clock)),
-        timeout_us_(std::chrono::duration_cast<std::chrono::microseconds>(
-                        settings.input_timeout)
-                        .count()),
         pose_(
             instance.GetStructTopic<frc::Pose2d>(settings.pose_topic)
                 .Subscribe(
@@ -152,27 +140,9 @@ class InputNode final : public Node {
                     frc::Pose2d{},
                     {.periodic =
                          std::chrono::duration<double>(settings.period).count(),
-                     .keepDuplicates = true})),
-        epoch_(std::make_shared<std::atomic<int64_t>>(clock_())),
-        synchronized_(std::make_shared<std::atomic<bool>>(
-            instance.GetServerTimeOffset().has_value())) {
-    // Capture only shared state and values, never this: queued callbacks can
-    // outlive listener removal. A reconnect fences off previously cached data.
-    connection_listener_ = nt::NetworkTableListener::CreateConnectionListener(
-        instance_, true, [epoch = epoch_, clock = clock_](const nt::Event&) {
-          epoch->store(clock());
-        });
-    time_listener_ = nt::NetworkTableListener::CreateTimeSyncListener(
-        instance_, true,
-        [epoch = epoch_, synchronized = synchronized_, instance,
-         clock = clock_](const nt::Event&) {
-          const bool current = instance.GetServerTimeOffset().has_value();
-          if (synchronized->exchange(current) != current)
-            epoch->store(clock());
-        });
-  }
+                     .keepDuplicates = true})) {}
 
-  auto CheckFreshness(const InputMessage& input) const -> PathingStatus {
+  auto ValidateInput(const InputMessage& input) const -> PathingStatus {
     if (!instance_.IsConnected() || !instance_.GetServerTimeOffset())
       return PathingStatus::Disconnected;
     if (!pose_.GetTopic().Exists() || !goal_.GetTopic().Exists())
@@ -182,22 +152,10 @@ class InputNode final : public Node {
       return PathingStatus::InvalidInput;
     if (input.pose_local_us == 0 || input.goal_local_us == 0)
       return PathingStatus::Inactive;
-    const int64_t now = clock_();
-    const int64_t epoch = epoch_->load();
-    if (input.connection_epoch_us != epoch || input.pose_local_us < epoch ||
-        input.goal_local_us < epoch || input.pose_local_us > now ||
-        input.goal_local_us > now || now - input.pose_local_us > timeout_us_ ||
-        now - input.goal_local_us > timeout_us_)
-      return PathingStatus::StaleInput;
     if (input.pose_server_us <= 0 || input.goal_server_us <= 0)
       return PathingStatus::InvalidInput;
-    // A new target during planning invalidates the result. Identical goal
-    // heartbeats do not, and the command echoes its original input timestamps.
-    const auto goal = goal_.GetAtomic();
-    if (!FinitePose(input.goal) || !FinitePose(goal.value))
+    if (!FinitePose(input.pose) || !FinitePose(input.goal))
       return PathingStatus::InvalidInput;
-    if (goal.time == 0 || !SamePose(goal.value, input.goal))
-      return PathingStatus::StaleInput;
     return PathingStatus::Following;
   }
 
@@ -217,8 +175,7 @@ class InputNode final : public Node {
         input->goal_local_us = goal.time;
         input->pose_server_us = pose.serverTime;
         input->goal_server_us = goal.serverTime;
-        input->connection_epoch_us = epoch_->load();
-        input->status = CheckFreshness(*input);
+        input->status = ValidateInput(*input);
         if (input->status == PathingStatus::Following) {
           context->SetMessage(kPose, std::make_shared<PoseMessage>(pose.value));
           context->SetMessage(kGoal, std::make_shared<PoseMessage>(goal.value));
@@ -234,14 +191,8 @@ class InputNode final : public Node {
 
  private:
   nt::NetworkTableInstance instance_;
-  Clock clock_;
-  int64_t timeout_us_;
   nt::StructSubscriber<frc::Pose2d> pose_;
   nt::StructSubscriber<frc::Pose2d> goal_;
-  std::shared_ptr<std::atomic<int64_t>> epoch_;
-  std::shared_ptr<std::atomic<bool>> synchronized_;
-  nt::NetworkTableListener connection_listener_;
-  nt::NetworkTableListener time_listener_;
 };
 
 class FollowerNode final : public Node {
@@ -314,6 +265,7 @@ class FollowerNode final : public Node {
         current.Translation().Distance(target.Translation()) <=
         motion.position_tolerance;
     const bool at_heading =
+        motion.max_rotation.value() == 0 ||
         std::abs(heading_error) <= motion.heading_tolerance.value();
     command.status = at_position && at_heading ? PathingStatus::ReachedGoal
                                                : PathingStatus::Following;
@@ -407,9 +359,9 @@ class OutputNode final : public Node {
     std::scoped_lock lock(mutex_);
     auto status = command.status;
     if (command.input) {
-      const auto freshness = input_->CheckFreshness(*command.input);
-      if (freshness != PathingStatus::Following)
-        status = freshness;
+      const auto validation = input_->ValidateInput(*command.input);
+      if (validation != PathingStatus::Following)
+        status = validation;
     } else if (status == PathingStatus::Following ||
                status == PathingStatus::ReachedGoal) {
       status = PathingStatus::InvalidInput;
@@ -544,7 +496,7 @@ class VisualizationNode final : public Node {
         if (pose && command) {
           const bool following = command->status == PathingStatus::Following &&
                                  command->input &&
-                                 input_->CheckFreshness(*command->input) ==
+                                 input_->ValidateInput(*command->input) ==
                                      PathingStatus::Following;
           const double x = pose->goal_position.X().value();
           const double y = pose->goal_position.Y().value();
@@ -579,13 +531,12 @@ void Validate(const NetworkTablesPathingSettings& settings,
     throw std::invalid_argument(
         "Navgrid streamer port must be between 1 and 65535");
   if (!clock || settings.period.count() <= 0 ||
-      settings.input_timeout.count() <= 0 ||
       settings.command_timeout.count() <= 0 ||
-      settings.period > settings.input_timeout ||
       settings.period > settings.command_timeout ||
       !Positive(settings.lookahead.value()) ||
       !Positive(settings.motion.max_translation.value()) ||
-      !Positive(settings.motion.max_rotation.value()) ||
+      !std::isfinite(settings.motion.max_rotation.value()) ||
+      settings.motion.max_rotation.value() < 0 ||
       !Positive(settings.motion.translation_gain) ||
       !Positive(settings.motion.heading_gain) ||
       !Positive(settings.motion.position_tolerance.value()) ||
@@ -609,7 +560,7 @@ class NetworkTablesPathing::Impl {
        nt::NetworkTableInstance instance, Clock clock)
       : loop(settings.period) {
     Validate(settings, clock);
-    auto input = std::make_shared<InputNode>(settings, instance, clock);
+    auto input = std::make_shared<InputNode>(settings, instance);
     auto spline_settings = settings.spline;
     spline_settings.robot_radius_meters = settings.robot_radius_meters;
     auto spline = std::make_shared<DijkstraSplineNode>(

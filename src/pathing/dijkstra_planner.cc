@@ -246,8 +246,9 @@ auto DijkstraPlanner::IsVisible(double x0, double y0, double x1,
 }
 
 auto DijkstraPlanner::FindPath(Cell start, Cell goal,
-                                std::span<const Cell> cleared) const
-    -> std::vector<Cell> {
+                                std::span<const Cell> cleared,
+                                std::optional<frc::Translation2d> start_position)
+    const -> std::vector<Cell> {
   const int width = static_cast<int>(grid_.navgrid.front().size());
   const int count = width * static_cast<int>(grid_.navgrid.size());
   // A cell reached from different directions can have different future costs.
@@ -255,6 +256,8 @@ auto DijkstraPlanner::FindPath(Cell start, Cell goal,
   const int source =
       (start.y * width + start.x) * kStatesPerCell + kNoDirection;
   const int target = goal.y * width + goal.x;
+  // The measured pose can have clearance even when its cell center does not.
+  const bool use_start_position = start_position && !IsFree(start, cleared);
   std::vector<double> distance(count * kStatesPerCell,
                                std::numeric_limits<double>::infinity());
   std::vector<int> parent(count * kStatesPerCell, -1);
@@ -284,8 +287,13 @@ auto DijkstraPlanner::FindPath(Cell start, Cell goal,
           (!IsFree({.x = cell.x + dx, .y = cell.y}, cleared) ||
            !IsFree({.x = cell.x, .y = cell.y + dy}, cleared)))
         continue;
-      if (robot_radius_ > 0 &&
-          !(free_edges_[index] & (uint8_t{1} << direction))) {
+      if (state == source && use_start_position) {
+        const auto b = Center(next);
+        if (!IsVisible(start_position->X().value(), start_position->Y().value(),
+                       b.X().value(), b.Y().value(), cleared))
+          continue;
+      } else if (robot_radius_ > 0 &&
+                 !(free_edges_[index] & (uint8_t{1} << direction))) {
         if (cleared.empty())
           continue;
         // Removing an obstacle can open previously blocked edges.

@@ -211,8 +211,9 @@ auto DijkstraSplineNode::Calculate(const PoseMessage* pose,
   if (!planner_.IsValidStartPose(start, cleared) ||
       !planner_.IsValidPose(end, cleared))
     return output;
-  const auto route =
-      planner_.FindPath(planner_.CellFor(start), planner_.CellFor(end), cleared);
+  const auto start_cell = planner_.CellFor(start);
+  const auto route = planner_.FindPath(start_cell, planner_.CellFor(end),
+                                       cleared, start.Translation());
   output.status = SplineStatus::NoPath;
   if (route.empty())
     return output;
@@ -224,8 +225,9 @@ auto DijkstraSplineNode::Calculate(const PoseMessage* pose,
   append(start.Translation());
   // Same-cell paths need no detour through the center.
   if (route.size() > 1) {
-    for (auto cell : route)
-      append(planner_.Center(cell));
+    const size_t first = planner_.IsFree(start_cell, cleared) ? 0 : 1;
+    for (size_t i = first; i < route.size(); ++i)
+      append(planner_.Center(route[i]));
   }
   append(end.Translation());
   output.status = SplineStatus::FitFailed;
