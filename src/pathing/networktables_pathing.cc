@@ -20,6 +20,8 @@
 #include "streamer/navgrid_streamer_node.h"
 
 namespace pathing {
+using nt::NetworkTableInstance;
+
 namespace {
 constexpr char kPose[] = "pathing:pose";
 constexpr char kGoal[] = "pathing:goal";
@@ -36,11 +38,11 @@ class Node : public control_loop::INode {
        std::vector<control_loop::MessageDescriptor> publications)
       : dependencies_(std::move(dependencies)),
         publications_(std::move(publications)) {}
-  auto GetDependencies() const
+  [[nodiscard]] auto GetDependencies() const
       -> const std::vector<control_loop::MessageDescriptor>& override {
     return dependencies_;
   }
-  auto GetPublications() const
+  [[nodiscard]] auto GetPublications() const
       -> const std::vector<control_loop::MessageDescriptor>& override {
     return publications_;
   }
@@ -72,7 +74,7 @@ class NavgridSource final : public Node {
 
   auto CreateCallback()
       -> std::function<void(const control_loop::Context&)> override {
-    return [this](const control_loop::Context& context) {
+    return [this](const control_loop::Context& context) -> void {
       context->SetMessage(kNavgrid, navgrid_);
       Notify(context);
     };
@@ -309,7 +311,7 @@ class FollowerNode final : public Node {
         const auto point = samples[i - 1] +
                            (samples[i] - samples[i - 1]) * (distance / length);
         if (planner.IsVisible(current.X().value(), current.Y().value(),
-                               point.X().value(), point.Y().value(), cleared))
+                              point.X().value(), point.Y().value(), cleared))
           lookahead = point;
         walked += length;
         if (walked >= settings_.lookahead.value())
@@ -489,7 +491,7 @@ class NetworkTablesPathing::Impl {
  public:
   Impl(const streamer::NavgridMessage& navgrid,
        const NetworkTablesPathingSettings& settings,
-       nt::NetworkTableInstance instance, Clock clock)
+       nt::NetworkTableInstance instance, const Clock& clock)
       : loop(settings.period) {
     Validate(settings, clock);
     auto input = std::make_shared<InputNode>(settings, instance);
@@ -529,9 +531,10 @@ class NetworkTablesPathing::Impl {
 
 NetworkTablesPathing::NetworkTablesPathing(
     const streamer::NavgridMessage& navgrid,
-    NetworkTablesPathingSettings settings, nt::NetworkTableInstance instance,
+    NetworkTablesPathingSettings settings, NetworkTableInstance instance,
     Clock clock)
-    : impl_(std::make_unique<Impl>(navgrid, settings, instance, std::move(clock))) {}
+    : impl_(std::make_unique<Impl>(navgrid, settings, instance,
+                                   std::move(clock))) {}
 
 NetworkTablesPathing::~NetworkTablesPathing() {
   Stop();

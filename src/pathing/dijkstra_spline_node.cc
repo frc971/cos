@@ -230,7 +230,7 @@ auto DijkstraSplineNode::Calculate(const PoseMessage* pose,
   output.status = SplineStatus::NoPath;
   if (route.empty())
     return output;
-  const auto append = [&](const frc::Translation2d& point) {
+  const auto append = [&](const frc::Translation2d& point) -> void {
     if (output.raw_route.empty() ||
         point.Distance(output.raw_route.back()).value() != 0)
       output.raw_route.push_back(point);
@@ -257,7 +257,7 @@ auto DijkstraSplineNode::Calculate(const PoseMessage* pose,
     along.push_back(
         along.back() +
         output.raw_route[i].Distance(output.raw_route[i - 1]).value());
-  std::vector<Knot> knots{{output.raw_route.front(), 0}};
+  std::vector<Knot> knots{{.point = output.raw_route.front(), .along = 0}};
   for (size_t i = 0; i + 1 < output.raw_route.size();) {
     size_t next = output.raw_route.size() - 1;
     const auto a = Point(output.raw_route[i]);
@@ -269,7 +269,7 @@ auto DijkstraSplineNode::Calculate(const PoseMessage* pose,
     }
     if (next == i || knots.size() == settings_.max_control_points)
       return output;
-    knots.push_back({output.raw_route[next], along[next]});
+    knots.push_back({.point = output.raw_route[next], .along = along[next]});
     i = next;
   }
   for (;;) {
@@ -322,7 +322,7 @@ auto DijkstraSplineNode::Calculate(const PoseMessage* pose,
 
 auto DijkstraSplineNode::CreateCallback()
     -> std::function<void(const control_loop::Context&)> {
-  return [this](const control_loop::Context& context) {
+  return [this](const control_loop::Context& context) -> void {
     {
       std::scoped_lock lock(mutex_);
       if (!context->Exists(pose_channel_) || !context->Exists(goal_channel_) ||
