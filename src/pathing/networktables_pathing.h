@@ -25,7 +25,9 @@ enum class PathingStatus : std::uint8_t {
   Disconnected = 7,
 };
 
+// Topics, update cadence, planner settings, and optional MJPEG visualization.
 struct NetworkTablesPathingSettings {
+  // Footprint radius shared by the live planner and follower.
   double robot_radius_meters = 0.19;
   std::filesystem::path navgrid_path = "/root/constants/assets/navgrid.json";
   std::string pose_topic = "/DriveState/Pose";
@@ -40,6 +42,7 @@ struct NetworkTablesPathingSettings {
   bool navgrid_streamer = true;
   int navgrid_streamer_port = 4975;
   std::filesystem::path field_image_path = "/root/constants/assets/field.png";
+  // Target distance ahead on the fitted path for the translation controller.
   units::meter_t lookahead{0.5};
   MotionSettings motion;
   SplineSettings spline;
@@ -59,6 +62,7 @@ class NetworkTablesPathing {
   NetworkTablesPathing(const NetworkTablesPathing&) = delete;
   auto operator=(const NetworkTablesPathing&) -> NetworkTablesPathing& = delete;
 
+  // Starts periodic planning and command publication.
   void Start();
   // Joins the worker before publishing an explicit zero/Inactive command.
   void Stop();

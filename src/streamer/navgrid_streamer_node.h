@@ -14,7 +14,7 @@
 
 namespace streamer {
 
-// A field-coordinate polyline, independent of a planner or spline type.
+// A polyline overlay with points and field dimensions in meters.
 class PolylineMessage final : public control_loop::IMessage {
  public:
   auto GetType() -> const std::type_info& override {
@@ -36,6 +36,8 @@ class PolylineMessage final : public control_loop::IMessage {
   std::vector<cv::Point2d> markers;
 };
 
+// A PathPlanner navigation grid and its display color. A true cell is drawn
+// as part of the overlay. In an obstacle grid, true means occupied.
 class NavgridMessage final : public control_loop::IMessage {
  public:
   explicit NavgridMessage(const std::filesystem::path& path)
@@ -62,11 +64,14 @@ class NavgridMessage final : public control_loop::IMessage {
   uint8_t r;
   uint8_t g;
   uint8_t b;
+  // Indexed by row, then column, starting at the lower-left field corner.
   std::vector<std::vector<bool>> navgrid;
   // Grid indices, with the origin at the bottom left.
   std::optional<cv::Point> robot_cell;
 };
 
+// Draws grid and polyline overlays on a field image and serves the result as
+// an MJPEG stream. The constructor takes the HTTP path and listen port.
 class NavgridStreamerNode final : public control_loop::INode {
  public:
   NavgridStreamerNode(std::string_view path, int port,
@@ -80,6 +85,7 @@ class NavgridStreamerNode final : public control_loop::INode {
       -> const std::vector<control_loop::MessageDescriptor>& override;
   void RegisterCallback(const std::function<void(const control_loop::Context&)>&
                             callback) override;
+  // Add overlay input channels before registering with the control loop.
   void AddNavgrid(std::string_view input_path);
   void AddPolyline(std::string_view input_path);
 

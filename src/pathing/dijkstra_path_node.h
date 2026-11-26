@@ -15,6 +15,7 @@
 
 namespace pathing {
 
+// A field-relative pose used on either the measured-pose or goal channel.
 class PoseMessage final : public control_loop::IMessage {
  public:
   explicit PoseMessage(frc::Pose2d pose) : goal_position(pose) {}
@@ -40,6 +41,7 @@ class VelocityGoalMessage final : public control_loop::IMessage {
   PathStatus status = PathStatus::InvalidInput;
 };
 
+// Footprint, command limits, and proportional control settings for the follower.
 struct MotionSettings {
   double robot_radius_meters = 0;
   units::meters_per_second_t max_translation{1};
@@ -53,6 +55,8 @@ struct MotionSettings {
   double turn_penalty = 0.3;
 };
 
+// Consumes measured and goal PoseMessages and publishes a VelocityGoalMessage
+// toward the furthest visible waypoint on the grid route.
 class DijkstraPathNode final : public control_loop::INode {
  public:
   DijkstraPathNode(std::string_view pose_path, std::string_view goal_path,
@@ -60,7 +64,8 @@ class DijkstraPathNode final : public control_loop::INode {
                    const std::filesystem::path& navgrid_path =
                        "/root/constants/assets/navgrid.json",
                    MotionSettings settings = {});
-  // Configure before registering this node with the control loop.
+  // Publish the planned route as a NavgridMessage on an additional channel.
+  // Call before registering this node with the control loop.
   void EnableNavgridDebug(std::string_view output_path);
   auto CreateCallback()
       -> std::function<void(const control_loop::Context&)> override;
