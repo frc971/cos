@@ -10,12 +10,11 @@
 #include <utility>
 #include <vector>
 
-#include <frc/geometry/struct/Pose2dStruct.h>
 #include <networktables/DoubleArrayTopic.h>
-#include <networktables/StructTopic.h>
 
 #include "absl/log/log.h"
 #include "control_loop/control_loop.h"
+#include "localization/robot_pose_node.h"
 #include "pathing/pose_message.h"
 #include "streamer/navgrid_streamer_node.h"
 
@@ -23,9 +22,8 @@ namespace pathing {
 using nt::NetworkTableInstance;
 
 namespace {
-constexpr char kPose[] = "pathing:pose";
-constexpr char kGoal[] = "pathing:goal";
-constexpr char kInput[] = "pathing:input";
+using localization::InputMessage;
+using localization::RobotPoseNode;
 constexpr char kNavgrid[] = "pathing:navgrid";
 constexpr char kSpline[] = "pathing:spline";
 constexpr char kCommand[] = "pathing:command";
@@ -84,21 +82,6 @@ class NavgridSource final : public Node {
   std::shared_ptr<streamer::NavgridMessage> navgrid_;
 };
 
-class InputMessage final : public control_loop::IMessage {
- public:
-  auto GetType() -> const std::type_info& override {
-    return typeid(InputMessage);
-  }
-  auto GetSize() -> size_t override { return sizeof(*this); }
-  PathingStatus status = PathingStatus::Inactive;
-  frc::Pose2d pose;
-  frc::Pose2d goal;
-  int64_t pose_local_us = 0;
-  int64_t goal_local_us = 0;
-  int64_t pose_server_us = 0;
-  int64_t goal_server_us = 0;
-};
-
 class CommandMessage final : public control_loop::IMessage {
  public:
   auto GetType() -> const std::type_info& override {
@@ -111,11 +94,6 @@ class CommandMessage final : public control_loop::IMessage {
   PathingStatus status = PathingStatus::Inactive;
   std::shared_ptr<const InputMessage> input;
 };
-
-auto FinitePose(const frc::Pose2d& pose) -> bool {
-  return std::isfinite(pose.X().value()) && std::isfinite(pose.Y().value()) &&
-         std::isfinite(pose.Rotation().Radians().value());
-}
 
 auto StatusName(PathingStatus status) -> const char* {
   switch (status) {
@@ -139,88 +117,12 @@ auto StatusName(PathingStatus status) -> const char* {
   return "InvalidInput";
 }
 
-class InputNode final : public Node {
- public:
-  InputNode(const NetworkTablesPathingSettings& settings,
-            nt::NetworkTableInstance instance)
-      : Node({}, {{kPose, typeid(PoseMessage)},
-                  {kGoal, typeid(PoseMessage)},
-                  {kInput, typeid(InputMessage)}}),
-        instance_(instance),
-        pose_(
-            instance.GetStructTopic<frc::Pose2d>(settings.pose_topic)
-                .Subscribe(
-                    frc::Pose2d{},
-                    {.periodic =
-                         std::chrono::duration<double>(settings.period).count(),
-                     .keepDuplicates = true})),
-        goal_(
-            instance.GetStructTopic<frc::Pose2d>(settings.goal_topic)
-                .Subscribe(
-                    frc::Pose2d{},
-                    {.periodic =
-                         std::chrono::duration<double>(settings.period).count(),
-                     .keepDuplicates = true})) {}
-
-  auto ValidateInput(const InputMessage& input) const -> PathingStatus {
-    if (!instance_.IsConnected() || !instance_.GetServerTimeOffset())
-      return PathingStatus::Disconnected;
-    if (!pose_.GetTopic().Exists() || !goal_.GetTopic().Exists())
-      return PathingStatus::Inactive;
-    if (pose_.GetTopic().GetTypeString() != "struct:Pose2d" ||
-        goal_.GetTopic().GetTypeString() != "struct:Pose2d")
-      return PathingStatus::InvalidInput;
-    if (input.pose_local_us == 0 || input.goal_local_us == 0)
-      return PathingStatus::Inactive;
-    if (input.pose_server_us <= 0 || input.goal_server_us <= 0)
-      return PathingStatus::InvalidInput;
-    if (!FinitePose(input.pose) || !FinitePose(input.goal))
-      return PathingStatus::InvalidInput;
-    return PathingStatus::Following;
-  }
-
-  auto CreateCallback()
-      -> std::function<void(const control_loop::Context&)> override {
-    return [this](const control_loop::Context& context) {
-      {
-        std::scoped_lock lock(mutex_);
-        if (context->Exists(kInput))
-          return;
-        const auto pose = pose_.GetAtomic();
-        const auto goal = goal_.GetAtomic();
-        auto input = std::make_shared<InputMessage>();
-        input->pose = pose.value;
-        input->goal = goal.value;
-        input->pose_local_us = pose.time;
-        input->goal_local_us = goal.time;
-        input->pose_server_us = pose.serverTime;
-        input->goal_server_us = goal.serverTime;
-        input->status = ValidateInput(*input);
-        if (input->status == PathingStatus::Following) {
-          context->SetMessage(kPose, std::make_shared<PoseMessage>(pose.value));
-          context->SetMessage(kGoal, std::make_shared<PoseMessage>(goal.value));
-        } else {
-          context->SetMessage(kPose, nullptr);
-          context->SetMessage(kGoal, nullptr);
-        }
-        context->SetMessage(kInput, std::move(input));
-      }
-      Notify(context);
-    };
-  }
-
- private:
-  nt::NetworkTableInstance instance_;
-  nt::StructSubscriber<frc::Pose2d> pose_;
-  nt::StructSubscriber<frc::Pose2d> goal_;
-};
-
 class FollowerNode final : public Node {
  public:
   explicit FollowerNode(const NetworkTablesPathingSettings& settings)
-      : Node({{kPose, typeid(PoseMessage)},
-              {kGoal, typeid(PoseMessage)},
-              {kInput, typeid(InputMessage)},
+      : Node({{RobotPoseNode::kPose, typeid(PoseMessage)},
+              {RobotPoseNode::kGoal, typeid(PoseMessage)},
+              {RobotPoseNode::kInput, typeid(InputMessage)},
               {kSpline, typeid(SplinePathMessage)}},
              {{kCommand, typeid(CommandMessage)}}),
         settings_(settings) {}
@@ -230,12 +132,15 @@ class FollowerNode final : public Node {
     return [this](const control_loop::Context& context) {
       {
         std::scoped_lock lock(mutex_);
-        if (!context->Exists(kPose) || !context->Exists(kGoal) ||
-            !context->Exists(kInput) || !context->Exists(kSpline) ||
+        if (!context->Exists(RobotPoseNode::kPose) ||
+            !context->Exists(RobotPoseNode::kGoal) ||
+            !context->Exists(RobotPoseNode::kInput) ||
+            !context->Exists(kSpline) ||
             context->Exists(kCommand))
           return;
         auto command = std::make_shared<CommandMessage>();
-        command->input = context->GetSharedMessage<InputMessage>(kInput);
+        command->input =
+            context->GetSharedMessage<InputMessage>(RobotPoseNode::kInput);
         if (command->input) {
           command->status = command->input->status;
           if (command->status == PathingStatus::Following)
@@ -250,8 +155,8 @@ class FollowerNode final : public Node {
  private:
   void Calculate(const control_loop::Context& context,
                  CommandMessage& command) {
-    const auto* pose = context->GetMessage<PoseMessage>(kPose);
-    const auto* goal = context->GetMessage<PoseMessage>(kGoal);
+    const auto* pose = context->GetMessage<PoseMessage>(RobotPoseNode::kPose);
+    const auto* goal = context->GetMessage<PoseMessage>(RobotPoseNode::kGoal);
     const auto* spline = context->GetMessage<SplinePathMessage>(kSpline);
     command.status = PathingStatus::InvalidInput;
     if (!pose || !goal || !spline || !spline->planner)
@@ -344,7 +249,7 @@ class OutputNode final : public Node {
  public:
   OutputNode(const NetworkTablesPathingSettings& settings,
              nt::NetworkTableInstance instance, Clock clock,
-             std::shared_ptr<InputNode> input)
+             std::shared_ptr<RobotPoseNode> input)
       : Node({{kCommand, typeid(CommandMessage)}}, {}),
         instance_(instance),
         clock_(std::move(clock)),
@@ -414,13 +319,13 @@ class OutputNode final : public Node {
 
   nt::NetworkTableInstance instance_;
   Clock clock_;
-  std::shared_ptr<InputNode> input_;
+  std::shared_ptr<RobotPoseNode> input_;
   nt::DoubleArrayPublisher publisher_;
   std::optional<PathingStatus> last_status_;
 };
 
 auto ReadPathingFrame(const control_loop::Context& context,
-                      const InputNode& input_node)
+                      const RobotPoseNode& input_node)
     -> std::optional<streamer::NavgridStreamerNode::PathingFrame> {
   const auto* spline = context->GetMessage<SplinePathMessage>(kSpline);
   if (!spline || !spline->planner)
@@ -436,16 +341,16 @@ auto ReadPathingFrame(const control_loop::Context& context,
   for (const auto& point : spline->raw_route)
     frame.route.emplace_back(point.X().value(), point.Y().value());
 
-  const auto* input = context->GetMessage<InputMessage>(kInput);
+  const auto* input = context->GetMessage<InputMessage>(RobotPoseNode::kInput);
   if (input && input->pose_local_us != 0) {
     frame.robot_position.emplace(input->pose.X().value(),
                                  input->pose.Y().value());
   }
-  const auto* pose = context->GetMessage<PoseMessage>(kPose);
+  const auto* pose = context->GetMessage<PoseMessage>(RobotPoseNode::kPose);
   const auto* command = context->GetMessage<CommandMessage>(kCommand);
   if (pose && command) {
     frame.velocity_origin.emplace(pose->goal_position.X().value(),
-                                   pose->goal_position.Y().value());
+                                  pose->goal_position.Y().value());
     if (command->status == PathingStatus::Following && command->input &&
         input_node.ValidateInput(*command->input) == PathingStatus::Following)
       frame.velocity_mps = {command->vx, command->vy};
@@ -494,11 +399,13 @@ class NetworkTablesPathing::Impl {
        nt::NetworkTableInstance instance, const Clock& clock)
       : loop(settings.period) {
     Validate(settings, clock);
-    auto input = std::make_shared<InputNode>(settings, instance);
+    auto input = std::make_shared<RobotPoseNode>(
+        instance, settings.pose_topic, settings.goal_topic, settings.period);
     auto spline_settings = settings.spline;
     spline_settings.robot_radius_meters = settings.robot_radius_meters;
     auto spline = std::make_shared<DijkstraSplineNode>(
-        kPose, kGoal, kSpline, kNavgrid, spline_settings);
+        RobotPoseNode::kPose, RobotPoseNode::kGoal, kSpline, kNavgrid,
+        spline_settings);
     if (settings.navgrid_streamer)
       spline->EnableSplineDebug(kSplineOverlay);
     auto follower = std::make_shared<FollowerNode>(settings);
@@ -511,14 +418,16 @@ class NetworkTablesPathing::Impl {
     loop.RegisterNode(output);
     if (settings.navgrid_streamer) {
       auto streamer_node = std::make_shared<streamer::NavgridStreamerNode>(
-          "/navgrid", settings.navgrid_streamer_port, settings.field_image_path);
+          "/navgrid", settings.navgrid_streamer_port,
+          settings.field_image_path);
       streamer_node->AddPolyline(kSplineOverlay);
       streamer_node->SetPathingFrameSource(
-          {{kPose, typeid(PoseMessage)},
-           {kInput, typeid(InputMessage)},
+          {{RobotPoseNode::kPose, typeid(PoseMessage)},
+           {RobotPoseNode::kInput, typeid(InputMessage)},
            {kSpline, typeid(SplinePathMessage)},
            {kCommand, typeid(CommandMessage)}},
-          [input](const control_loop::Context& context) {
+          [input](const control_loop::Context& context)
+              -> std::optional<streamer::NavgridStreamerNode::PathingFrame> {
             return ReadPathingFrame(context, *input);
           });
       loop.RegisterNode(streamer_node);

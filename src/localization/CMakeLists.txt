@@ -89,3 +89,13 @@ target_sources(cos.variance_calculator_node
 target_link_libraries(cos.variance_calculator_node PUBLIC
   cos::localization_solver_common
 )
+
+add_library(cos.robot_pose_node)
+add_library(cos::robot_pose_node ALIAS cos.robot_pose_node)
+target_sources(cos.robot_pose_node
+  PRIVATE robot_pose_node.cc
+  PUBLIC FILE_SET HEADERS
+    BASE_DIRS ${PROJECT_SOURCE_DIR}/src
+    FILES robot_pose_node.h
+)
+target_link_libraries(cos.robot_pose_node PUBLIC cos::pathing_messages ntcore)
