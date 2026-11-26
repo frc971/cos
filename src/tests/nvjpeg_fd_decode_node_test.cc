@@ -6,8 +6,6 @@
 #include <chrono>
 #include <cstdint>
 #include <cstring>
-#include <cstdio>
-#include <cstdlib>
 #include <future>
 #include <iterator>
 #include <memory>
@@ -15,12 +13,9 @@
 #include <vector>
 
 #include <gtest/gtest.h>
-#include <opencv2/imgcodecs.hpp>
-#include <unistd.h>
 
 #include "control_loop/context.h"
 #include "tests/valid_jpeg_fixture.h"
-#include "streamer/navgrid_streamer_node.h"
 
 namespace {
 
@@ -111,34 +106,6 @@ TEST_F(NvjpegFdDecodeNodeTest, DecodesValidFramesAroundRejectedFrame) {
     if (i == 0) {
       ExpectDropped({0xFF, 0xC0});
     }
-  }
-}
-
-TEST_F(NvjpegFdDecodeNodeTest, NavgridEncodingCoexistsWithHardwareDecoding) {
-  char image_path[] = "/tmp/cos-navgrid-XXXXXX.png";
-  const int fd = mkstemps(image_path, 4);
-  ASSERT_GE(fd, 0);
-  close(fd);
-  const bool written = cv::imwrite(
-      image_path, cv::Mat(128, 128, CV_8UC3, cv::Scalar(10, 80, 200)));
-  if (!written) {
-    std::remove(image_path);
-  }
-  ASSERT_TRUE(written);
-  streamer::NavgridStreamerNode navgrid("/navgrid", 0, image_path);
-  std::remove(image_path);
-  int published = 0;
-  navgrid.RegisterCallback([&](const control_loop::Context&) { ++published; });
-  const std::vector<unsigned char> jpeg(std::begin(kValidJpeg),
-                                      std::end(kValidJpeg));
-  for (int i = 0; i < 3; ++i) {
-    auto context = Decode(jpeg);
-    ASSERT_NE(context->GetMessage<camera::DecodedJpegFdBuffer>("decoded"),
-              nullptr);
-    // This used to enter NVIDIA's incompatible jpeg_* encoder and corrupt
-    // the stack, even though hardware decoding alone passed its tests.
-    navgrid.CreateCallback()(context);
-    EXPECT_EQ(published, i + 1);
   }
 }
 

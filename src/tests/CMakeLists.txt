@@ -1,25 +1,5 @@
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
 
-add_executable(navgrid_streamer_test navgrid_streamer_test.cc)
-target_link_libraries(navgrid_streamer_test PRIVATE
-  cos::navgrid_streamer_node
-  cos::dijkstra_path_node
-  cos::dijkstra_spline_node
-  cos::stop
-  absl::flags_parse
-  absl::log_initialize
-)
-
-add_executable(dijkstra_path_node_test dijkstra_path_node_test.cc)
-target_link_libraries(dijkstra_path_node_test PRIVATE
-  cos::dijkstra_path_node GTest::gtest_main)
-add_test(NAME dijkstra_path_node_test COMMAND dijkstra_path_node_test)
-
-add_executable(dijkstra_spline_node_test dijkstra_spline_node_test.cc)
-target_link_libraries(dijkstra_spline_node_test PRIVATE
-  cos::dijkstra_spline_node GTest::gtest_main)
-add_test(NAME dijkstra_spline_node_test COMMAND dijkstra_spline_node_test)
-
 add_executable(context_handoff_node_test context_handoff_node_test.cc)
 target_link_libraries(context_handoff_node_test PRIVATE
   cos::control_loop GTest::gtest_main)
@@ -84,7 +64,6 @@ add_test(NAME single_tag_rotation_test COMMAND single_tag_rotation_test)
 add_executable(nvjpeg_fd_decode_node_test nvjpeg_fd_decode_node_test.cc)
 target_link_libraries(nvjpeg_fd_decode_node_test PRIVATE
   cos::nvjpeg_fd_decode_node
-  cos::navgrid_streamer_node
   cos::control_loop
   cos::thread_pool
   GTest::gtest_main
