@@ -17,6 +17,7 @@
 
 #include "absl/log/log.h"
 #include "control_loop/control_loop.h"
+#include "pathing/pose_message.h"
 #include "streamer/navgrid_streamer_node.h"
 
 namespace pathing {

@@ -8,7 +8,9 @@
 
 #include <frc/spline/CubicHermiteSpline.h>
 
-#include "pathing/dijkstra_path_node.h"
+#include "control_loop/node.h"
+#include "pathing/dijkstra_planner.h"
+#include "pathing/pose_message.h"
 
 namespace pathing {
 

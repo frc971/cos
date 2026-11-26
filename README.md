@@ -12,12 +12,11 @@ Camera configuration JSON stores extrinsic `rotation_x`, `rotation_y`, and
 radians immediately when loaded.
 
 `pathing::DijkstraSplineNode` accepts pose and goal channels, an output channel,
-a navgrid path, and `SplineSettings`. It uses the same planner as
-`DijkstraPathNode` and publishes a `SplinePathMessage` with the original route,
-interpolation waypoints, cubic Hermite segments, visualization samples, and a
-`SplineStatus` (`Ready`, `InvalidInput`, `NoPath`, or `FitFailed`). Segment
-parameters run from 0 to 1. Spline tangents describe travel direction
-independently of robot orientation.
+a navgrid path, and `SplineSettings`. It publishes a `SplinePathMessage` with
+the original route, interpolation waypoints, cubic Hermite segments,
+visualization samples, and a `SplineStatus` (`Ready`, `InvalidInput`, `NoPath`,
+or `FitFailed`). Segment parameters run from 0 to 1. Spline tangents describe
+travel direction independently of robot orientation.
 
 Fitting starts with visibility-simplified waypoints. When a curve crosses an
 obstacle or field boundary, the fitter inserts points along the original route
