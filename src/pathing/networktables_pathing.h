@@ -33,6 +33,9 @@ struct NetworkTablesPathingSettings {
   units::meter_t lookahead{0.5};
   MotionSettings motion;
   SplineSettings spline;
+
+  // Throws std::invalid_argument if the settings are invalid.
+  void Validate() const;
 };
 
 // Independent NT input -> spline planner -> follower -> NT output loop.

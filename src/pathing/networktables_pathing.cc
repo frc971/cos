@@ -116,8 +116,7 @@ class FollowerNode final : public Node {
         if (!context->Exists(RobotPoseNode::kPose) ||
             !context->Exists(RobotPoseNode::kGoal) ||
             !context->Exists(RobotPoseNode::kInput) ||
-            !context->Exists(kSpline) ||
-            context->Exists(kCommand))
+            !context->Exists(kSpline) || context->Exists(kCommand))
           return;
         auto command = std::make_shared<CommandMessage>();
         command->input =
@@ -341,34 +340,29 @@ auto Positive(double value) -> bool {
   return std::isfinite(value) && value > 0;
 }
 
-void Validate(const NetworkTablesPathingSettings& settings) {
-  if (settings.navgrid_streamer && (settings.navgrid_streamer_port < 1 ||
-                                    settings.navgrid_streamer_port > 65535))
+}  // namespace
+
+void NetworkTablesPathingSettings::Validate() const {
+  if (navgrid_streamer &&
+      (navgrid_streamer_port < 1 || navgrid_streamer_port > 65535))
     throw std::invalid_argument(
         "Navgrid streamer port must be between 1 and 65535");
-  if (settings.period.count() <= 0 ||
-      settings.command_timeout.count() <= 0 ||
-      settings.period > settings.command_timeout ||
-      !Positive(settings.lookahead.value()) ||
-      !Positive(settings.motion.max_translation.value()) ||
-      !std::isfinite(settings.motion.max_rotation.value()) ||
-      settings.motion.max_rotation.value() < 0 ||
-      !Positive(settings.motion.translation_gain) ||
-      !Positive(settings.motion.heading_gain) ||
-      !Positive(settings.motion.position_tolerance.value()) ||
-      !Positive(settings.motion.heading_tolerance.value()))
+  if (period.count() <= 0 || command_timeout.count() <= 0 ||
+      period > command_timeout || !Positive(lookahead.value()) ||
+      !Positive(motion.max_translation.value()) ||
+      !std::isfinite(motion.max_rotation.value()) ||
+      motion.max_rotation.value() < 0 || !Positive(motion.translation_gain) ||
+      !Positive(motion.heading_gain) ||
+      !Positive(motion.position_tolerance.value()) ||
+      !Positive(motion.heading_tolerance.value()))
     throw std::invalid_argument("Invalid NetworkTables pathing settings");
-  if (settings.pose_topic.empty() || settings.goal_topic.empty() ||
-      settings.command_topic.empty() || settings.pose_topic.front() != '/' ||
-      settings.goal_topic.front() != '/' ||
-      settings.command_topic.front() != '/' ||
-      settings.pose_topic == settings.goal_topic ||
-      settings.command_topic == settings.pose_topic ||
-      settings.command_topic == settings.goal_topic)
+  if (pose_topic.empty() || goal_topic.empty() || command_topic.empty() ||
+      pose_topic.front() != '/' || goal_topic.front() != '/' ||
+      command_topic.front() != '/' || pose_topic == goal_topic ||
+      command_topic == pose_topic || command_topic == goal_topic)
     throw std::invalid_argument(
         "Pathing NT topics must be absolute and distinct");
 }
-}  // namespace
 
 class NetworkTablesPathing::Impl {
  public:
@@ -376,7 +370,7 @@ class NetworkTablesPathing::Impl {
        const NetworkTablesPathingSettings& settings,
        nt::NetworkTableInstance instance)
       : loop(settings.period) {
-    Validate(settings);
+    settings.Validate();
     auto input = std::make_shared<RobotPoseNode>(
         instance, settings.pose_topic, settings.goal_topic, settings.period);
     auto spline_settings = settings.spline;
