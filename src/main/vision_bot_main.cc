@@ -140,7 +140,6 @@ auto main(int argc, char** argv) -> int {
   if (absl::GetFlag(FLAGS_pathing)) {
     pathing::NetworkTablesPathingSettings settings;
     settings.robot_radius_meters = absl::GetFlag(FLAGS_pathing_robot_radius_m);
-    settings.navgrid_path = absl::GetFlag(FLAGS_pathing_navgrid);
     settings.pose_topic = absl::GetFlag(FLAGS_pathing_pose_topic);
     settings.goal_topic = absl::GetFlag(FLAGS_pathing_goal_topic);
     settings.command_topic = absl::GetFlag(FLAGS_pathing_command_topic);
@@ -162,8 +161,10 @@ auto main(int argc, char** argv) -> int {
         absl::GetFlag(FLAGS_pathing_max_rotation_radps)};
     settings.spline.turn_penalty = absl::GetFlag(FLAGS_pathing_turn_penalty);
     settings.motion.turn_penalty = settings.spline.turn_penalty;
+    const auto navgrid =
+        streamer::NavgridMessage::Load(absl::GetFlag(FLAGS_pathing_navgrid));
     pathing_pipeline =
-        std::make_unique<pathing::NetworkTablesPathing>(settings);
+        std::make_unique<pathing::NetworkTablesPathing>(navgrid, settings);
   }
 
   const std::vector<std::string> paths{"/root/constants/vision-bot/front.json"};

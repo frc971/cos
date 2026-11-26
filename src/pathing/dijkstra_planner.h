@@ -1,14 +1,13 @@
 #pragma once
 
 #include <cstdint>
-#include <filesystem>
 #include <optional>
 #include <span>
 #include <vector>
 
 #include <frc/geometry/Pose2d.h>
 
-#include "streamer/navgrid_streamer_node.h"
+#include "streamer/navgrid_message.h"
 
 namespace pathing {
 
@@ -22,7 +21,7 @@ class DijkstraPlanner {
     auto operator==(const Cell&) const -> bool = default;
   };
 
-  explicit DijkstraPlanner(const std::filesystem::path& navgrid_path,
+  explicit DijkstraPlanner(const streamer::NavgridMessage& navgrid,
                            double turn_penalty = 0.3,
                            double robot_radius_meters = 0);
   // Returns occupied cells overlapping the measured footprint. Pass these as

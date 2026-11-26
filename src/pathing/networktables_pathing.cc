@@ -27,7 +27,6 @@ constexpr char kGoal[] = "pathing:goal";
 constexpr char kInput[] = "pathing:input";
 constexpr char kSpline[] = "pathing:spline";
 constexpr char kCommand[] = "pathing:command";
-constexpr char kGrid[] = "pathing:navgrid";
 constexpr char kRouteOverlay[] = "pathing:route_overlay";
 constexpr char kSplineOverlay[] = "pathing:spline_overlay";
 constexpr char kVelocityOverlay[] = "pathing:velocity_overlay";
@@ -198,13 +197,14 @@ class InputNode final : public Node {
 
 class FollowerNode final : public Node {
  public:
-  explicit FollowerNode(const NetworkTablesPathingSettings& settings)
+  FollowerNode(const NetworkTablesPathingSettings& settings,
+               const streamer::NavgridMessage& navgrid)
       : Node({{kPose, typeid(PoseMessage)},
               {kGoal, typeid(PoseMessage)},
               {kInput, typeid(InputMessage)},
               {kSpline, typeid(SplinePathMessage)}},
              {{kCommand, typeid(CommandMessage)}}),
-        planner_(settings.navgrid_path, settings.spline.turn_penalty,
+        planner_(navgrid, settings.spline.turn_penalty,
                  settings.robot_radius_meters),
         settings_(settings) {}
 
@@ -408,24 +408,20 @@ class OutputNode final : public Node {
 class VisualizationNode final : public Node {
  public:
   VisualizationNode(const NetworkTablesPathingSettings& settings,
+                    const streamer::NavgridMessage& navgrid,
                     std::shared_ptr<InputNode> input)
       : Node({{kPose, typeid(PoseMessage)},
               {kInput, typeid(InputMessage)},
               {kSpline, typeid(SplinePathMessage)},
               {kSplineOverlay, typeid(streamer::PolylineMessage)},
               {kCommand, typeid(CommandMessage)}},
-             {{kGrid, typeid(streamer::NavgridMessage)},
-              {kRouteOverlay, typeid(streamer::NavgridMessage)},
+             {{kRouteOverlay, typeid(streamer::NavgridMessage)},
               {kVelocityOverlay, typeid(streamer::PolylineMessage)}}),
-        grid_(
-            std::make_shared<streamer::NavgridMessage>(
-                DijkstraPlanner(settings.navgrid_path, settings.spline.turn_penalty,
-                                settings.robot_radius_meters).GetGrid())),
+        grid_(navgrid),
         input_(std::move(input)),
         streamer_("/navgrid", settings.navgrid_streamer_port,
-                  settings.field_image_path),
+                  grid_, settings.field_image_path),
         draw_(streamer_.CreateCallback()) {
-    streamer_.AddNavgrid(kGrid);
     streamer_.AddNavgrid(kRouteOverlay);
     streamer_.AddPolyline(kSplineOverlay);
     streamer_.AddPolyline(kVelocityOverlay);
@@ -439,18 +435,17 @@ class VisualizationNode final : public Node {
         if (!context->Exists(kPose) || !context->Exists(kInput) ||
             !context->Exists(kSpline) ||
             !context->Exists(kSplineOverlay) || !context->Exists(kCommand) ||
-            context->Exists(kGrid))
+            context->Exists(kRouteOverlay))
           return;
         const auto now = std::chrono::steady_clock::now();
         if (now < next_frame_) {
-          context->SetMessage(kGrid, nullptr);
           context->SetMessage(kRouteOverlay, nullptr);
           context->SetMessage(kVelocityOverlay, nullptr);
           return;
         }
         next_frame_ = now + std::chrono::milliseconds(100);
 
-        auto route = std::make_shared<streamer::NavgridMessage>(*grid_);
+        auto route = std::make_shared<streamer::NavgridMessage>(grid_);
         route->r = route->b = 0;
         route->g = 255;
         for (auto& row : route->navgrid)
@@ -459,10 +454,10 @@ class VisualizationNode final : public Node {
         if (input && input->pose_local_us != 0) {
           const double x = input->pose.X().value();
           const double y = input->pose.Y().value();
-          if (x >= 0 && x < grid_->field_size_x &&
-              y >= 0 && y < grid_->field_size_y) {
-            const auto col = static_cast<size_t>(x / grid_->node_size_meters);
-            const auto row = static_cast<size_t>(y / grid_->node_size_meters);
+          if (x >= 0 && x < grid_.field_size_x &&
+              y >= 0 && y < grid_.field_size_y) {
+            const auto col = static_cast<size_t>(x / grid_.node_size_meters);
+            const auto row = static_cast<size_t>(y / grid_.node_size_meters);
             if (row < route->navgrid.size() &&
                 col < route->navgrid[row].size()) {
               route->robot_cell =
@@ -475,21 +470,20 @@ class VisualizationNode final : public Node {
           for (const auto& point : spline->raw_route) {
             const double x = point.X().value(), y = point.Y().value();
             if (std::isfinite(x) && std::isfinite(y) && x >= 0 && y >= 0 &&
-                x < grid_->field_size_x && y < grid_->field_size_y) {
-              const auto col = static_cast<size_t>(x / grid_->node_size_meters);
-              const auto row = static_cast<size_t>(y / grid_->node_size_meters);
+                x < grid_.field_size_x && y < grid_.field_size_y) {
+              const auto col = static_cast<size_t>(x / grid_.node_size_meters);
+              const auto row = static_cast<size_t>(y / grid_.node_size_meters);
               if (row < route->navgrid.size() &&
                   col < route->navgrid[row].size())
                 route->navgrid[row][col] = true;
             }
           }
         }
-        context->SetMessage(kGrid, grid_);
         context->SetMessage(kRouteOverlay, std::move(route));
 
         auto velocity = std::make_shared<streamer::PolylineMessage>();
-        velocity->field_size_x = grid_->field_size_x;
-        velocity->field_size_y = grid_->field_size_y;
+        velocity->field_size_x = grid_.field_size_x;
+        velocity->field_size_y = grid_.field_size_y;
         velocity->g = velocity->b = 255;
         velocity->arrow_head = true;
         const auto* pose = context->GetMessage<PoseMessage>(kPose);
@@ -514,7 +508,7 @@ class VisualizationNode final : public Node {
   }
 
  private:
-  std::shared_ptr<streamer::NavgridMessage> grid_;
+  streamer::NavgridMessage grid_;
   std::shared_ptr<InputNode> input_;
   streamer::NavgridStreamerNode streamer_;
   std::function<void(const control_loop::Context&)> draw_;
@@ -557,7 +551,8 @@ void Validate(const NetworkTablesPathingSettings& settings,
 
 class NetworkTablesPathing::Impl {
  public:
-  Impl(const NetworkTablesPathingSettings& settings,
+  Impl(const streamer::NavgridMessage& navgrid,
+       const NetworkTablesPathingSettings& settings,
        nt::NetworkTableInstance instance, Clock clock)
       : loop(settings.period) {
     Validate(settings, clock);
@@ -565,10 +560,10 @@ class NetworkTablesPathing::Impl {
     auto spline_settings = settings.spline;
     spline_settings.robot_radius_meters = settings.robot_radius_meters;
     auto spline = std::make_shared<DijkstraSplineNode>(
-        kPose, kGoal, kSpline, settings.navgrid_path, spline_settings);
+        kPose, kGoal, kSpline, navgrid, spline_settings);
     if (settings.navgrid_streamer)
       spline->EnableSplineDebug(kSplineOverlay);
-    auto follower = std::make_shared<FollowerNode>(settings);
+    auto follower = std::make_shared<FollowerNode>(settings, navgrid);
     output = std::make_shared<OutputNode>(settings, instance, clock, input);
     loop.SetMaxContext(1);
     loop.RegisterDependencyNode(input);
@@ -576,7 +571,8 @@ class NetworkTablesPathing::Impl {
     loop.RegisterNode(follower);
     loop.RegisterNode(output);
     if (settings.navgrid_streamer)
-      loop.RegisterNode(std::make_shared<VisualizationNode>(settings, input));
+      loop.RegisterNode(
+          std::make_shared<VisualizationNode>(settings, spline->GetGrid(), input));
   }
   control_loop::ControlLoop loop;
   std::shared_ptr<OutputNode> output;
@@ -584,9 +580,10 @@ class NetworkTablesPathing::Impl {
 };
 
 NetworkTablesPathing::NetworkTablesPathing(
+    const streamer::NavgridMessage& navgrid,
     NetworkTablesPathingSettings settings, nt::NetworkTableInstance instance,
     Clock clock)
-    : impl_(std::make_unique<Impl>(settings, instance, std::move(clock))) {}
+    : impl_(std::make_unique<Impl>(navgrid, settings, instance, std::move(clock))) {}
 
 NetworkTablesPathing::~NetworkTablesPathing() {
   Stop();

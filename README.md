@@ -12,7 +12,9 @@ Camera configuration JSON stores extrinsic `rotation_x`, `rotation_y`, and
 radians immediately when loaded.
 
 `pathing::DijkstraSplineNode` accepts pose and goal channels, an output channel,
-a navgrid path, and `SplineSettings`. It publishes a `SplinePathMessage` with
+a `streamer::NavgridMessage`, and `SplineSettings`. Construct the grid from
+in-memory cells or load PathPlanner JSON with `NavgridMessage::Load`.
+The spline node publishes a `SplinePathMessage` with
 the original route, interpolation waypoints, cubic Hermite segments,
 visualization samples, and a `SplineStatus` (`Ready`, `InvalidInput`, `NoPath`,
 or `FitFailed`). Segment parameters run from 0 to 1. Spline tangents describe
@@ -32,6 +34,8 @@ with the raw route retained and no usable spline or samples. Sampling is bounded
 to 100000 points and subdivision depth 24; collision subdivision depth is 16.
 Call `EnableSplineDebug(channel)` before registration to publish a
 `streamer::PolylineMessage`, and register it using `NavgridStreamerNode::AddPolyline`.
+The streamer accepts a base `NavgridMessage` or a navgrid JSON path and field
+image path. Use `AddNavgrid` for additional grid overlays from the control loop.
 
 `vision_bot_main` also supports live pathing from roboRIO NetworkTables pose and
 goal inputs. See [the pathing contract](src/pathing/README.md) for topic names,

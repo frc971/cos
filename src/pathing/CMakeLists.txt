@@ -7,7 +7,7 @@ target_sources(cos.dijkstra_planner
     FILES dijkstra_planner.h
 )
 target_link_libraries(cos.dijkstra_planner PUBLIC
-  cos::navgrid_streamer_node wpimath
+  cos::navgrid_message wpimath
 )
 
 add_library(cos.dijkstra_spline_node)
@@ -20,6 +20,7 @@ target_sources(cos.dijkstra_spline_node
 )
 target_link_libraries(cos.dijkstra_spline_node PUBLIC
   cos::control_loop cos::dijkstra_planner
+  PRIVATE cos::navgrid_streamer_node
 )
 
 add_library(cos.networktables_pathing)

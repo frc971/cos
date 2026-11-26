@@ -20,9 +20,9 @@ constexpr int kStatesPerCell = 9;
 
 }  // namespace
 
-DijkstraPlanner::DijkstraPlanner(const std::filesystem::path& navgrid_path,
+DijkstraPlanner::DijkstraPlanner(const streamer::NavgridMessage& navgrid,
                                  double turn_penalty, double robot_radius_meters)
-    : grid_(navgrid_path), obstacles_(grid_.navgrid),
+    : grid_(navgrid), obstacles_(grid_.navgrid),
       turn_penalty_(turn_penalty), robot_radius_(robot_radius_meters) {
   if (!std::isfinite(robot_radius_) || robot_radius_ < 0) {
     throw std::invalid_argument("Robot radius must be finite and nonnegative");

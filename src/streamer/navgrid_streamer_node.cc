@@ -2,6 +2,8 @@
 
 #include <cmath>
 #include <memory>
+#include <stdexcept>
+#include <utility>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <turbojpeg.h>
@@ -23,15 +25,30 @@ NavgridStreamerNode::NavgridStreamerNode(
   LOG(INFO) << "MJPEG stream available at :" << port << path_;
 }
 
+NavgridStreamerNode::NavgridStreamerNode(
+    std::string_view path, int port, NavgridMessage navgrid,
+    const std::filesystem::path& field_image_path)
+    : NavgridStreamerNode(path, port, field_image_path) {
+  navgrid_.emplace(std::move(navgrid));
+}
+
+NavgridStreamerNode::NavgridStreamerNode(
+    std::string_view path, int port, const std::filesystem::path& navgrid_path,
+    const std::filesystem::path& field_image_path)
+    : NavgridStreamerNode(path, port, NavgridMessage::Load(navgrid_path),
+                          field_image_path) {}
+
 auto NavgridStreamerNode::CreateCallback()
     -> std::function<void(const control_loop::Context&)> {
   return [this](const control_loop::Context& context) -> void {
     cv::Mat new_image = base_image_.clone();
+    if (navgrid_)
+      DrawNavgrid(new_image, *navgrid_);
     for (const auto& dependency : dependencies_) {
       if (context->Exists(dependency.GetChannel())) {
         if (auto* navgrid =
                 context->GetMessage<NavgridMessage>(dependency.GetChannel())) {
-          DrawNavgrid(new_image, navgrid);
+          DrawNavgrid(new_image, *navgrid);
         } else if (auto* polyline = context->GetMessage<PolylineMessage>(
                        dependency.GetChannel())) {
           DrawPolyline(new_image, *polyline);
@@ -144,23 +161,23 @@ void NavgridStreamerNode::DrawPolyline(cv::Mat& image,
 }
 
 void NavgridStreamerNode::DrawNavgrid(cv::Mat& image,
-                                      NavgridMessage* navgrid_message) {
-  if (!std::isfinite(navgrid_message->field_size_x) ||
-      !std::isfinite(navgrid_message->field_size_y) ||
-      !std::isfinite(navgrid_message->node_size_meters) ||
-      navgrid_message->field_size_x <= 0 ||
-      navgrid_message->field_size_y <= 0 ||
-      navgrid_message->node_size_meters <= 0) {
+                                      const NavgridMessage& navgrid_message) {
+  if (!std::isfinite(navgrid_message.field_size_x) ||
+      !std::isfinite(navgrid_message.field_size_y) ||
+      !std::isfinite(navgrid_message.node_size_meters) ||
+      navgrid_message.field_size_x <= 0 ||
+      navgrid_message.field_size_y <= 0 ||
+      navgrid_message.node_size_meters <= 0) {
     LOG(WARNING) << "Invalid navgrid dimensions";
     return;
   }
-  const double cell_width = navgrid_message->node_size_meters * image.cols /
-                            navgrid_message->field_size_x;
-  const double cell_height = navgrid_message->node_size_meters * image.rows /
-                             navgrid_message->field_size_y;
+  const double cell_width = navgrid_message.node_size_meters * image.cols /
+                            navgrid_message.field_size_x;
+  const double cell_height = navgrid_message.node_size_meters * image.rows /
+                             navgrid_message.field_size_y;
   cv::Rect robot_cell_bounds;
-  for (size_t y = 0; y < navgrid_message->navgrid.size(); ++y) {
-    const auto& row = navgrid_message->navgrid[y];
+  for (size_t y = 0; y < navgrid_message.navgrid.size(); ++y) {
+    const auto& row = navgrid_message.navgrid[y];
     for (size_t x = 0; x < row.size(); ++x) {
       // Navgrid coordinates start at the bottom left of the field.
       const cv::Point top_left(cvRound(x * cell_width),
@@ -169,13 +186,13 @@ void NavgridStreamerNode::DrawNavgrid(cv::Mat& image,
                                    image.rows - cvRound(y * cell_height) - 1);
       if (row[x]) {
         cv::rectangle(image, top_left, bottom_right,
-                      cv::Scalar(navgrid_message->b, navgrid_message->g,
-                                 navgrid_message->r),
+                      cv::Scalar(navgrid_message.b, navgrid_message.g,
+                                 navgrid_message.r),
                       cv::FILLED);
       }
       cv::rectangle(image, top_left, bottom_right, cv::Scalar(128, 128, 128),
                     1);
-      if (navgrid_message->robot_cell ==
+      if (navgrid_message.robot_cell ==
           cv::Point(static_cast<int>(x), static_cast<int>(y))) {
         robot_cell_bounds =
             cv::Rect(top_left, bottom_right + cv::Point(1, 1));

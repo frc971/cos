@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstddef>
-#include <filesystem>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -57,17 +56,20 @@ class DijkstraSplineNode final : public control_loop::INode {
  public:
   DijkstraSplineNode(std::string_view pose_path, std::string_view goal_path,
                      std::string_view output_path,
-                     const std::filesystem::path& navgrid_path =
-                         "/root/constants/assets/navgrid.json",
+                     const streamer::NavgridMessage& navgrid,
                      SplineSettings settings = {});
+  // The grid with cells marked for the configured robot footprint.
+  [[nodiscard]] auto GetGrid() const -> const streamer::NavgridMessage& {
+    return planner_.GetGrid();
+  }
   // Publish curve samples and waypoint markers as a PolylineMessage.
   // Call before registering with the control loop.
   void EnableSplineDebug(std::string_view output_path);
   auto CreateCallback()
       -> std::function<void(const control_loop::Context&)> override;
-  auto GetDependencies() const
+  [[nodiscard]] auto GetDependencies() const
       -> const std::vector<control_loop::MessageDescriptor>& override;
-  auto GetPublications() const
+  [[nodiscard]] auto GetPublications() const
       -> const std::vector<control_loop::MessageDescriptor>& override;
   void RegisterCallback(const std::function<void(const control_loop::Context&)>&
                             callback) override;

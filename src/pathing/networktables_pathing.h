@@ -30,7 +30,6 @@ enum class PathingStatus : std::uint8_t {
 struct NetworkTablesPathingSettings {
   // Footprint radius shared by the live planner and follower.
   double robot_radius_meters = 0.19;
-  std::filesystem::path navgrid_path = "/root/constants/assets/navgrid.json";
   std::string pose_topic = "/DriveState/Pose";
   std::string goal_topic = "/COS/Pathing/Goal";
   std::string command_topic = "/COS/Pathing/Command";
@@ -55,7 +54,8 @@ class NetworkTablesPathing {
  public:
   // NT local time in microseconds.
   using Clock = std::function<int64_t()>;
-  explicit NetworkTablesPathing(NetworkTablesPathingSettings settings = {},
+  explicit NetworkTablesPathing(const streamer::NavgridMessage& navgrid,
+                                NetworkTablesPathingSettings settings = {},
                                 nt::NetworkTableInstance instance =
                                     nt::NetworkTableInstance::GetDefault(),
                                 Clock clock = nt::Now);

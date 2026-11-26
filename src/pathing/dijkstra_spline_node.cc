@@ -7,6 +7,8 @@
 #include <stdexcept>
 #include <utility>
 
+#include "streamer/navgrid_streamer_node.h"
+
 namespace pathing {
 namespace {
 using Bezier = std::array<cv::Point2d, 4>;
@@ -160,12 +162,12 @@ auto Refine(const Knot& a, const Knot& b,
 
 DijkstraSplineNode::DijkstraSplineNode(
     std::string_view pose_path, std::string_view goal_path,
-    std::string_view output_path, const std::filesystem::path& navgrid_path,
+    std::string_view output_path, const streamer::NavgridMessage& navgrid,
     SplineSettings settings)
     : pose_path_(pose_path),
       goal_path_(goal_path),
       output_path_(output_path),
-      planner_(navgrid_path, settings.turn_penalty, settings.robot_radius_meters),
+      planner_(navgrid, settings.turn_penalty, settings.robot_radius_meters),
       settings_(settings),
       dependencies_({{pose_path_, typeid(PoseMessage)},
                      {goal_path_, typeid(PoseMessage)}}),
