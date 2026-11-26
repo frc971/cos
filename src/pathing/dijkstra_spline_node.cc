@@ -151,39 +151,43 @@ auto Refine(const Knot& a, const Knot& b,
     }
   }
   if (best != raw.size())
-    return {raw[best], along[best]};
-  auto upper = std::upper_bound(along.begin(), along.end(), middle);
+    return {.point = raw[best], .along = along[best]};
+  auto upper = std::ranges::upper_bound(along, middle);
   const size_t i =
       std::min(static_cast<size_t>(upper - along.begin()), raw.size() - 1);
   const double fraction = (middle - along[i - 1]) / (along[i] - along[i - 1]);
-  return {raw[i - 1] + (raw[i] - raw[i - 1]) * fraction, middle};
+  return {.point = raw[i - 1] + (raw[i] - raw[i - 1]) * fraction,
+          .along = middle};
 }
 }  // namespace
 
-DijkstraSplineNode::DijkstraSplineNode(
-    std::string_view pose_path, std::string_view goal_path,
-    std::string_view output_path, std::string_view navgrid_channel,
-    SplineSettings settings)
-    : pose_path_(pose_path),
-      goal_path_(goal_path),
-      output_path_(output_path),
+DijkstraSplineNode::DijkstraSplineNode(std::string_view pose_channel,
+                                       std::string_view goal_channel,
+                                       std::string_view output_channel,
+                                       std::string_view navgrid_channel,
+                                       SplineSettings settings)
+    : pose_channel_(pose_channel),
+      goal_channel_(goal_channel),
+      output_channel_(output_channel),
       navgrid_channel_(navgrid_channel),
       settings_(settings),
-      dependencies_({{pose_path_, typeid(PoseMessage)},
-                     {goal_path_, typeid(PoseMessage)},
+      dependencies_({{pose_channel_, typeid(PoseMessage)},
+                     {goal_channel_, typeid(PoseMessage)},
                      {navgrid_channel_, typeid(streamer::NavgridMessage)}}),
-      publications_({{output_path_, typeid(SplinePathMessage)}}) {
-  if (pose_path_.empty() || goal_path_.empty() || output_path_.empty() ||
-      pose_path_ == goal_path_ || output_path_ == pose_path_ ||
-      output_path_ == goal_path_ || navgrid_channel_.empty() ||
-      navgrid_channel_ == pose_path_ || navgrid_channel_ == goal_path_ ||
-      navgrid_channel_ == output_path_) {
+      publications_({{output_channel_, typeid(SplinePathMessage)}}) {
+  if (pose_channel_.empty() || goal_channel_.empty() ||
+      output_channel_.empty() || pose_channel_ == goal_channel_ ||
+      output_channel_ == pose_channel_ || output_channel_ == goal_channel_ ||
+      navgrid_channel_.empty() || navgrid_channel_ == pose_channel_ ||
+      navgrid_channel_ == goal_channel_ ||
+      navgrid_channel_ == output_channel_) {
     throw std::invalid_argument(
         "Spline channels must be nonempty and distinct");
   }
   if (!std::isfinite(settings.robot_radius_meters) ||
-      settings.robot_radius_meters < 0 || !std::isfinite(settings.turn_penalty) ||
-      settings.turn_penalty < 0 || settings.max_control_points < 2 ||
+      settings.robot_radius_meters < 0 ||
+      !std::isfinite(settings.turn_penalty) || settings.turn_penalty < 0 ||
+      settings.max_control_points < 2 ||
       !std::isfinite(settings.sample_spacing.value()) ||
       settings.sample_spacing.value() <= 0) {
     throw std::invalid_argument("Invalid spline fitting settings");
@@ -192,8 +196,8 @@ DijkstraSplineNode::DijkstraSplineNode(
 
 void DijkstraSplineNode::EnableSplineDebug(std::string_view output_path) {
   std::scoped_lock lock(mutex_);
-  if (output_path.empty() || output_path == pose_path_ ||
-      output_path == goal_path_ || output_path == output_path_ ||
+  if (output_path.empty() || output_path == pose_channel_ ||
+      output_path == goal_channel_ || output_path == output_channel_ ||
       output_path == navgrid_channel_) {
     throw std::invalid_argument(
         "Spline debug channel must be nonempty and distinct");
@@ -221,8 +225,8 @@ auto DijkstraSplineNode::Calculate(const PoseMessage* pose,
       !planner.IsValidPose(end, cleared))
     return output;
   const auto start_cell = planner.CellFor(start);
-  const auto route = planner.FindPath(start_cell, planner.CellFor(end),
-                                       cleared, start.Translation());
+  const auto route = planner.FindPath(start_cell, planner.CellFor(end), cleared,
+                                      start.Translation());
   output.status = SplineStatus::NoPath;
   if (route.empty())
     return output;
@@ -321,8 +325,9 @@ auto DijkstraSplineNode::CreateCallback()
   return [this](const control_loop::Context& context) {
     {
       std::scoped_lock lock(mutex_);
-      if (!context->Exists(pose_path_) || !context->Exists(goal_path_) ||
-          !context->Exists(navgrid_channel_) || context->Exists(output_path_))
+      if (!context->Exists(pose_channel_) || !context->Exists(goal_channel_) ||
+          !context->Exists(navgrid_channel_) ||
+          context->Exists(output_channel_))
         return;
       auto navgrid =
           context->GetSharedMessage<streamer::NavgridMessage>(navgrid_channel_);
@@ -333,7 +338,8 @@ auto DijkstraSplineNode::CreateCallback()
         if (navgrid_) {
           try {
             planner_ = std::make_shared<DijkstraPlanner>(
-                *navgrid_, settings_.turn_penalty, settings_.robot_radius_meters);
+                *navgrid_, settings_.turn_penalty,
+                settings_.robot_radius_meters);
           } catch (const std::invalid_argument&) {
             // Publish InvalidInput so the follower can issue a stop command.
           }
@@ -341,8 +347,8 @@ auto DijkstraSplineNode::CreateCallback()
       }
       auto output = std::make_shared<SplinePathMessage>();
       if (planner_) {
-        *output = Calculate(context->GetMessage<PoseMessage>(pose_path_),
-                            context->GetMessage<PoseMessage>(goal_path_),
+        *output = Calculate(context->GetMessage<PoseMessage>(pose_channel_),
+                            context->GetMessage<PoseMessage>(goal_channel_),
                             *planner_);
         output->planner = planner_;
       }
@@ -361,7 +367,7 @@ auto DijkstraSplineNode::CreateCallback()
         }
         context->SetMessage(debug_path_, std::move(debug));
       }
-      context->SetMessage(output_path_, std::move(output));
+      context->SetMessage(output_channel_, std::move(output));
     }
     for (const auto& callback : callbacks_)
       callback(context);

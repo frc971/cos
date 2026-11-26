@@ -78,9 +78,9 @@ class DijkstraSplineNode final : public control_loop::INode {
   auto Calculate(const PoseMessage* pose, const PoseMessage* goal,
                  const DijkstraPlanner& planner) const -> SplinePathMessage;
 
-  std::string pose_path_;
-  std::string goal_path_;
-  std::string output_path_;
+  std::string pose_channel_;
+  std::string goal_channel_;
+  std::string output_channel_;
   std::string navgrid_channel_;
   std::string debug_path_;
   std::shared_ptr<const streamer::NavgridMessage> navgrid_;
