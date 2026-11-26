@@ -6,7 +6,6 @@
 #include <mutex>
 #include <numbers>
 #include <optional>
-#include <ranges>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -28,10 +27,7 @@ constexpr char kInput[] = "pathing:input";
 constexpr char kNavgrid[] = "pathing:navgrid";
 constexpr char kSpline[] = "pathing:spline";
 constexpr char kCommand[] = "pathing:command";
-constexpr char kObstacleOverlay[] = "pathing:obstacle_overlay";
-constexpr char kRouteOverlay[] = "pathing:route_overlay";
 constexpr char kSplineOverlay[] = "pathing:spline_overlay";
-constexpr char kVelocityOverlay[] = "pathing:velocity_overlay";
 using Clock = NetworkTablesPathing::Clock;
 
 class Node : public control_loop::INode {
@@ -421,119 +417,39 @@ class OutputNode final : public Node {
   std::optional<PathingStatus> last_status_;
 };
 
-// Own the streamer rather than registering it as a graph node: all layers must
-// be assembled before drawing, and one frame should encode once, not once per
-// dependency notification. NT command publication is registered before this node.
-class VisualizationNode final : public Node {
- public:
-  VisualizationNode(const NetworkTablesPathingSettings& settings,
-                    std::shared_ptr<InputNode> input)
-      : Node({{kPose, typeid(PoseMessage)},
-              {kInput, typeid(InputMessage)},
-              {kSpline, typeid(SplinePathMessage)},
-              {kSplineOverlay, typeid(streamer::PolylineMessage)},
-              {kCommand, typeid(CommandMessage)}},
-             {{kObstacleOverlay, typeid(streamer::NavgridMessage)},
-              {kRouteOverlay, typeid(streamer::NavgridMessage)},
-              {kVelocityOverlay, typeid(streamer::PolylineMessage)}}),
-        input_(std::move(input)),
-        streamer_("/navgrid", settings.navgrid_streamer_port,
-                  settings.field_image_path),
-        draw_(streamer_.CreateCallback()) {
-    streamer_.AddNavgrid(kObstacleOverlay);
-    streamer_.AddNavgrid(kRouteOverlay);
-    streamer_.AddPolyline(kSplineOverlay);
-    streamer_.AddPolyline(kVelocityOverlay);
+auto ReadPathingFrame(const control_loop::Context& context,
+                      const InputNode& input_node)
+    -> std::optional<streamer::NavgridStreamerNode::PathingFrame> {
+  const auto* spline = context->GetMessage<SplinePathMessage>(kSpline);
+  if (!spline || !spline->planner)
+    return std::nullopt;
+
+  streamer::NavgridStreamerNode::PathingFrame frame{
+      .grid = spline->planner->GetGrid(),
+      .route = {},
+      .robot_position = std::nullopt,
+      .velocity_origin = std::nullopt,
+      .velocity_mps = {}};
+  frame.route.reserve(spline->raw_route.size());
+  for (const auto& point : spline->raw_route)
+    frame.route.emplace_back(point.X().value(), point.Y().value());
+
+  const auto* input = context->GetMessage<InputMessage>(kInput);
+  if (input && input->pose_local_us != 0) {
+    frame.robot_position.emplace(input->pose.X().value(),
+                                 input->pose.Y().value());
   }
-
-  auto CreateCallback()
-      -> std::function<void(const control_loop::Context&)> override {
-    return [this](const control_loop::Context& context) {
-      {
-        std::scoped_lock lock(mutex_);
-        if (!context->Exists(kPose) || !context->Exists(kInput) ||
-            !context->Exists(kSpline) ||
-            !context->Exists(kSplineOverlay) || !context->Exists(kCommand) ||
-            context->Exists(kRouteOverlay))
-          return;
-        const auto now = std::chrono::steady_clock::now();
-        const auto* spline = context->GetMessage<SplinePathMessage>(kSpline);
-        if (now < next_frame_ || !spline || !spline->planner) {
-          context->SetMessage(kObstacleOverlay, nullptr);
-          context->SetMessage(kRouteOverlay, nullptr);
-          context->SetMessage(kVelocityOverlay, nullptr);
-          return;
-        }
-        next_frame_ = now + std::chrono::milliseconds(100);
-
-        const auto& grid = spline->planner->GetGrid();
-        context->SetMessage(kObstacleOverlay,
-                            std::make_shared<streamer::NavgridMessage>(grid));
-        auto route = std::make_shared<streamer::NavgridMessage>(grid);
-        route->r = route->b = 0;
-        route->g = 255;
-        for (auto& row : route->navgrid)
-          std::ranges::fill(row, false);
-        const auto* input = context->GetMessage<InputMessage>(kInput);
-        if (input && input->pose_local_us != 0) {
-          const double x = input->pose.X().value();
-          const double y = input->pose.Y().value();
-          if (x >= 0 && x < grid.field_size_x &&
-              y >= 0 && y < grid.field_size_y) {
-            const auto col = static_cast<size_t>(x / grid.node_size_meters);
-            const auto row = static_cast<size_t>(y / grid.node_size_meters);
-            if (row < route->navgrid.size() &&
-                col < route->navgrid[row].size()) {
-              route->robot_cell =
-                  cv::Point(static_cast<int>(col), static_cast<int>(row));
-            }
-          }
-        }
-        for (const auto& point : spline->raw_route) {
-          const double x = point.X().value(), y = point.Y().value();
-          if (std::isfinite(x) && std::isfinite(y) && x >= 0 && y >= 0 &&
-              x < grid.field_size_x && y < grid.field_size_y) {
-            const auto col = static_cast<size_t>(x / grid.node_size_meters);
-            const auto row = static_cast<size_t>(y / grid.node_size_meters);
-            if (row < route->navgrid.size() &&
-                col < route->navgrid[row].size())
-              route->navgrid[row][col] = true;
-          }
-        }
-        context->SetMessage(kRouteOverlay, std::move(route));
-
-        auto velocity = std::make_shared<streamer::PolylineMessage>();
-        velocity->field_size_x = grid.field_size_x;
-        velocity->field_size_y = grid.field_size_y;
-        velocity->g = velocity->b = 255;
-        velocity->arrow_head = true;
-        const auto* pose = context->GetMessage<PoseMessage>(kPose);
-        const auto* command = context->GetMessage<CommandMessage>(kCommand);
-        if (pose && command) {
-          const bool following = command->status == PathingStatus::Following &&
-                                 command->input &&
-                                 input_->ValidateInput(*command->input) ==
-                                     PathingStatus::Following;
-          const double x = pose->goal_position.X().value();
-          const double y = pose->goal_position.Y().value();
-          // Same one-second velocity scale used by the standalone visual demo.
-          velocity->points = {{x, y},
-                              {x + (following ? command->vx : 0),
-                               y + (following ? command->vy : 0)}};
-        }
-        context->SetMessage(kVelocityOverlay, std::move(velocity));
-        draw_(context);
-      }
-      Notify(context);
-    };
+  const auto* pose = context->GetMessage<PoseMessage>(kPose);
+  const auto* command = context->GetMessage<CommandMessage>(kCommand);
+  if (pose && command) {
+    frame.velocity_origin.emplace(pose->goal_position.X().value(),
+                                   pose->goal_position.Y().value());
+    if (command->status == PathingStatus::Following && command->input &&
+        input_node.ValidateInput(*command->input) == PathingStatus::Following)
+      frame.velocity_mps = {command->vx, command->vy};
   }
-
- private:
-  std::shared_ptr<InputNode> input_;
-  streamer::NavgridStreamerNode streamer_;
-  std::function<void(const control_loop::Context&)> draw_;
-  std::chrono::steady_clock::time_point next_frame_{};
-};
+  return frame;
+}
 
 auto Positive(double value) -> bool {
   return std::isfinite(value) && value > 0;
@@ -591,8 +507,20 @@ class NetworkTablesPathing::Impl {
     loop.RegisterNode(spline);
     loop.RegisterNode(follower);
     loop.RegisterNode(output);
-    if (settings.navgrid_streamer)
-      loop.RegisterNode(std::make_shared<VisualizationNode>(settings, input));
+    if (settings.navgrid_streamer) {
+      auto streamer_node = std::make_shared<streamer::NavgridStreamerNode>(
+          "/navgrid", settings.navgrid_streamer_port, settings.field_image_path);
+      streamer_node->AddPolyline(kSplineOverlay);
+      streamer_node->SetPathingFrameSource(
+          {{kPose, typeid(PoseMessage)},
+           {kInput, typeid(InputMessage)},
+           {kSpline, typeid(SplinePathMessage)},
+           {kCommand, typeid(CommandMessage)}},
+          [input](const control_loop::Context& context) {
+            return ReadPathingFrame(context, *input);
+          });
+      loop.RegisterNode(streamer_node);
+    }
   }
   control_loop::ControlLoop loop;
   std::shared_ptr<OutputNode> output;

@@ -2,6 +2,8 @@
 
 #include <cmath>
 #include <memory>
+#include <ranges>
+#include <algorithm>
 #include <stdexcept>
 #include <utility>
 #include <opencv2/imgcodecs.hpp>
@@ -41,7 +43,28 @@ NavgridStreamerNode::NavgridStreamerNode(
 auto NavgridStreamerNode::CreateCallback()
     -> std::function<void(const control_loop::Context&)> {
   return [this](const control_loop::Context& context) -> void {
+    std::unique_lock lock(frame_mutex_);
+    std::optional<PathingFrame> frame;
+    if (pathing_frame_source_) {
+      if (last_context_id_ && context->id <= *last_context_id_)
+        return;
+      for (const auto& dependency : dependencies_) {
+        if (!context->Exists(dependency.GetChannel()))
+          return;
+      }
+      last_context_id_ = context->id;
+      const auto now = std::chrono::steady_clock::now();
+      if (now < next_frame_)
+        return;
+      auto candidate = pathing_frame_source_(context);
+      if (!candidate)
+        return;
+      frame.emplace(std::move(*candidate));
+      next_frame_ = now + std::chrono::milliseconds(100);
+    }
     cv::Mat new_image = base_image_.clone();
+    if (frame)
+      DrawPathingGrid(new_image, *frame);
     if (navgrid_)
       DrawNavgrid(new_image, *navgrid_);
     for (const auto& dependency : dependencies_) {
@@ -55,6 +78,8 @@ auto NavgridStreamerNode::CreateCallback()
         }
       }
     }
+    if (frame)
+      DrawPathingVelocity(new_image, *frame);
     // OpenCV's jpeg_* calls can bind to NVIDIA's incompatible libnvmm_jpeg
     // ABI when camera FD decoding is linked into the same executable.
     // TurboJPEG exposes tj* entry points and keeps its JPEG implementation
@@ -71,14 +96,12 @@ auto NavgridStreamerNode::CreateCallback()
     const std::unique_ptr<unsigned char, decltype(&tjFree)> encoded(data, tjFree);
     if (result != 0) {
       LOG(WARNING) << "Failed to encode";
-      for (const auto& callback : callbacks_) {
-        callback(context);
-      }
-      return;
+    } else {
+      const std::string payload(reinterpret_cast<const char*>(encoded.get()),
+                                size);
+      streamer_.publish(path_, payload);
     }
-
-    const std::string payload(reinterpret_cast<const char*>(encoded.get()), size);
-    streamer_.publish(path_, payload);
+    lock.unlock();
 
     for (const auto& callback : callbacks_) {
       callback(context);
@@ -107,6 +130,62 @@ void NavgridStreamerNode::AddNavgrid(std::string_view input_path) {
 
 void NavgridStreamerNode::AddPolyline(std::string_view input_path) {
   dependencies_.emplace_back(input_path, typeid(PolylineMessage));
+}
+
+void NavgridStreamerNode::SetPathingFrameSource(
+    std::vector<control_loop::MessageDescriptor> dependencies,
+    PathingFrameSource source) {
+  for (auto& dependency : dependencies)
+    dependencies_.push_back(std::move(dependency));
+  pathing_frame_source_ = std::move(source);
+}
+
+void NavgridStreamerNode::DrawPathingGrid(cv::Mat& image,
+                                          const PathingFrame& frame) {
+  const auto& grid = frame.grid;
+  DrawNavgrid(image, grid);
+  if (!std::isfinite(grid.node_size_meters) || grid.node_size_meters <= 0)
+    return;
+
+  auto route = grid;
+  route.r = route.b = 0;
+  route.g = 255;
+  for (auto& row : route.navgrid)
+    std::ranges::fill(row, false);
+
+  const auto cell_for = [&](cv::Point2d point) -> std::optional<cv::Point> {
+    if (!(point.x >= 0 && point.x < grid.field_size_x &&
+          point.y >= 0 && point.y < grid.field_size_y))
+      return std::nullopt;
+    const double col = point.x / grid.node_size_meters;
+    const double row = point.y / grid.node_size_meters;
+    if (row >= route.navgrid.size() ||
+        col >= route.navgrid[static_cast<size_t>(row)].size())
+      return std::nullopt;
+    return cv::Point(static_cast<int>(col), static_cast<int>(row));
+  };
+  for (const auto& point : frame.route) {
+    if (const auto cell = cell_for(point))
+      route.navgrid[cell->y][cell->x] = true;
+  }
+  if (frame.robot_position)
+    route.robot_cell = cell_for(*frame.robot_position);
+  DrawNavgrid(image, route);
+}
+
+void NavgridStreamerNode::DrawPathingVelocity(cv::Mat& image,
+                                              const PathingFrame& frame) {
+  if (!frame.velocity_origin)
+    return;
+  PolylineMessage velocity;
+  velocity.field_size_x = frame.grid.field_size_x;
+  velocity.field_size_y = frame.grid.field_size_y;
+  velocity.g = velocity.b = 255;
+  velocity.arrow_head = true;
+  // The arrow shows one second of commanded translation.
+  velocity.points = {*frame.velocity_origin,
+                     *frame.velocity_origin + frame.velocity_mps};
+  DrawPolyline(image, velocity);
 }
 
 void NavgridStreamerNode::DrawPolyline(cv::Mat& image,

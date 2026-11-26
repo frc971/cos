@@ -1,6 +1,8 @@
 #pragma once
 
+#include <chrono>
 #include <filesystem>
+#include <mutex>
 #include <opencv4/opencv2/core/mat.hpp>
 #include <optional>
 #include <vector>
@@ -61,7 +63,25 @@ class NavgridStreamerNode final : public control_loop::INode {
   void AddNavgrid(std::string_view input_path);
   void AddPolyline(std::string_view input_path);
 
+  // Field coordinates in meters. The grid must outlive rendering of the context.
+  struct PathingFrame {
+    const NavgridMessage& grid;
+    std::vector<cv::Point2d> route;
+    std::optional<cv::Point2d> robot_position;
+    std::optional<cv::Point2d> velocity_origin;
+    cv::Point2d velocity_mps;
+  };
+  using PathingFrameSource =
+      std::function<std::optional<PathingFrame>(const control_loop::Context&)>;
+  // Set the live grid and route source before registering the streamer.
+  // Live pathing frames require all input channels and are capped at 10 Hz.
+  void SetPathingFrameSource(
+      std::vector<control_loop::MessageDescriptor> dependencies,
+      PathingFrameSource source);
+
  private:
+  void DrawPathingGrid(cv::Mat& image, const PathingFrame& frame);
+  void DrawPathingVelocity(cv::Mat& image, const PathingFrame& frame);
   void DrawNavgrid(cv::Mat& image, const NavgridMessage& navgrid_message);
   void DrawPolyline(cv::Mat& image, const PolylineMessage& polyline);
 
@@ -73,6 +93,10 @@ class NavgridStreamerNode final : public control_loop::INode {
   std::vector<std::function<void(const control_loop::Context&)>> callbacks_;
   cv::Mat base_image_;
   std::optional<NavgridMessage> navgrid_;
+  PathingFrameSource pathing_frame_source_;
+  std::mutex frame_mutex_;
+  std::optional<std::uint64_t> last_context_id_;
+  std::chrono::steady_clock::time_point next_frame_{};
   nadjieb::MJPEGStreamer streamer_;
 };
 
