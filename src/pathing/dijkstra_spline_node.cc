@@ -162,23 +162,28 @@ auto Refine(const Knot& a, const Knot& b,
 
 DijkstraSplineNode::DijkstraSplineNode(
     std::string_view pose_path, std::string_view goal_path,
-    std::string_view output_path, const streamer::NavgridMessage& navgrid,
+    std::string_view output_path, std::string_view navgrid_channel,
     SplineSettings settings)
     : pose_path_(pose_path),
       goal_path_(goal_path),
       output_path_(output_path),
-      planner_(navgrid, settings.turn_penalty, settings.robot_radius_meters),
+      navgrid_channel_(navgrid_channel),
       settings_(settings),
       dependencies_({{pose_path_, typeid(PoseMessage)},
-                     {goal_path_, typeid(PoseMessage)}}),
+                     {goal_path_, typeid(PoseMessage)},
+                     {navgrid_channel_, typeid(streamer::NavgridMessage)}}),
       publications_({{output_path_, typeid(SplinePathMessage)}}) {
   if (pose_path_.empty() || goal_path_.empty() || output_path_.empty() ||
       pose_path_ == goal_path_ || output_path_ == pose_path_ ||
-      output_path_ == goal_path_) {
+      output_path_ == goal_path_ || navgrid_channel_.empty() ||
+      navgrid_channel_ == pose_path_ || navgrid_channel_ == goal_path_ ||
+      navgrid_channel_ == output_path_) {
     throw std::invalid_argument(
         "Spline channels must be nonempty and distinct");
   }
-  if (settings.max_control_points < 2 ||
+  if (!std::isfinite(settings.robot_radius_meters) ||
+      settings.robot_radius_meters < 0 || !std::isfinite(settings.turn_penalty) ||
+      settings.turn_penalty < 0 || settings.max_control_points < 2 ||
       !std::isfinite(settings.sample_spacing.value()) ||
       settings.sample_spacing.value() <= 0) {
     throw std::invalid_argument("Invalid spline fitting settings");
@@ -188,7 +193,8 @@ DijkstraSplineNode::DijkstraSplineNode(
 void DijkstraSplineNode::EnableSplineDebug(std::string_view output_path) {
   std::scoped_lock lock(mutex_);
   if (output_path.empty() || output_path == pose_path_ ||
-      output_path == goal_path_ || output_path == output_path_) {
+      output_path == goal_path_ || output_path == output_path_ ||
+      output_path == navgrid_channel_) {
     throw std::invalid_argument(
         "Spline debug channel must be nonempty and distinct");
   }
@@ -202,19 +208,20 @@ void DijkstraSplineNode::EnableSplineDebug(std::string_view output_path) {
 }
 
 auto DijkstraSplineNode::Calculate(const PoseMessage* pose,
-                                   const PoseMessage* goal) const
+                                   const PoseMessage* goal,
+                                   const DijkstraPlanner& planner) const
     -> SplinePathMessage {
   SplinePathMessage output;
   if (!pose || !goal)
     return output;
   const auto& start = pose->goal_position;
   const auto& end = goal->goal_position;
-  const auto cleared = planner_.BlockedStartCells(start);
-  if (!planner_.IsValidStartPose(start, cleared) ||
-      !planner_.IsValidPose(end, cleared))
+  const auto cleared = planner.BlockedStartCells(start);
+  if (!planner.IsValidStartPose(start, cleared) ||
+      !planner.IsValidPose(end, cleared))
     return output;
-  const auto start_cell = planner_.CellFor(start);
-  const auto route = planner_.FindPath(start_cell, planner_.CellFor(end),
+  const auto start_cell = planner.CellFor(start);
+  const auto route = planner.FindPath(start_cell, planner.CellFor(end),
                                        cleared, start.Translation());
   output.status = SplineStatus::NoPath;
   if (route.empty())
@@ -227,15 +234,15 @@ auto DijkstraSplineNode::Calculate(const PoseMessage* pose,
   append(start.Translation());
   // Same-cell paths need no detour through the center.
   if (route.size() > 1) {
-    const size_t first = planner_.IsFree(start_cell, cleared) ? 0 : 1;
+    const size_t first = planner.IsFree(start_cell, cleared) ? 0 : 1;
     for (size_t i = first; i < route.size(); ++i)
-      append(planner_.Center(route[i]));
+      append(planner.Center(route[i]));
   }
   append(end.Translation());
   output.status = SplineStatus::FitFailed;
   if (output.raw_route.size() == 1) {
     const auto p = Point(output.raw_route.front());
-    if (planner_.IsBoxFree(p.x, p.y, p.x, p.y, cleared)) {
+    if (planner.IsBoxFree(p.x, p.y, p.x, p.y, cleared)) {
       output.status = SplineStatus::Ready;
       output.samples = output.waypoints = output.raw_route;
     }
@@ -252,7 +259,7 @@ auto DijkstraSplineNode::Calculate(const PoseMessage* pose,
     const auto a = Point(output.raw_route[i]);
     while (next > i) {
       const auto b = Point(output.raw_route[next]);
-      if (planner_.IsVisible(a.x, a.y, b.x, b.y, cleared))
+      if (planner.IsVisible(a.x, a.y, b.x, b.y, cleared))
         break;
       --next;
     }
@@ -269,7 +276,7 @@ auto DijkstraSplineNode::Calculate(const PoseMessage* pose,
     std::vector<bool> unsafe;
     bool clear = true;
     for (const auto& spline : splines) {
-      const bool collides = !IsClear(planner_, Controls(spline), cleared);
+      const bool collides = !IsClear(planner, Controls(spline), cleared);
       unsafe.push_back(collides);
       clear &= !collides;
     }
@@ -315,15 +322,36 @@ auto DijkstraSplineNode::CreateCallback()
     {
       std::scoped_lock lock(mutex_);
       if (!context->Exists(pose_path_) || !context->Exists(goal_path_) ||
-          context->Exists(output_path_))
+          !context->Exists(navgrid_channel_) || context->Exists(output_path_))
         return;
-      auto output = std::make_shared<SplinePathMessage>(
-          Calculate(context->GetMessage<PoseMessage>(pose_path_),
-                    context->GetMessage<PoseMessage>(goal_path_)));
+      auto navgrid =
+          context->GetSharedMessage<streamer::NavgridMessage>(navgrid_channel_);
+      // Publishers supply a new immutable snapshot when the grid changes.
+      if (navgrid != navgrid_) {
+        planner_.reset();
+        navgrid_ = std::move(navgrid);
+        if (navgrid_) {
+          try {
+            planner_ = std::make_shared<DijkstraPlanner>(
+                *navgrid_, settings_.turn_penalty, settings_.robot_radius_meters);
+          } catch (const std::invalid_argument&) {
+            // Publish InvalidInput so the follower can issue a stop command.
+          }
+        }
+      }
+      auto output = std::make_shared<SplinePathMessage>();
+      if (planner_) {
+        *output = Calculate(context->GetMessage<PoseMessage>(pose_path_),
+                            context->GetMessage<PoseMessage>(goal_path_),
+                            *planner_);
+        output->planner = planner_;
+      }
       if (!debug_path_.empty()) {
         auto debug = std::make_shared<streamer::PolylineMessage>();
-        debug->field_size_x = planner_.GetGrid().field_size_x;
-        debug->field_size_y = planner_.GetGrid().field_size_y;
+        if (planner_) {
+          debug->field_size_x = planner_->GetGrid().field_size_x;
+          debug->field_size_y = planner_->GetGrid().field_size_y;
+        }
         debug->g = 0;
         for (const auto& point : output->samples)
           debug->points.push_back(Point(point));

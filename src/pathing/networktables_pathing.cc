@@ -25,8 +25,10 @@ namespace {
 constexpr char kPose[] = "pathing:pose";
 constexpr char kGoal[] = "pathing:goal";
 constexpr char kInput[] = "pathing:input";
+constexpr char kNavgrid[] = "pathing:navgrid";
 constexpr char kSpline[] = "pathing:spline";
 constexpr char kCommand[] = "pathing:command";
+constexpr char kObstacleOverlay[] = "pathing:obstacle_overlay";
 constexpr char kRouteOverlay[] = "pathing:route_overlay";
 constexpr char kSplineOverlay[] = "pathing:spline_overlay";
 constexpr char kVelocityOverlay[] = "pathing:velocity_overlay";
@@ -62,6 +64,26 @@ class Node : public control_loop::INode {
   std::vector<control_loop::MessageDescriptor> dependencies_;
   std::vector<control_loop::MessageDescriptor> publications_;
   std::vector<std::function<void(const control_loop::Context&)>> callbacks_;
+};
+
+// The current source is static. A live source can publish new snapshots on
+// the same channel without changing the planner or its consumers.
+class NavgridSource final : public Node {
+ public:
+  explicit NavgridSource(const streamer::NavgridMessage& navgrid)
+      : Node({}, {{kNavgrid, typeid(streamer::NavgridMessage)}}),
+        navgrid_(std::make_shared<streamer::NavgridMessage>(navgrid)) {}
+
+  auto CreateCallback()
+      -> std::function<void(const control_loop::Context&)> override {
+    return [this](const control_loop::Context& context) {
+      context->SetMessage(kNavgrid, navgrid_);
+      Notify(context);
+    };
+  }
+
+ private:
+  std::shared_ptr<streamer::NavgridMessage> navgrid_;
 };
 
 class InputMessage final : public control_loop::IMessage {
@@ -197,15 +219,12 @@ class InputNode final : public Node {
 
 class FollowerNode final : public Node {
  public:
-  FollowerNode(const NetworkTablesPathingSettings& settings,
-               const streamer::NavgridMessage& navgrid)
+  explicit FollowerNode(const NetworkTablesPathingSettings& settings)
       : Node({{kPose, typeid(PoseMessage)},
               {kGoal, typeid(PoseMessage)},
               {kInput, typeid(InputMessage)},
               {kSpline, typeid(SplinePathMessage)}},
              {{kCommand, typeid(CommandMessage)}}),
-        planner_(navgrid, settings.spline.turn_penalty,
-                 settings.robot_radius_meters),
         settings_(settings) {}
 
   auto CreateCallback()
@@ -237,11 +256,12 @@ class FollowerNode final : public Node {
     const auto* goal = context->GetMessage<PoseMessage>(kGoal);
     const auto* spline = context->GetMessage<SplinePathMessage>(kSpline);
     command.status = PathingStatus::InvalidInput;
-    if (!pose || !goal || !spline)
+    if (!pose || !goal || !spline || !spline->planner)
       return;
-    const auto cleared = planner_.BlockedStartCells(pose->goal_position);
-    if (!planner_.IsValidStartPose(pose->goal_position, cleared) ||
-        !planner_.IsValidPose(goal->goal_position, cleared))
+    const auto& planner = *spline->planner;
+    const auto cleared = planner.BlockedStartCells(pose->goal_position);
+    if (!planner.IsValidStartPose(pose->goal_position, cleared) ||
+        !planner.IsValidPose(goal->goal_position, cleared))
       return;
     switch (spline->status) {
       case SplineStatus::InvalidInput:
@@ -292,7 +312,7 @@ class FollowerNode final : public Node {
             std::min(length, settings_.lookahead.value() - walked);
         const auto point = samples[i - 1] +
                            (samples[i] - samples[i - 1]) * (distance / length);
-        if (planner_.IsVisible(current.X().value(), current.Y().value(),
+        if (planner.IsVisible(current.X().value(), current.Y().value(),
                                point.X().value(), point.Y().value(), cleared))
           lookahead = point;
         walked += length;
@@ -319,7 +339,6 @@ class FollowerNode final : public Node {
                      -motion.max_rotation.value(), motion.max_rotation.value());
   }
 
-  DijkstraPlanner planner_;
   NetworkTablesPathingSettings settings_;
 };
 
@@ -408,20 +427,20 @@ class OutputNode final : public Node {
 class VisualizationNode final : public Node {
  public:
   VisualizationNode(const NetworkTablesPathingSettings& settings,
-                    const streamer::NavgridMessage& navgrid,
                     std::shared_ptr<InputNode> input)
       : Node({{kPose, typeid(PoseMessage)},
               {kInput, typeid(InputMessage)},
               {kSpline, typeid(SplinePathMessage)},
               {kSplineOverlay, typeid(streamer::PolylineMessage)},
               {kCommand, typeid(CommandMessage)}},
-             {{kRouteOverlay, typeid(streamer::NavgridMessage)},
+             {{kObstacleOverlay, typeid(streamer::NavgridMessage)},
+              {kRouteOverlay, typeid(streamer::NavgridMessage)},
               {kVelocityOverlay, typeid(streamer::PolylineMessage)}}),
-        grid_(navgrid),
         input_(std::move(input)),
         streamer_("/navgrid", settings.navgrid_streamer_port,
-                  grid_, settings.field_image_path),
+                  settings.field_image_path),
         draw_(streamer_.CreateCallback()) {
+    streamer_.AddNavgrid(kObstacleOverlay);
     streamer_.AddNavgrid(kRouteOverlay);
     streamer_.AddPolyline(kSplineOverlay);
     streamer_.AddPolyline(kVelocityOverlay);
@@ -438,14 +457,19 @@ class VisualizationNode final : public Node {
             context->Exists(kRouteOverlay))
           return;
         const auto now = std::chrono::steady_clock::now();
-        if (now < next_frame_) {
+        const auto* spline = context->GetMessage<SplinePathMessage>(kSpline);
+        if (now < next_frame_ || !spline || !spline->planner) {
+          context->SetMessage(kObstacleOverlay, nullptr);
           context->SetMessage(kRouteOverlay, nullptr);
           context->SetMessage(kVelocityOverlay, nullptr);
           return;
         }
         next_frame_ = now + std::chrono::milliseconds(100);
 
-        auto route = std::make_shared<streamer::NavgridMessage>(grid_);
+        const auto& grid = spline->planner->GetGrid();
+        context->SetMessage(kObstacleOverlay,
+                            std::make_shared<streamer::NavgridMessage>(grid));
+        auto route = std::make_shared<streamer::NavgridMessage>(grid);
         route->r = route->b = 0;
         route->g = 255;
         for (auto& row : route->navgrid)
@@ -454,10 +478,10 @@ class VisualizationNode final : public Node {
         if (input && input->pose_local_us != 0) {
           const double x = input->pose.X().value();
           const double y = input->pose.Y().value();
-          if (x >= 0 && x < grid_.field_size_x &&
-              y >= 0 && y < grid_.field_size_y) {
-            const auto col = static_cast<size_t>(x / grid_.node_size_meters);
-            const auto row = static_cast<size_t>(y / grid_.node_size_meters);
+          if (x >= 0 && x < grid.field_size_x &&
+              y >= 0 && y < grid.field_size_y) {
+            const auto col = static_cast<size_t>(x / grid.node_size_meters);
+            const auto row = static_cast<size_t>(y / grid.node_size_meters);
             if (row < route->navgrid.size() &&
                 col < route->navgrid[row].size()) {
               route->robot_cell =
@@ -465,25 +489,22 @@ class VisualizationNode final : public Node {
             }
           }
         }
-        if (const auto* spline =
-                context->GetMessage<SplinePathMessage>(kSpline)) {
-          for (const auto& point : spline->raw_route) {
-            const double x = point.X().value(), y = point.Y().value();
-            if (std::isfinite(x) && std::isfinite(y) && x >= 0 && y >= 0 &&
-                x < grid_.field_size_x && y < grid_.field_size_y) {
-              const auto col = static_cast<size_t>(x / grid_.node_size_meters);
-              const auto row = static_cast<size_t>(y / grid_.node_size_meters);
-              if (row < route->navgrid.size() &&
-                  col < route->navgrid[row].size())
-                route->navgrid[row][col] = true;
-            }
+        for (const auto& point : spline->raw_route) {
+          const double x = point.X().value(), y = point.Y().value();
+          if (std::isfinite(x) && std::isfinite(y) && x >= 0 && y >= 0 &&
+              x < grid.field_size_x && y < grid.field_size_y) {
+            const auto col = static_cast<size_t>(x / grid.node_size_meters);
+            const auto row = static_cast<size_t>(y / grid.node_size_meters);
+            if (row < route->navgrid.size() &&
+                col < route->navgrid[row].size())
+              route->navgrid[row][col] = true;
           }
         }
         context->SetMessage(kRouteOverlay, std::move(route));
 
         auto velocity = std::make_shared<streamer::PolylineMessage>();
-        velocity->field_size_x = grid_.field_size_x;
-        velocity->field_size_y = grid_.field_size_y;
+        velocity->field_size_x = grid.field_size_x;
+        velocity->field_size_y = grid.field_size_y;
         velocity->g = velocity->b = 255;
         velocity->arrow_head = true;
         const auto* pose = context->GetMessage<PoseMessage>(kPose);
@@ -508,7 +529,6 @@ class VisualizationNode final : public Node {
   }
 
  private:
-  streamer::NavgridMessage grid_;
   std::shared_ptr<InputNode> input_;
   streamer::NavgridStreamerNode streamer_;
   std::function<void(const control_loop::Context&)> draw_;
@@ -560,19 +580,19 @@ class NetworkTablesPathing::Impl {
     auto spline_settings = settings.spline;
     spline_settings.robot_radius_meters = settings.robot_radius_meters;
     auto spline = std::make_shared<DijkstraSplineNode>(
-        kPose, kGoal, kSpline, navgrid, spline_settings);
+        kPose, kGoal, kSpline, kNavgrid, spline_settings);
     if (settings.navgrid_streamer)
       spline->EnableSplineDebug(kSplineOverlay);
-    auto follower = std::make_shared<FollowerNode>(settings, navgrid);
+    auto follower = std::make_shared<FollowerNode>(settings);
     output = std::make_shared<OutputNode>(settings, instance, clock, input);
     loop.SetMaxContext(1);
+    loop.RegisterDependencyNode(std::make_shared<NavgridSource>(navgrid));
     loop.RegisterDependencyNode(input);
     loop.RegisterNode(spline);
     loop.RegisterNode(follower);
     loop.RegisterNode(output);
     if (settings.navgrid_streamer)
-      loop.RegisterNode(
-          std::make_shared<VisualizationNode>(settings, spline->GetGrid(), input));
+      loop.RegisterNode(std::make_shared<VisualizationNode>(settings, input));
   }
   control_loop::ControlLoop loop;
   std::shared_ptr<OutputNode> output;

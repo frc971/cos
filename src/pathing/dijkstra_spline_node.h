@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -28,6 +29,8 @@ class SplinePathMessage final : public control_loop::IMessage {
            splines.size() * sizeof(frc::CubicHermiteSpline);
   }
 
+  // Collision geometry for the exact navgrid snapshot used to plan this route.
+  std::shared_ptr<const DijkstraPlanner> planner;
   SplineStatus status = SplineStatus::InvalidInput;
   // Grid route before visibility simplification. Retained if fitting fails.
   std::vector<frc::Translation2d> raw_route;
@@ -50,21 +53,18 @@ struct SplineSettings {
   units::meter_t sample_spacing{0.02};
 };
 
-// Consumes measured and goal PoseMessages and publishes collision-checked
-// SplinePathMessage geometry without timing or velocity commands.
+// Consumes measured and goal PoseMessages and a NavgridMessage, then publishes
+// collision-checked SplinePathMessage geometry without timing or velocity commands.
 class DijkstraSplineNode final : public control_loop::INode {
  public:
-  DijkstraSplineNode(std::string_view pose_path, std::string_view goal_path,
-                     std::string_view output_path,
-                     const streamer::NavgridMessage& navgrid,
+  DijkstraSplineNode(std::string_view pose_channel,
+                     std::string_view goal_channel,
+                     std::string_view output_channel,
+                     std::string_view navgrid_channel,
                      SplineSettings settings = {});
-  // The grid with cells marked for the configured robot footprint.
-  [[nodiscard]] auto GetGrid() const -> const streamer::NavgridMessage& {
-    return planner_.GetGrid();
-  }
   // Publish curve samples and waypoint markers as a PolylineMessage.
   // Call before registering with the control loop.
-  void EnableSplineDebug(std::string_view output_path);
+  void EnableSplineDebug(std::string_view output_channel);
   auto CreateCallback()
       -> std::function<void(const control_loop::Context&)> override;
   [[nodiscard]] auto GetDependencies() const
@@ -75,14 +75,16 @@ class DijkstraSplineNode final : public control_loop::INode {
                             callback) override;
 
  private:
-  auto Calculate(const PoseMessage* pose, const PoseMessage* goal) const
-      -> SplinePathMessage;
+  auto Calculate(const PoseMessage* pose, const PoseMessage* goal,
+                 const DijkstraPlanner& planner) const -> SplinePathMessage;
 
   std::string pose_path_;
   std::string goal_path_;
   std::string output_path_;
+  std::string navgrid_channel_;
   std::string debug_path_;
-  DijkstraPlanner planner_;
+  std::shared_ptr<const streamer::NavgridMessage> navgrid_;
+  std::shared_ptr<const DijkstraPlanner> planner_;
   SplineSettings settings_;
   std::mutex mutex_;
   std::vector<control_loop::MessageDescriptor> dependencies_;

@@ -12,8 +12,10 @@ Camera configuration JSON stores extrinsic `rotation_x`, `rotation_y`, and
 radians immediately when loaded.
 
 `pathing::DijkstraSplineNode` accepts pose and goal channels, an output channel,
-a `streamer::NavgridMessage`, and `SplineSettings`. Construct the grid from
-in-memory cells or load PathPlanner JSON with `NavgridMessage::Load`.
+a navgrid input channel, and `SplineSettings`. Publish a `streamer::NavgridMessage`
+on that channel in each context. Construct the grid from in-memory cells or
+load PathPlanner JSON with `NavgridMessage::Load`. Reuse the same message while
+the grid is unchanged and publish a new immutable snapshot when it changes.
 The spline node publishes a `SplinePathMessage` with
 the original route, interpolation waypoints, cubic Hermite segments,
 visualization samples, and a `SplineStatus` (`Ready`, `InvalidInput`, `NoPath`,
