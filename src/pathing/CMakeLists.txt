@@ -44,16 +44,3 @@ target_link_libraries(cos.networktables_pathing
   PUBLIC cos::dijkstra_spline_node cos::control_loop ntcore
   PRIVATE absl::log cos::navgrid_streamer_node
 )
-
-add_library(cos.rplidar_node)
-add_library(cos::rplidar_node ALIAS cos.rplidar_node)
-target_sources(cos.rplidar_node
-  PRIVATE rplidar_node.cc
-  PUBLIC FILE_SET HEADERS
-    BASE_DIRS ${PROJECT_SOURCE_DIR}/src
-    FILES rplidar_node.h
-)
-target_link_libraries(cos.rplidar_node
-  PUBLIC rplidar::sdk cos::control_loop
-  PRIVATE nlohmann_json::nlohmann_json absl::check absl::log
-)

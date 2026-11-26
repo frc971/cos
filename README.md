@@ -1,35 +1,11 @@
 cmake -B build -G Ninja -Wno-dev
 cmake --build build
 
-### RPLIDAR SDK
-
 Initialize dependencies before configuring a fresh checkout:
 
 ```sh
 git submodule update --init --recursive
 ```
-
-The upstream [RPLIDAR SDK](https://github.com/slamtec/rplidar_sdk) is pinned as
-`third_party/rplidar_sdk`. Its Linux sources build as a static library using
-cos's compiler and toolchain; no separate Make build or SDK installation is needed.
-Link a consumer with:
-
-```cmake
-target_link_libraries(my_target PRIVATE rplidar::sdk)
-```
-
-Consumers can then include `sl_lidar.h` and `sl_lidar_driver.h`. SDK headers and
-system link dependencies propagate through the target. SDK samples are not built.
-
-For local SDK development, override the source checkout at configuration time:
-
-```sh
-cmake -B build -DRPLIDAR_SDK_SOURCE_DIR="$HOME/Git/rplidar_sdk"
-```
-
-To return to the pinned submodule, configure with `-U RPLIDAR_SDK_SOURCE_DIR`.
-When updating the submodule revision, also check the source list in
-`cmake/RplidarSdk.cmake` against the SDK's `sdk/Makefile`.
 
 Camera configuration JSON stores extrinsic `rotation_x`, `rotation_y`, and
 `rotation_z` in degrees and translations in meters. Rotations are converted to
