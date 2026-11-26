@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
+#include <functional>
 #include <mutex>
 #include <numbers>
 #include <optional>
@@ -28,7 +30,6 @@ using localization::RobotPoseNode;
 constexpr char kSpline[] = "pathing:spline";
 constexpr char kCommand[] = "pathing:command";
 constexpr char kSplineOverlay[] = "pathing:spline_overlay";
-using Clock = NetworkTablesPathing::Clock;
 
 class Node : public control_loop::INode {
  public:
@@ -228,11 +229,10 @@ class FollowerNode final : public Node {
 class OutputNode final : public Node {
  public:
   OutputNode(const NetworkTablesPathingSettings& settings,
-             nt::NetworkTableInstance instance, Clock clock,
+             nt::NetworkTableInstance instance,
              std::shared_ptr<RobotPoseNode> input)
       : Node({{kCommand, typeid(CommandMessage)}}, {}),
         instance_(instance),
-        clock_(std::move(clock)),
         input_(std::move(input)),
         publisher_(
             instance.GetDoubleArrayTopic(settings.command_topic)
@@ -275,7 +275,7 @@ class OutputNode final : public Node {
     const auto offset = instance_.GetServerTimeOffset();
     if (!instance_.IsConnected() || !offset)
       status = PathingStatus::Disconnected;
-    const int64_t now = clock_();
+    const int64_t now = nt::Now();
     const bool following = status == PathingStatus::Following;
     const std::array<double, 7> frame{
         following ? command.vx : 0,
@@ -298,7 +298,6 @@ class OutputNode final : public Node {
   }
 
   nt::NetworkTableInstance instance_;
-  Clock clock_;
   std::shared_ptr<RobotPoseNode> input_;
   nt::DoubleArrayPublisher publisher_;
   std::optional<PathingStatus> last_status_;
@@ -342,13 +341,12 @@ auto Positive(double value) -> bool {
   return std::isfinite(value) && value > 0;
 }
 
-void Validate(const NetworkTablesPathingSettings& settings,
-              const Clock& clock) {
+void Validate(const NetworkTablesPathingSettings& settings) {
   if (settings.navgrid_streamer && (settings.navgrid_streamer_port < 1 ||
                                     settings.navgrid_streamer_port > 65535))
     throw std::invalid_argument(
         "Navgrid streamer port must be between 1 and 65535");
-  if (!clock || settings.period.count() <= 0 ||
+  if (settings.period.count() <= 0 ||
       settings.command_timeout.count() <= 0 ||
       settings.period > settings.command_timeout ||
       !Positive(settings.lookahead.value()) ||
@@ -376,9 +374,9 @@ class NetworkTablesPathing::Impl {
  public:
   Impl(const streamer::NavgridMessage& navgrid,
        const NetworkTablesPathingSettings& settings,
-       nt::NetworkTableInstance instance, const Clock& clock)
+       nt::NetworkTableInstance instance)
       : loop(settings.period) {
-    Validate(settings, clock);
+    Validate(settings);
     auto input = std::make_shared<RobotPoseNode>(
         instance, settings.pose_topic, settings.goal_topic, settings.period);
     auto spline_settings = settings.spline;
@@ -389,7 +387,7 @@ class NetworkTablesPathing::Impl {
     if (settings.navgrid_streamer)
       spline->EnableSplineDebug(kSplineOverlay);
     auto follower = std::make_shared<FollowerNode>(settings);
-    output = std::make_shared<OutputNode>(settings, instance, clock, input);
+    output = std::make_shared<OutputNode>(settings, instance, input);
     loop.SetMaxContext(1);
     loop.RegisterDependencyNode(std::make_shared<NavgridSourceNode>(navgrid));
     loop.RegisterDependencyNode(input);
@@ -420,10 +418,8 @@ class NetworkTablesPathing::Impl {
 
 NetworkTablesPathing::NetworkTablesPathing(
     const streamer::NavgridMessage& navgrid,
-    NetworkTablesPathingSettings settings, NetworkTableInstance instance,
-    Clock clock)
-    : impl_(std::make_unique<Impl>(navgrid, settings, instance,
-                                   std::move(clock))) {}
+    NetworkTablesPathingSettings settings, NetworkTableInstance instance)
+    : impl_(std::make_unique<Impl>(navgrid, settings, instance)) {}
 
 NetworkTablesPathing::~NetworkTablesPathing() {
   Stop();

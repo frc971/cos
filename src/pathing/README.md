@@ -122,8 +122,8 @@ existing baked-in margins remain additional clearance. Set
 
 The C++ `NetworkTablesPathingSettings` also exposes the existing motion gains,
 position/heading tolerances, and spline fitting budgets. The spline settings'
-turn penalty controls route selection. An NT instance and local NT clock can be
-injected through `NetworkTablesPathing` for isolated integration work.
+turn penalty controls route selection. `NetworkTablesPathing` accepts an NT
+instance for isolated integration work and timestamps commands with `nt::Now()`.
 
 This change supplies the COS producer only. It does not change roboRIO code,
 add driver controls, or activate a drivetrain.

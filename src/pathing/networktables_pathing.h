@@ -1,9 +1,7 @@
 #pragma once
 
 #include <chrono>
-#include <cstdint>
 #include <filesystem>
-#include <functional>
 #include <memory>
 #include <string>
 
@@ -41,13 +39,10 @@ struct NetworkTablesPathingSettings {
 // Uses an already connected instance; never creates a client/server itself.
 class NetworkTablesPathing {
  public:
-  // NT local time in microseconds.
-  using Clock = std::function<int64_t()>;
   explicit NetworkTablesPathing(const streamer::NavgridMessage& navgrid,
                                 NetworkTablesPathingSettings settings = {},
                                 nt::NetworkTableInstance instance =
-                                    nt::NetworkTableInstance::GetDefault(),
-                                Clock clock = nt::Now);
+                                    nt::NetworkTableInstance::GetDefault());
   ~NetworkTablesPathing();
   NetworkTablesPathing(const NetworkTablesPathing&) = delete;
   auto operator=(const NetworkTablesPathing&) -> NetworkTablesPathing& = delete;
