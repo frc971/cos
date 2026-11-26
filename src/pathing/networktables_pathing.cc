@@ -15,6 +15,7 @@
 #include "absl/log/log.h"
 #include "control_loop/control_loop.h"
 #include "localization/robot_pose_node.h"
+#include "pathing/navgrid_source_node.h"
 #include "pathing/pose_message.h"
 #include "streamer/navgrid_streamer_node.h"
 
@@ -24,7 +25,6 @@ using nt::NetworkTableInstance;
 namespace {
 using localization::InputMessage;
 using localization::RobotPoseNode;
-constexpr char kNavgrid[] = "pathing:navgrid";
 constexpr char kSpline[] = "pathing:spline";
 constexpr char kCommand[] = "pathing:command";
 constexpr char kSplineOverlay[] = "pathing:spline_overlay";
@@ -60,26 +60,6 @@ class Node : public control_loop::INode {
   std::vector<control_loop::MessageDescriptor> dependencies_;
   std::vector<control_loop::MessageDescriptor> publications_;
   std::vector<std::function<void(const control_loop::Context&)>> callbacks_;
-};
-
-// The current source is static. A live source can publish new snapshots on
-// the same channel without changing the planner or its consumers.
-class NavgridSource final : public Node {
- public:
-  explicit NavgridSource(const streamer::NavgridMessage& navgrid)
-      : Node({}, {{kNavgrid, typeid(streamer::NavgridMessage)}}),
-        navgrid_(std::make_shared<streamer::NavgridMessage>(navgrid)) {}
-
-  auto CreateCallback()
-      -> std::function<void(const control_loop::Context&)> override {
-    return [this](const control_loop::Context& context) -> void {
-      context->SetMessage(kNavgrid, navgrid_);
-      Notify(context);
-    };
-  }
-
- private:
-  std::shared_ptr<streamer::NavgridMessage> navgrid_;
 };
 
 class CommandMessage final : public control_loop::IMessage {
@@ -404,14 +384,14 @@ class NetworkTablesPathing::Impl {
     auto spline_settings = settings.spline;
     spline_settings.robot_radius_meters = settings.robot_radius_meters;
     auto spline = std::make_shared<DijkstraSplineNode>(
-        RobotPoseNode::kPose, RobotPoseNode::kGoal, kSpline, kNavgrid,
-        spline_settings);
+        RobotPoseNode::kPose, RobotPoseNode::kGoal, kSpline,
+        NavgridSourceNode::kNavgrid, spline_settings);
     if (settings.navgrid_streamer)
       spline->EnableSplineDebug(kSplineOverlay);
     auto follower = std::make_shared<FollowerNode>(settings);
     output = std::make_shared<OutputNode>(settings, instance, clock, input);
     loop.SetMaxContext(1);
-    loop.RegisterDependencyNode(std::make_shared<NavgridSource>(navgrid));
+    loop.RegisterDependencyNode(std::make_shared<NavgridSourceNode>(navgrid));
     loop.RegisterDependencyNode(input);
     loop.RegisterNode(spline);
     loop.RegisterNode(follower);
