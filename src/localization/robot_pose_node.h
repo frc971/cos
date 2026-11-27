@@ -1,7 +1,6 @@
 #pragma once
 
 #include <chrono>
-#include <cstdint>
 #include <functional>
 #include <mutex>
 #include <string_view>
@@ -12,24 +11,9 @@
 #include <networktables/StructTopic.h>
 
 #include "control_loop/node.h"
-#include "pathing/pathing_status.h"
+#include "localization/input_message.h"
 
 namespace localization {
-
-class InputMessage final : public control_loop::IMessage {
- public:
-  auto GetType() -> const std::type_info& override {
-    return typeid(InputMessage);
-  }
-  auto GetSize() -> size_t override { return sizeof(*this); }
-  pathing::PathingStatus status = pathing::PathingStatus::Inactive;
-  frc::Pose2d pose;
-  frc::Pose2d goal;
-  std::int64_t pose_local_us = 0;
-  std::int64_t goal_local_us = 0;
-  std::int64_t pose_server_us = 0;
-  std::int64_t goal_server_us = 0;
-};
 
 // Reads the robot pose and goal from NetworkTables for the pathing loop.
 class RobotPoseNode final : public control_loop::INode {

@@ -10,6 +10,14 @@ target_link_libraries(cos.navgrid_message
   PRIVATE nlohmann_json::nlohmann_json
 )
 
+add_library(cos.polyline_message INTERFACE)
+add_library(cos::polyline_message ALIAS cos.polyline_message)
+target_sources(cos.polyline_message INTERFACE FILE_SET HEADERS
+  BASE_DIRS ${PROJECT_SOURCE_DIR}/src
+  FILES polyline_message.h
+)
+target_link_libraries(cos.polyline_message INTERFACE cos::control_loop opencv_core)
+
 add_library(cos.navgrid_streamer_node)
 find_library(TURBOJPEG_LIBRARY NAMES turbojpeg REQUIRED)
 # The Jetson image need not include TurboJPEG. Deployment copies build/lib,
@@ -30,11 +38,13 @@ target_link_libraries(cos.navgrid_streamer_node PUBLIC
   cos::control_loop
   absl::log
   cos::navgrid_message
+  cos::polyline_message
   opencv_core
   opencv_imgcodecs
   opencv_imgproc
   nadjieb_mjpeg_streamer::nadjieb_mjpeg_streamer
-  PRIVATE ${TURBOJPEG_LIBRARY}
+  PRIVATE cos::pathing_messages cos::dijkstra_planner cos::localization_input_message
+    ${TURBOJPEG_LIBRARY}
 )
 
 add_library(cos.jpeg_buffer_streamer_node)

@@ -11,6 +11,11 @@
 #include <turbojpeg.h>
 
 #include "absl/log/log.h"
+#include "localization/input_message.h"
+#include "pathing/dijkstra_planner.h"
+#include "pathing/pose_message.h"
+#include "pathing/published_command_message.h"
+#include "pathing/spline_path_message.h"
 
 namespace streamer {
 NavgridStreamerNode::NavgridStreamerNode(
@@ -44,8 +49,9 @@ auto NavgridStreamerNode::CreateCallback()
     -> std::function<void(const control_loop::Context&)> {
   return [this](const control_loop::Context& context) -> void {
     std::unique_lock lock(frame_mutex_);
-    std::optional<PathingFrame> frame;
-    if (pathing_frame_source_) {
+    const auto now = std::chrono::steady_clock::now();
+    const pathing::SplinePathMessage* spline = nullptr;
+    if (pathing_inputs_) {
       if (last_context_id_ && context->id <= *last_context_id_)
         return;
       for (const auto& dependency : dependencies_) {
@@ -53,33 +59,37 @@ auto NavgridStreamerNode::CreateCallback()
           return;
       }
       last_context_id_ = context->id;
-      const auto now = std::chrono::steady_clock::now();
       if (now < next_frame_)
         return;
-      auto candidate = pathing_frame_source_(context);
-      if (!candidate)
+      spline = context->GetMessage<pathing::SplinePathMessage>(
+          pathing_inputs_->spline);
+      if (!spline || !spline->planner)
         return;
-      frame.emplace(std::move(*candidate));
-      next_frame_ = now + std::chrono::milliseconds(100);
     }
+
     cv::Mat new_image = base_image_.clone();
-    if (frame)
-      DrawPathingGrid(new_image, *frame);
     if (navgrid_)
       DrawNavgrid(new_image, *navgrid_);
+    if (spline) {
+      DrawGridRoute(new_image, *spline,
+                    context->GetMessage<localization::InputMessage>(
+                        pathing_inputs_->input));
+    }
     for (const auto& dependency : dependencies_) {
-      if (context->Exists(dependency.GetChannel())) {
-        if (auto* navgrid =
-                context->GetMessage<NavgridMessage>(dependency.GetChannel())) {
-          DrawNavgrid(new_image, *navgrid);
-        } else if (auto* polyline = context->GetMessage<PolylineMessage>(
-                       dependency.GetChannel())) {
+      const auto& channel = dependency.GetChannel();
+      if (dependency.GetTypes().contains(typeid(NavgridMessage))) {
+        if (const auto* grid = context->GetMessage<NavgridMessage>(channel))
+          DrawNavgrid(new_image, *grid);
+      } else if (dependency.GetTypes().contains(typeid(PolylineMessage))) {
+        if (const auto* polyline = context->GetMessage<PolylineMessage>(channel))
           DrawPolyline(new_image, *polyline);
-        }
       }
     }
-    if (frame)
-      DrawPathingVelocity(new_image, *frame);
+    if (spline) {
+      DrawPathingVelocity(new_image, spline->planner->GetGrid(), context);
+      next_frame_ = now + std::chrono::milliseconds(100);
+    }
+
     // OpenCV's jpeg_* calls can bind to NVIDIA's incompatible libnvmm_jpeg
     // ABI when camera FD decoding is linked into the same executable.
     // TurboJPEG exposes tj* entry points and keeps its JPEG implementation
@@ -132,17 +142,25 @@ void NavgridStreamerNode::AddPolyline(std::string_view input_path) {
   dependencies_.emplace_back(input_path, typeid(PolylineMessage));
 }
 
-void NavgridStreamerNode::SetPathingFrameSource(
-    std::vector<control_loop::MessageDescriptor> dependencies,
-    PathingFrameSource source) {
-  for (auto& dependency : dependencies)
-    dependencies_.push_back(std::move(dependency));
-  pathing_frame_source_ = std::move(source);
+void NavgridStreamerNode::AddPathingInputs(
+    std::string_view spline_channel, std::string_view input_channel,
+    std::string_view pose_channel, std::string_view published_command_channel) {
+  if (pathing_inputs_)
+    throw std::logic_error("Pathing inputs are already configured");
+  pathing_inputs_.emplace(PathingInputs{
+      std::string(spline_channel), std::string(input_channel),
+      std::string(pose_channel), std::string(published_command_channel)});
+  dependencies_.emplace_back(spline_channel, typeid(pathing::SplinePathMessage));
+  dependencies_.emplace_back(input_channel, typeid(localization::InputMessage));
+  dependencies_.emplace_back(pose_channel, typeid(pathing::PoseMessage));
+  dependencies_.emplace_back(published_command_channel,
+                             typeid(pathing::PublishedCommandMessage));
 }
 
-void NavgridStreamerNode::DrawPathingGrid(cv::Mat& image,
-                                          const PathingFrame& frame) {
-  const auto& grid = frame.grid;
+void NavgridStreamerNode::DrawGridRoute(
+    cv::Mat& image, const pathing::SplinePathMessage& spline,
+    const localization::InputMessage* input) {
+  const auto& grid = spline.planner->GetGrid();
   DrawNavgrid(image, grid);
   if (!std::isfinite(grid.node_size_meters) || grid.node_size_meters <= 0)
     return;
@@ -164,27 +182,34 @@ void NavgridStreamerNode::DrawPathingGrid(cv::Mat& image,
       return std::nullopt;
     return cv::Point(static_cast<int>(col), static_cast<int>(row));
   };
-  for (const auto& point : frame.route) {
-    if (const auto cell = cell_for(point))
+  for (const auto& point : spline.raw_route) {
+    if (const auto cell = cell_for({point.X().value(), point.Y().value()}))
       route.navgrid[cell->y][cell->x] = true;
   }
-  if (frame.robot_position)
-    route.robot_cell = cell_for(*frame.robot_position);
+  if (input && input->pose_local_us != 0)
+    route.robot_cell = cell_for({input->pose.X().value(), input->pose.Y().value()});
   DrawNavgrid(image, route);
 }
 
-void NavgridStreamerNode::DrawPathingVelocity(cv::Mat& image,
-                                              const PathingFrame& frame) {
-  if (!frame.velocity_origin)
+void NavgridStreamerNode::DrawPathingVelocity(
+    cv::Mat& image, const NavgridMessage& grid,
+    const control_loop::Context& context) {
+  const auto* pose =
+      context->GetMessage<pathing::PoseMessage>(pathing_inputs_->pose);
+  const auto* command = context->GetMessage<pathing::PublishedCommandMessage>(
+      pathing_inputs_->published_command);
+  if (!pose || !command)
     return;
+
   PolylineMessage velocity;
-  velocity.field_size_x = frame.grid.field_size_x;
-  velocity.field_size_y = frame.grid.field_size_y;
+  velocity.field_size_x = grid.field_size_x;
+  velocity.field_size_y = grid.field_size_y;
   velocity.g = velocity.b = 255;
   velocity.arrow_head = true;
-  // The arrow shows one second of commanded translation.
-  velocity.points = {*frame.velocity_origin,
-                     *frame.velocity_origin + frame.velocity_mps};
+  const cv::Point2d origin(pose->goal_position.X().value(),
+                           pose->goal_position.Y().value());
+  // The arrow spans one second of published field-relative translation.
+  velocity.points = {origin, origin + cv::Point2d(command->vx, command->vy)};
   DrawPolyline(image, velocity);
 }
 

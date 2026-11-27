@@ -19,6 +19,7 @@
 #include "localization/robot_pose_node.h"
 #include "pathing/navgrid_source_node.h"
 #include "pathing/pose_message.h"
+#include "pathing/published_command_message.h"
 #include "streamer/navgrid_streamer_node.h"
 
 namespace pathing {
@@ -29,6 +30,7 @@ using localization::InputMessage;
 using localization::RobotPoseNode;
 constexpr char kSpline[] = "pathing:spline";
 constexpr char kCommand[] = "pathing:command";
+constexpr char kPublishedCommand[] = "pathing:published_command";
 constexpr char kSplineOverlay[] = "pathing:spline_overlay";
 
 class Node : public control_loop::INode {
@@ -230,7 +232,13 @@ class OutputNode final : public Node {
   OutputNode(const NetworkTablesPathingSettings& settings,
              nt::NetworkTableInstance instance,
              std::shared_ptr<RobotPoseNode> input)
-      : Node({{kCommand, typeid(CommandMessage)}}, {}),
+      : Node({{kCommand, typeid(CommandMessage)}},
+             settings.navgrid_streamer
+                 ? std::vector<
+                       control_loop::
+                           MessageDescriptor>{{kPublishedCommand,
+                                               typeid(PublishedCommandMessage)}}
+                 : std::vector<control_loop::MessageDescriptor>{}),
         instance_(instance),
         input_(std::move(input)),
         publisher_(
@@ -242,14 +250,17 @@ class OutputNode final : public Node {
 
   auto CreateCallback()
       -> std::function<void(const control_loop::Context&)> override {
-    return [this](const control_loop::Context& context) {
+    return [this](const control_loop::Context& context) -> void {
       if (!context->Exists(kCommand))
         return;
       const auto* command = context->GetMessage<CommandMessage>(kCommand);
-      if (command)
-        Publish(*command);
-      else
-        Publish(CommandMessage{});
+      const CommandMessage empty_command;
+      const auto published = Publish(command ? *command : empty_command);
+      if (!GetPublications().empty()) {
+        context->SetMessage(
+            kPublishedCommand,
+            std::make_shared<PublishedCommandMessage>(published));
+      }
       Notify(context);
     };
   }
@@ -257,7 +268,7 @@ class OutputNode final : public Node {
   void PublishStop() { Publish(CommandMessage{}); }
 
  private:
-  void Publish(const CommandMessage& command) {
+  auto Publish(const CommandMessage& command) -> PublishedCommandMessage {
     std::scoped_lock lock(mutex_);
     auto status = command.status;
     if (command.input) {
@@ -276,11 +287,16 @@ class OutputNode final : public Node {
       status = PathingStatus::Disconnected;
     const int64_t now = nt::Now();
     const bool following = status == PathingStatus::Following;
+    PublishedCommandMessage published;
+    published.status = status;
+    published.vx = following ? command.vx : 0;
+    published.vy = following ? command.vy : 0;
+    published.omega = following ? command.omega : 0;
     const std::array<double, 7> frame{
-        following ? command.vx : 0,
-        following ? command.vy : 0,
-        following ? command.omega : 0,
-        static_cast<double>(status),
+        published.vx,
+        published.vy,
+        published.omega,
+        static_cast<double>(published.status),
         command.input ? static_cast<double>(
                             std::max(int64_t{0}, command.input->pose_server_us))
                       : 0,
@@ -294,6 +310,7 @@ class OutputNode final : public Node {
       LOG(INFO) << "Pathing: " << StatusName(status);
       last_status_ = status;
     }
+    return published;
   }
 
   nt::NetworkTableInstance instance_;
@@ -301,40 +318,6 @@ class OutputNode final : public Node {
   nt::DoubleArrayPublisher publisher_;
   std::optional<PathingStatus> last_status_;
 };
-
-auto ReadPathingFrame(const control_loop::Context& context,
-                      const RobotPoseNode& input_node)
-    -> std::optional<streamer::NavgridStreamerNode::PathingFrame> {
-  const auto* spline = context->GetMessage<SplinePathMessage>(kSpline);
-  if (!spline || !spline->planner)
-    return std::nullopt;
-
-  streamer::NavgridStreamerNode::PathingFrame frame{
-      .grid = spline->planner->GetGrid(),
-      .route = {},
-      .robot_position = std::nullopt,
-      .velocity_origin = std::nullopt,
-      .velocity_mps = {}};
-  frame.route.reserve(spline->raw_route.size());
-  for (const auto& point : spline->raw_route)
-    frame.route.emplace_back(point.X().value(), point.Y().value());
-
-  const auto* input = context->GetMessage<InputMessage>(RobotPoseNode::kInput);
-  if (input && input->pose_local_us != 0) {
-    frame.robot_position.emplace(input->pose.X().value(),
-                                 input->pose.Y().value());
-  }
-  const auto* pose = context->GetMessage<PoseMessage>(RobotPoseNode::kPose);
-  const auto* command = context->GetMessage<CommandMessage>(kCommand);
-  if (pose && command) {
-    frame.velocity_origin.emplace(pose->goal_position.X().value(),
-                                  pose->goal_position.Y().value());
-    if (command->status == PathingStatus::Following && command->input &&
-        input_node.ValidateInput(*command->input) == PathingStatus::Following)
-      frame.velocity_mps = {command->vx, command->vy};
-  }
-  return frame;
-}
 
 auto Positive(double value) -> bool {
   return std::isfinite(value) && value > 0;
@@ -392,16 +375,9 @@ class NetworkTablesPathing::Impl {
       auto streamer_node = std::make_shared<streamer::NavgridStreamerNode>(
           "/navgrid", settings.navgrid_streamer_port,
           settings.field_image_path);
+      streamer_node->AddPathingInputs(kSpline, RobotPoseNode::kInput,
+                                      RobotPoseNode::kPose, kPublishedCommand);
       streamer_node->AddPolyline(kSplineOverlay);
-      streamer_node->SetPathingFrameSource(
-          {{RobotPoseNode::kPose, typeid(PoseMessage)},
-           {RobotPoseNode::kInput, typeid(InputMessage)},
-           {kSpline, typeid(SplinePathMessage)},
-           {kCommand, typeid(CommandMessage)}},
-          [input](const control_loop::Context& context)
-              -> std::optional<streamer::NavgridStreamerNode::PathingFrame> {
-            return ReadPathingFrame(context, *input);
-          });
       loop.RegisterNode(streamer_node);
     }
   }

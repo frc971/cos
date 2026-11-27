@@ -2,7 +2,8 @@ add_library(cos.pathing_messages INTERFACE)
 add_library(cos::pathing_messages ALIAS cos.pathing_messages)
 target_sources(cos.pathing_messages INTERFACE FILE_SET HEADERS
   BASE_DIRS ${PROJECT_SOURCE_DIR}/src
-  FILES pose_message.h pathing_status.h
+  FILES pose_message.h pathing_status.h spline_path_message.h
+    published_command_message.h
 )
 target_link_libraries(cos.pathing_messages INTERFACE cos::control_loop wpimath)
 
@@ -28,7 +29,7 @@ target_sources(cos.dijkstra_spline_node
 )
 target_link_libraries(cos.dijkstra_spline_node PUBLIC
   cos::pathing_messages cos::dijkstra_planner
-  PRIVATE cos::navgrid_streamer_node
+  PRIVATE cos::polyline_message
 )
 
 add_library(cos.navgrid_source_node)

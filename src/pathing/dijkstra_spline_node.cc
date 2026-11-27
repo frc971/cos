@@ -7,7 +7,7 @@
 #include <stdexcept>
 #include <utility>
 
-#include "streamer/navgrid_streamer_node.h"
+#include "streamer/polyline_message.h"
 
 namespace pathing {
 namespace {

@@ -90,6 +90,14 @@ target_link_libraries(cos.variance_calculator_node PUBLIC
   cos::localization_solver_common
 )
 
+add_library(cos.localization_input_message INTERFACE)
+add_library(cos::localization_input_message ALIAS cos.localization_input_message)
+target_sources(cos.localization_input_message INTERFACE FILE_SET HEADERS
+  BASE_DIRS ${PROJECT_SOURCE_DIR}/src
+  FILES input_message.h
+)
+target_link_libraries(cos.localization_input_message INTERFACE cos::pathing_messages)
+
 add_library(cos.robot_pose_node)
 add_library(cos::robot_pose_node ALIAS cos.robot_pose_node)
 target_sources(cos.robot_pose_node
@@ -98,4 +106,4 @@ target_sources(cos.robot_pose_node
     BASE_DIRS ${PROJECT_SOURCE_DIR}/src
     FILES robot_pose_node.h
 )
-target_link_libraries(cos.robot_pose_node PUBLIC cos::pathing_messages ntcore)
+target_link_libraries(cos.robot_pose_node PUBLIC cos::localization_input_message ntcore)

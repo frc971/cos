@@ -1,40 +1,30 @@
 #pragma once
 
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <mutex>
 #include <opencv4/opencv2/core/mat.hpp>
 #include <optional>
+#include <string>
+#include <string_view>
 #include <vector>
 
 #include <nadjieb/mjpeg_streamer.hpp>
 
 #include "control_loop/node.h"
 #include "streamer/navgrid_message.h"
+#include "streamer/polyline_message.h"
+
+namespace pathing {
+class SplinePathMessage;
+}  // namespace pathing
+
+namespace localization {
+class InputMessage;
+}  // namespace localization
 
 namespace streamer {
-
-// A polyline overlay with points and field dimensions in meters.
-class PolylineMessage final : public control_loop::IMessage {
- public:
-  auto GetType() -> const std::type_info& override {
-    return typeid(PolylineMessage);
-  }
-  auto GetSize() -> size_t override {
-    return sizeof(*this) +
-           (points.size() + markers.size()) * sizeof(cv::Point2d);
-  }
-  double field_size_x = 0;
-  double field_size_y = 0;
-  uint8_t r = 0;
-  uint8_t g = 128;
-  uint8_t b = 255;
-  // Render a two-point line as a velocity/direction arrow.
-  bool arrow_head = false;
-  std::vector<cv::Point2d> points;
-  // Highlighted field positions, drawn as magenta circles over the line.
-  std::vector<cv::Point2d> markers;
-};
 
 // Draws grid and polyline overlays on a field image and serves the result as
 // an MJPEG stream. The constructor takes the HTTP path and listen port.
@@ -63,25 +53,25 @@ class NavgridStreamerNode final : public control_loop::INode {
   void AddNavgrid(std::string_view input_path);
   void AddPolyline(std::string_view input_path);
 
-  // Field coordinates in meters. The grid must outlive rendering of the context.
-  struct PathingFrame {
-    const NavgridMessage& grid;
-    std::vector<cv::Point2d> route;
-    std::optional<cv::Point2d> robot_position;
-    std::optional<cv::Point2d> velocity_origin;
-    cv::Point2d velocity_mps;
-  };
-  using PathingFrameSource =
-      std::function<std::optional<PathingFrame>(const control_loop::Context&)>;
-  // Set the live grid and route source before registering the streamer.
-  // Live pathing frames require all input channels and are capped at 10 Hz.
-  void SetPathingFrameSource(
-      std::vector<control_loop::MessageDescriptor> dependencies,
-      PathingFrameSource source);
+  // Configure live pathing once before registration. Wait for all input
+  // channels and render at most once per context and 10 times per second.
+  void AddPathingInputs(std::string_view spline_channel,
+                        std::string_view input_channel,
+                        std::string_view pose_channel,
+                        std::string_view published_command_channel);
 
  private:
-  void DrawPathingGrid(cv::Mat& image, const PathingFrame& frame);
-  void DrawPathingVelocity(cv::Mat& image, const PathingFrame& frame);
+  struct PathingInputs {
+    std::string spline;
+    std::string input;
+    std::string pose;
+    std::string published_command;
+  };
+
+  void DrawGridRoute(cv::Mat& image, const pathing::SplinePathMessage& spline,
+                     const localization::InputMessage* input);
+  void DrawPathingVelocity(cv::Mat& image, const NavgridMessage& grid,
+                           const control_loop::Context& context);
   void DrawNavgrid(cv::Mat& image, const NavgridMessage& navgrid_message);
   void DrawPolyline(cv::Mat& image, const PolylineMessage& polyline);
 
@@ -93,7 +83,7 @@ class NavgridStreamerNode final : public control_loop::INode {
   std::vector<std::function<void(const control_loop::Context&)>> callbacks_;
   cv::Mat base_image_;
   std::optional<NavgridMessage> navgrid_;
-  PathingFrameSource pathing_frame_source_;
+  std::optional<PathingInputs> pathing_inputs_;
   std::mutex frame_mutex_;
   std::optional<std::uint64_t> last_context_id_;
   std::chrono::steady_clock::time_point next_frame_{};
