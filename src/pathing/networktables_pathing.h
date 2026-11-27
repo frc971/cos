@@ -8,7 +8,6 @@
 #include <networktables/NetworkTableInstance.h>
 
 #include "pathing/dijkstra_spline_node.h"
-#include "pathing/motion_settings.h"
 #include "pathing/pathing_status.h"
 
 namespace pathing {

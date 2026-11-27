@@ -24,7 +24,7 @@ target_sources(cos.dijkstra_spline_node
   PRIVATE dijkstra_spline_node.cc
   PUBLIC FILE_SET HEADERS
     BASE_DIRS ${PROJECT_SOURCE_DIR}/src
-    FILES dijkstra_spline_node.h motion_settings.h
+    FILES dijkstra_spline_node.h
 )
 target_link_libraries(cos.dijkstra_spline_node PUBLIC
   cos::pathing_messages cos::dijkstra_planner
