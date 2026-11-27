@@ -24,11 +24,11 @@ target_sources(cos.dijkstra_spline_node
   PRIVATE dijkstra_spline_node.cc
   PUBLIC FILE_SET HEADERS
     BASE_DIRS ${PROJECT_SOURCE_DIR}/src
-    FILES dijkstra_spline_node.h
+    FILES dijkstra_spline_node.h motion_settings.h
 )
 target_link_libraries(cos.dijkstra_spline_node PUBLIC
   cos::pathing_messages cos::dijkstra_planner
-  PRIVATE cos::polyline_message
+  PRIVATE cos::pathing_input_message cos::polyline_message
 )
 
 add_library(cos.navgrid_source_node)
@@ -49,7 +49,7 @@ target_sources(cos.networktables_pathing
   PRIVATE networktables_pathing.cc
   PUBLIC FILE_SET HEADERS
     BASE_DIRS ${PROJECT_SOURCE_DIR}/src
-    FILES networktables_pathing.h motion_settings.h
+    FILES networktables_pathing.h
 )
 target_link_libraries(cos.networktables_pathing
   PUBLIC cos::dijkstra_spline_node cos::control_loop ntcore

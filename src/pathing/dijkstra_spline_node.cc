@@ -4,9 +4,13 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <numbers>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 
+#include "localization/pathing_input_message.h"
+#include "pathing/command_message.h"
 #include "streamer/polyline_message.h"
 
 namespace pathing {
@@ -161,29 +165,37 @@ auto Refine(const Knot& a, const Knot& b,
 }
 }  // namespace
 
-DijkstraSplineNode::DijkstraSplineNode(std::string_view pose_channel,
-                                       std::string_view goal_channel,
-                                       std::string_view output_channel,
-                                       std::string_view navgrid_channel,
-                                       SplineSettings settings)
-    : pose_channel_(pose_channel),
-      goal_channel_(goal_channel),
-      output_channel_(output_channel),
+auto SplineCommandSettings::IsValid() const -> bool {
+  const auto positive = [](double value) {
+    return std::isfinite(value) && value > 0;
+  };
+  return command_timeout.count() > 0 && positive(lookahead.value()) &&
+         positive(motion.max_translation.value()) &&
+         std::isfinite(motion.max_rotation.value()) &&
+         motion.max_rotation.value() >= 0 && positive(motion.translation_gain) &&
+         positive(motion.heading_gain) &&
+         positive(motion.position_tolerance.value()) &&
+         positive(motion.heading_tolerance.value());
+}
+
+DijkstraSplineNode::DijkstraSplineNode(
+    std::string_view input_channel, std::string_view navgrid_channel,
+    std::string_view command_channel, SplineSettings settings,
+    SplineCommandSettings command_settings)
+    : input_channel_(input_channel),
       navgrid_channel_(navgrid_channel),
+      command_channel_(command_channel),
       settings_(settings),
-      dependencies_({{pose_channel_, typeid(PoseMessage)},
-                     {goal_channel_, typeid(PoseMessage)},
-                     {navgrid_channel_, typeid(streamer::NavgridMessage)}}),
-      publications_({{output_channel_, typeid(SplinePathMessage)}}) {
-  if (pose_channel_.empty() || goal_channel_.empty() ||
-      output_channel_.empty() || pose_channel_ == goal_channel_ ||
-      output_channel_ == pose_channel_ || output_channel_ == goal_channel_ ||
-      navgrid_channel_.empty() || navgrid_channel_ == pose_channel_ ||
-      navgrid_channel_ == goal_channel_ ||
-      navgrid_channel_ == output_channel_) {
-    throw std::invalid_argument(
-        "Spline channels must be nonempty and distinct");
-  }
+      command_settings_(command_settings),
+      dependencies_{{input_channel_, typeid(localization::PathingInputMessage)},
+                    {navgrid_channel_, typeid(streamer::NavgridMessage)}},
+      publications_{{command_channel_, typeid(CommandMessage)}} {
+  if (input_channel_.empty() || navgrid_channel_.empty() ||
+      command_channel_.empty() || input_channel_ == navgrid_channel_ ||
+      command_channel_ == input_channel_ || command_channel_ == navgrid_channel_)
+    throw std::invalid_argument("Pathing channels must be nonempty and distinct");
+  if (!command_settings_.IsValid())
+    throw std::invalid_argument("Invalid spline command settings");
   if (!std::isfinite(settings.robot_radius_meters) ||
       settings.robot_radius_meters < 0 ||
       !std::isfinite(settings.turn_penalty) || settings.turn_penalty < 0 ||
@@ -194,32 +206,35 @@ DijkstraSplineNode::DijkstraSplineNode(std::string_view pose_channel,
   }
 }
 
-void DijkstraSplineNode::EnableSplineDebug(std::string_view output_path) {
+void DijkstraSplineNode::EnableSplineDebug(std::string_view spline_channel,
+                                           std::string_view polyline_channel) {
   std::scoped_lock lock(mutex_);
-  if (output_path.empty() || output_path == pose_channel_ ||
-      output_path == goal_channel_ || output_path == output_channel_ ||
-      output_path == navgrid_channel_) {
+  const auto conflicts = [&](std::string_view channel) {
+    return channel.empty() || channel == input_channel_ ||
+           channel == navgrid_channel_ || channel == command_channel_;
+  };
+  if (conflicts(spline_channel) || conflicts(polyline_channel) ||
+      spline_channel == polyline_channel)
     throw std::invalid_argument(
-        "Spline debug channel must be nonempty and distinct");
-  }
-  if (!debug_path_.empty()) {
-    if (debug_path_ == output_path)
+        "Spline debug channels must be nonempty and distinct");
+  if (!spline_debug_channel_.empty()) {
+    if (spline_debug_channel_ == spline_channel &&
+        polyline_debug_channel_ == polyline_channel)
       return;
-    throw std::logic_error("Spline debug channel is already configured");
+    throw std::logic_error("Spline debug channels are already configured");
   }
-  debug_path_ = output_path;
-  publications_.emplace_back(debug_path_, typeid(streamer::PolylineMessage));
+  spline_debug_channel_ = spline_channel;
+  polyline_debug_channel_ = polyline_channel;
+  publications_.emplace_back(spline_debug_channel_, typeid(SplinePathMessage));
+  publications_.emplace_back(polyline_debug_channel_,
+                             typeid(streamer::PolylineMessage));
 }
 
-auto DijkstraSplineNode::Calculate(const PoseMessage* pose,
-                                   const PoseMessage* goal,
+auto DijkstraSplineNode::Calculate(const frc::Pose2d& start,
+                                   const frc::Pose2d& end,
                                    const DijkstraPlanner& planner) const
     -> SplinePathMessage {
   SplinePathMessage output;
-  if (!pose || !goal)
-    return output;
-  const auto& start = pose->goal_position;
-  const auto& end = goal->goal_position;
   const auto cleared = planner.BlockedStartCells(start);
   if (!planner.IsValidStartPose(start, cleared) ||
       !planner.IsValidPose(end, cleared))
@@ -320,14 +335,94 @@ auto DijkstraSplineNode::Calculate(const PoseMessage* pose,
   }
 }
 
+void DijkstraSplineNode::CalculateCommand(
+    const frc::Pose2d& current, const frc::Pose2d& target,
+    const DijkstraPlanner& planner, const SplinePathMessage& spline,
+    CommandMessage& command) const {
+  command.status = PathingStatus::InvalidInput;
+  switch (spline.status) {
+    case SplineStatus::InvalidInput:
+      return;
+    case SplineStatus::NoPath:
+      command.status = PathingStatus::NoPath;
+      return;
+    case SplineStatus::FitFailed:
+      command.status = PathingStatus::FitFailed;
+      return;
+    case SplineStatus::Ready:
+      break;
+  }
+  const auto& motion = command_settings_.motion;
+  const double heading_error =
+      std::remainder(target.Rotation().Radians().value() -
+                         current.Rotation().Radians().value(),
+                     2 * std::numbers::pi);
+  const bool at_position =
+      current.Translation().Distance(target.Translation()) <=
+      motion.position_tolerance;
+  const bool at_heading =
+      motion.max_rotation.value() == 0 ||
+      std::abs(heading_error) <= motion.heading_tolerance.value();
+  command.status = at_position && at_heading ? PathingStatus::ReachedGoal
+                                             : PathingStatus::Following;
+  if (command.status == PathingStatus::ReachedGoal)
+    return;
+  if (!at_position) {
+    const auto cleared = planner.BlockedStartCells(current);
+    const auto& samples = spline.samples;
+    if (samples.size() < 2 ||
+        samples.front().Distance(current.Translation()).value() > 1e-6) {
+      command.status = PathingStatus::FitFailed;
+      return;
+    }
+    double remaining = 0;
+    for (size_t i = 1; i < samples.size(); ++i)
+      remaining += samples[i].Distance(samples[i - 1]).value();
+    double walked = 0;
+    std::optional<frc::Translation2d> lookahead;
+    for (size_t i = 1; i < samples.size(); ++i) {
+      const double length = samples[i].Distance(samples[i - 1]).value();
+      if (length == 0)
+        continue;
+      const double distance =
+          std::min(length, command_settings_.lookahead.value() - walked);
+      const auto point = samples[i - 1] +
+                         (samples[i] - samples[i - 1]) * (distance / length);
+      if (planner.IsVisible(current.X().value(), current.Y().value(),
+                            point.X().value(), point.Y().value(), cleared))
+        lookahead = point;
+      walked += length;
+      if (walked >= command_settings_.lookahead.value())
+        break;
+    }
+    const double distance =
+        lookahead ? lookahead->Distance(current.Translation()).value() : 0;
+    if (distance <= 0) {
+      command.status = PathingStatus::FitFailed;
+      return;
+    }
+    const double hold_seconds =
+        std::chrono::duration<double>(command_settings_.command_timeout).count();
+    const double speed = std::min({motion.max_translation.value(),
+                                   motion.translation_gain * remaining,
+                                   distance / hold_seconds});
+    command.vx = (lookahead->X() - current.X()).value() * speed / distance;
+    command.vy = (lookahead->Y() - current.Y()).value() * speed / distance;
+  }
+  if (!at_heading)
+    command.omega =
+        std::clamp(motion.heading_gain * heading_error,
+                   -motion.max_rotation.value(), motion.max_rotation.value());
+}
+
 auto DijkstraSplineNode::CreateCallback()
     -> std::function<void(const control_loop::Context&)> {
   return [this](const control_loop::Context& context) -> void {
     {
       std::scoped_lock lock(mutex_);
-      if (!context->Exists(pose_channel_) || !context->Exists(goal_channel_) ||
+      if (!context->Exists(input_channel_) ||
           !context->Exists(navgrid_channel_) ||
-          context->Exists(output_channel_))
+          context->Exists(command_channel_))
         return;
       auto navgrid =
           context->GetSharedMessage<streamer::NavgridMessage>(navgrid_channel_);
@@ -341,33 +436,49 @@ auto DijkstraSplineNode::CreateCallback()
                 *navgrid_, settings_.turn_penalty,
                 settings_.robot_radius_meters);
           } catch (const std::invalid_argument&) {
-            // Publish InvalidInput so the follower can issue a stop command.
+            // An unavailable planner produces an InvalidInput command.
           }
         }
       }
-      auto output = std::make_shared<SplinePathMessage>();
-      if (planner_) {
-        *output = Calculate(context->GetMessage<PoseMessage>(pose_channel_),
-                            context->GetMessage<PoseMessage>(goal_channel_),
-                            *planner_);
-        output->planner = planner_;
+      auto command = std::make_shared<CommandMessage>();
+      command->input =
+          context->GetSharedMessage<localization::PathingInputMessage>(
+              input_channel_);
+      SplinePathMessage spline;
+      if (command->input) {
+        const auto& input = *command->input;
+        command->status = input.status;
+        if (input.status == PathingStatus::Following) {
+          if (planner_) {
+            spline = Calculate(input.pose, input.goal, *planner_);
+            CalculateCommand(input.pose, input.goal, *planner_, spline,
+                             *command);
+          } else {
+            command->status = PathingStatus::InvalidInput;
+          }
+        }
       }
-      if (!debug_path_.empty()) {
+
+      if (!spline_debug_channel_.empty()) {
+        spline.planner = planner_;
         auto debug = std::make_shared<streamer::PolylineMessage>();
         if (planner_) {
           debug->field_size_x = planner_->GetGrid().field_size_x;
           debug->field_size_y = planner_->GetGrid().field_size_y;
         }
         debug->g = 0;
-        for (const auto& point : output->samples)
+        for (const auto& point : spline.samples)
           debug->points.push_back(Point(point));
-        if (output->status == SplineStatus::Ready) {
-          for (const auto& point : output->waypoints)
+        if (spline.status == SplineStatus::Ready) {
+          for (const auto& point : spline.waypoints)
             debug->markers.push_back(Point(point));
         }
-        context->SetMessage(debug_path_, std::move(debug));
+        context->SetMessage(
+            spline_debug_channel_,
+            std::make_shared<SplinePathMessage>(std::move(spline)));
+        context->SetMessage(polyline_debug_channel_, std::move(debug));
       }
-      context->SetMessage(output_channel_, std::move(output));
+      context->SetMessage(command_channel_, std::move(command));
     }
     for (const auto& callback : callbacks_)
       callback(context);

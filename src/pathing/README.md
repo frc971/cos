@@ -84,18 +84,18 @@ are not implemented in this repository.
 
 ## Following and configuration
 
-Each cycle fits a new spline from the current pose. The follower picks a point
+Each cycle, the spline node fits a path from the current pose and picks a point
 approximately 0.5 meters ahead along its samples, shortening the lookahead to
 keep the direct translation segment clear of obstacles. Speed depends on
 remaining path distance and is limited to 2 m/s by default. It is additionally capped by
 the lookahead distance divided by the command hold interval, so nominal motion
 during that interval cannot pass the selected point. Within 5 cm of the goal,
-translation stops. The follower uses the shortest angular error and caps rotation
+translation stops. The node uses the shortest angular error and caps rotation
 at 1 rad/s by default. `ReachedGoal` also requires heading to be within 3 degrees.
 Set the rotation cap to zero to disable rotation and use position alone for goal
 completion. Live pathing uses a circular robot radius of **0.19 m**
 (0.38 m diameter). Route search, spline collision checks, field boundaries,
-and follower lookahead all enforce this clearance from blocked navgrid cells.
+and velocity lookahead all enforce this clearance from blocked navgrid cells.
 The stream shows cells whose centers cannot accommodate the footprint in red.
 The navgrid should describe obstacles without pre-inflating for the robot;
 existing baked-in margins remain additional clearance. Set

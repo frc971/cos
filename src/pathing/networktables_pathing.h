@@ -38,7 +38,7 @@ struct NetworkTablesPathingSettings {
   void Validate() const;
 };
 
-// Independent NT input -> spline planner -> follower -> NT output loop.
+// Independent NT input -> spline planner and velocity controller -> NT output loop.
 // Uses an already connected instance; never creates a client/server itself.
 class NetworkTablesPathing {
  public:
