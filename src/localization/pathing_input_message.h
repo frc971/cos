@@ -1,0 +1,29 @@
+#pragma once
+
+#include <cstddef>
+#include <cstdint>
+
+#include <frc/geometry/Pose2d.h>
+
+#include "control_loop/message.h"
+
+namespace localization {
+
+class PathingInputMessage final : public control_loop::IMessage {
+ public:
+  enum class Status : std::uint8_t { Unavailable, Available };
+
+  auto GetType() -> const std::type_info& override {
+    return typeid(PathingInputMessage);
+  }
+  auto GetSize() -> size_t override { return sizeof(*this); }
+  Status status = Status::Unavailable;
+  frc::Pose2d pose;
+  frc::Pose2d goal;
+  std::int64_t pose_local_us = 0;
+  std::int64_t goal_local_us = 0;
+  std::int64_t pose_server_us = 0;
+  std::int64_t goal_server_us = 0;
+};
+
+}  // namespace localization

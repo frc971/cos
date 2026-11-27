@@ -1,4 +1,6 @@
+#include <chrono>
 #include <filesystem>
+#include <memory>
 #include <string>
 
 #include "absl/flags/flag.h"
@@ -15,8 +17,10 @@
 #include "localization/variance_calculator_node.h"
 #include "logging/jpeg_buffer_log_node.h"
 #include "logging/wpilog_writer.h"
+#include "pathing/pathing_setup.h"
 #include "simulation/simulation_position_sender_node.h"
 #include "streamer/jpeg_buffer_streamer_node.h"
+#include "streamer/networktables_command_streamer_node.h"
 #include "streamer/position_estimate_rio_streamer_node.h"
 #include "utils/stop.h"
 
@@ -28,7 +32,7 @@ ABSL_FLAG(uint, max_context, 1,                                   // NOLINT
           "Maximum number of concurrent control-loop contexts");  // NOLINT
 ABSL_FLAG(bool, latency_log, false,                               // NOLINT
           "Log control-loop latency and loops per second");       // NOLINT
-ABSL_FLAG(  // NOLINT
+ABSL_FLAG(                                                        // NOLINT
     bool, log_images, false,                                      // NOLINT
     "Log timestamped JPEG frames to the run's log directory in "  // NOLINT
     "per-camera subfolders");                                     // NOLINT
@@ -101,10 +105,12 @@ auto main(int argc, char** argv) -> int {
   control_loop.SetMaxContext(absl::GetFlag(FLAGS_max_context));
   control_loop::ThreadPool thread_pool;
 
-  const std::vector<std::string> paths{"/root/constants/vision-bot/front.json",
-                                       "/root/constants/vision-bot/left.json",
-                                       "/root/constants/vision-bot/back.json",
-                                       "/root/constants/vision-bot/right.json"};
+  const auto pathing_config = pathing::LoadPathingConfig();
+  control_loop::ControlLoop pathing_loop(pathing_config.period);
+  const auto command_streamer =
+      pathing::ConfigurePathing(pathing_loop, pathing_config);
+
+  const std::vector<std::string> paths{"/root/constants/vision-bot/front.json"};
 
   auto solver_node =
       std::make_shared<localization::UnambiguousSolverNode>("pose");
@@ -139,13 +145,17 @@ auto main(int argc, char** argv) -> int {
   }
 
   auto wpilog_writer = std::make_shared<logging::WPILogWriter>(
-      (std::filesystem::path(control_loop::GetLogPath()) / "cos.wpilog").string(),
+      (std::filesystem::path(control_loop::GetLogPath()) / "cos.wpilog")
+          .string(),
       control_loop.GetLogPublications());
   control_loop.EnableWPILog(wpilog_writer);
+  pathing_loop.Start();
   control_loop.Start();
 
   stop::WaitUntilStop();
 
+  pathing_loop.Stop();
+  command_streamer->PublishStop();
   control_loop.Stop();
   thread_pool.Shutdown();
 }
