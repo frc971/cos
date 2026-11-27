@@ -1,20 +1,22 @@
 #pragma once
 
 #include <cstddef>
-#include <memory>
+#include <cstdint>
+#include <optional>
 
 #include "control_loop/message.h"
 #include "pathing/pathing_status.h"
-
-namespace localization {
-class PathingInputMessage;
-}  // namespace localization
 
 namespace pathing {
 
 // The field-relative command requested by the path follower.
 class CommandMessage final : public control_loop::IMessage {
  public:
+  struct InputTimestamps {
+    std::int64_t pose_server_us = 0;
+    std::int64_t goal_server_us = 0;
+  };
+
   auto GetType() -> const std::type_info& override {
     return typeid(CommandMessage);
   }
@@ -23,7 +25,11 @@ class CommandMessage final : public control_loop::IMessage {
   double vy = 0;
   double omega = 0;
   PathingStatus status = PathingStatus::Inactive;
-  std::shared_ptr<const localization::PathingInputMessage> input;
+  // The NetworkTables packet carries the original pose and goal sample times
+  // in server microseconds so the robot can identify the inputs used for this
+  // command. Commands created without an input snapshot, such as the shutdown
+  // stop command, leave this empty.
+  std::optional<InputTimestamps> input_timestamps;
 };
 
 }  // namespace pathing

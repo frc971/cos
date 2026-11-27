@@ -6,7 +6,6 @@
 #include <cstdint>
 
 #include "absl/log/log.h"
-#include "localization/pathing_input_message.h"
 
 namespace streamer {
 using pathing::CommandMessage;
@@ -84,8 +83,8 @@ void NetworkTablesCommandStreamerNode::PublishStop() {
 void NetworkTablesCommandStreamerNode::Publish(const CommandMessage& command) {
   std::scoped_lock lock(mutex_);
   auto status = command.status;
-  if (!command.input && (status == PathingStatus::Following ||
-                         status == PathingStatus::ReachedGoal)) {
+  if (!command.input_timestamps && (status == PathingStatus::Following ||
+                                    status == PathingStatus::ReachedGoal)) {
     status = PathingStatus::InvalidInput;
   }
   if (!std::isfinite(command.vx) || !std::isfinite(command.vy) ||
@@ -96,19 +95,15 @@ void NetworkTablesCommandStreamerNode::Publish(const CommandMessage& command) {
     status = PathingStatus::Disconnected;
   const std::int64_t now = nt::Now();
   const bool following = status == PathingStatus::Following;
+  const auto timestamps =
+      command.input_timestamps.value_or(CommandMessage::InputTimestamps{});
   const std::array<double, 7> frame{
       following ? command.vx : 0,
       following ? command.vy : 0,
       following ? command.omega : 0,
       static_cast<double>(status),
-      command.input
-          ? static_cast<double>(std::max(std::int64_t{0},
-                                         command.input->pose_server_us))
-          : 0,
-      command.input
-          ? static_cast<double>(std::max(std::int64_t{0},
-                                         command.input->goal_server_us))
-          : 0,
+      static_cast<double>(std::max(std::int64_t{0}, timestamps.pose_server_us)),
+      static_cast<double>(std::max(std::int64_t{0}, timestamps.goal_server_us)),
       offset ? static_cast<double>(now + *offset) : 0};
   publisher_.Set(frame, now);
   instance_.Flush();

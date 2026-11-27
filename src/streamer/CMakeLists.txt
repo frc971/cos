@@ -92,5 +92,5 @@ target_sources(cos.networktables_command_streamer_node
 )
 target_link_libraries(cos.networktables_command_streamer_node
   PUBLIC cos::pathing_messages ntcore
-  PRIVATE absl::log cos::pathing_input_message
+  PRIVATE absl::log
 )

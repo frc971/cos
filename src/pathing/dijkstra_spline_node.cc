@@ -441,17 +441,18 @@ auto DijkstraSplineNode::CreateCallback()
         }
       }
       auto command = std::make_shared<CommandMessage>();
-      command->input =
-          context->GetSharedMessage<localization::PathingInputMessage>(
-              input_channel_);
+      const auto* input =
+          context->GetMessage<localization::PathingInputMessage>(input_channel_);
       SplinePathMessage spline;
-      if (command->input) {
-        const auto& input = *command->input;
-        command->status = input.status;
-        if (input.status == PathingStatus::Following) {
+      if (input) {
+        command->input_timestamps = CommandMessage::InputTimestamps{
+            .pose_server_us = input->pose_server_us,
+            .goal_server_us = input->goal_server_us};
+        command->status = input->status;
+        if (input->status == PathingStatus::Following) {
           if (planner_) {
-            spline = Calculate(input.pose, input.goal, *planner_);
-            CalculateCommand(input.pose, input.goal, *planner_, spline,
+            spline = Calculate(input->pose, input->goal, *planner_);
+            CalculateCommand(input->pose, input->goal, *planner_, spline,
                              *command);
           } else {
             command->status = PathingStatus::InvalidInput;
