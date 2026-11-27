@@ -1,18 +1,14 @@
-# Vision-bot NetworkTables pathing
+# NetworkTables pathing
 
-`vision_bot_main` uses the existing team-9972 NT4 client and runs pathing in a
-separate 20 ms control loop with one context. The camera pipeline does not provide
-the pathing pose: pathing uses the roboRIO's fused current pose. The pipeline is
-enabled by default; `--nopathing` disables it. Construction validates configuration
-and loads the navgrid before camera startup. It does not create another NT client.
+`vision_bot_main` uses its existing NT4 client and runs pathing in a separate
+20 ms control loop with one context. It uses the roboRIO’s fused pose and loads
+its settings from `/root/constants/vision-bot/pathing.json` before camera startup.
 
-The live navgrid MJPEG stream is enabled by default at
-`http://vision-bot:4975/navgrid`. It shows red obstacles, the green grid route,
-the blue fitted spline, magenta control waypoints, and a cyan target-velocity
-arrow. Frames are limited to 10 Hz and drawn after NT command publication.
-Use `--nonavgrid_streamer` to disable this visualization without disabling
-pathing. `--nopathing` disables the entire pathing pipeline, including its stream.
-The default port follows camera streams 4971–4974.
+The live navgrid MJPEG stream is enabled by default when pathing runs. It serves
+`/navgrid` on port 4975 and shows red obstacles, the green grid route, the blue
+fitted spline, magenta control waypoints, and a cyan target-velocity arrow.
+Frames are limited to 10 Hz. Set `streamer.enabled` to `false` to disable
+visualization while keeping pathing enabled.
 
 ## Inputs from the roboRIO
 
@@ -79,7 +75,7 @@ It must stop/brake on any invalid or stale command, on cancellation, and wheneve
 the robot is disabled. It must enforce an independent **250 ms command watchdog**
 using server-time age as well as local receipt age; receiving a cached command
 does not make it fresh. Keep the consumer's maximum command age no longer than
-COS's `pathing_command_timeout_ms`. These checks and actual drivetrain actuation
+COS's `command_timeout_ms`. These checks and actual drivetrain actuation
 are not implemented in this repository.
 
 ## Following and configuration
@@ -99,31 +95,31 @@ and velocity lookahead all enforce this clearance from blocked navgrid cells.
 The stream draws obstacles from the original navgrid in red.
 The navgrid should describe obstacles without pre-inflating for the robot;
 existing baked-in margins remain additional clearance. Set
-`--pathing_robot_radius_m` to override the radius (zero uses a point footprint).
+`robot_radius_m` to override the radius (zero uses a point footprint).
 
-| Flag | Default |
+| JSON field | Shipped value |
 | --- | --- |
-| `--pathing` / `--nopathing` | Enabled |
-| `--pathing_robot_radius_m` | 0.19 meters |
-| `--navgrid_streamer` / `--nonavgrid_streamer` | Enabled with pathing |
-| `--navgrid_streamer_port` | 4975 |
-| `--navgrid_streamer_field_image` | `/root/constants/assets/field.png` |
-| `--pathing_navgrid` | `/root/constants/assets/navgrid.json` |
-| `--pathing_pose_topic` | `/DriveState/Pose` |
-| `--pathing_goal_topic` | `/COS/Pathing/Goal` |
-| `--pathing_command_topic` | `/COS/Pathing/Command` |
-| `--pathing_period_ms` | 20 |
-| `--pathing_input_timeout_ms` | 250 (deprecated, ignored) |
-| `--pathing_command_timeout_ms` | 250 |
-| `--pathing_lookahead_m` | 0.5 |
-| `--pathing_max_translation_mps` | 2.0 |
-| `--pathing_max_rotation_radps` | 1.0 |
-| `--pathing_turn_penalty` | 0.3 meters/radian |
+| `navgrid` | `/root/constants/assets/navgrid.json` |
+| `topics.pose` | `/DriveState/Pose` |
+| `topics.goal` | `/COS/Pathing/Goal` |
+| `topics.command` | `/COS/Pathing/Command` |
+| `streamer.enabled` | `true` |
+| `streamer.port` | 4975 |
+| `streamer.field_image` | `/root/constants/assets/field.png` |
+| `period_ms` | 20 |
+| `command_timeout_ms` | 250 |
+| `robot_radius_m` | 0.19 |
+| `lookahead_m` | 0.5 |
+| `max_translation_mps` | 2.0 |
+| `max_rotation_radps` | 1.0 |
+| `turn_penalty` | 0.3 meters/radian |
 
-The C++ `NetworkTablesPathingSettings` also exposes the existing motion gains,
-position/heading tolerances, and spline fitting budgets. The spline settings'
-turn penalty controls route selection. `NetworkTablesPathing` accepts an NT
-instance for isolated integration work and timestamps commands with `nt::Now()`.
+Use absolute paths for the navgrid and field image.
+
+Vision-bot configures `SplineSettings` and `SplineCommandSettings` when
+registering the pathing nodes. These settings also expose motion gains,
+position and heading tolerances, and spline fitting budgets. The spline
+turn penalty controls route selection.
 
 This change supplies the COS producer only. It does not change roboRIO code,
 add driver controls, or activate a drivetrain.

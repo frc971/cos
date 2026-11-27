@@ -62,7 +62,7 @@ target_sources(vision_bot_main
     vision_bot_main.cc
 )
 target_link_libraries(vision_bot_main PRIVATE
-  cos::networktables_pathing
+  cos::pathing_setup
   cos::jpeg_buffer_streamer_node
   cos::uvc_camera_node
   cos::stop

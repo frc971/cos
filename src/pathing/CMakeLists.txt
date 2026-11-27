@@ -43,16 +43,16 @@ target_link_libraries(cos.navgrid_source_node PUBLIC
   cos::control_loop cos::navgrid_message
 )
 
-add_library(cos.networktables_pathing)
-add_library(cos::networktables_pathing ALIAS cos.networktables_pathing)
-target_sources(cos.networktables_pathing
-  PRIVATE networktables_pathing.cc
+add_library(cos.pathing_setup)
+add_library(cos::pathing_setup ALIAS cos.pathing_setup)
+target_sources(cos.pathing_setup
+  PRIVATE pathing_setup.cc
   PUBLIC FILE_SET HEADERS
     BASE_DIRS ${PROJECT_SOURCE_DIR}/src
-    FILES networktables_pathing.h
+    FILES pathing_setup.h
 )
-target_link_libraries(cos.networktables_pathing
-  PUBLIC cos::dijkstra_spline_node cos::control_loop ntcore
-  PRIVATE cos::navgrid_source_node cos::navgrid_streamer_node
-    cos::networktables_command_streamer_node cos::robot_pose_receiver_node
+target_link_libraries(cos.pathing_setup
+  PUBLIC cos::dijkstra_spline_node cos::networktables_command_streamer_node
+  PRIVATE cos::json_utils cos::navgrid_source_node cos::navgrid_streamer_node
+    cos::robot_pose_receiver_node
 )

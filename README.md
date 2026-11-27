@@ -39,11 +39,11 @@ independently of robot orientation. Register the spline with
 The streamer accepts a base `NavgridMessage` or a navgrid JSON path and field
 image path. Use `AddNavgrid` for additional grid overlays from the control loop.
 
-`vision_bot_main` also supports live pathing from roboRIO NetworkTables pose and
-goal inputs. See [the pathing contract](src/pathing/README.md) for topic names,
-command fields, freshness requirements, and configuration flags. The roboRIO
+`vision_bot_main` runs live pathing from roboRIO NetworkTables pose and goal
+inputs. See [the pathing contract](src/pathing/README.md) for topic names,
+command fields, freshness requirements, and configuration. The roboRIO
 publisher and drive-command consumer must be implemented separately.
 
 Vision-bot's live pathing visualization is enabled by default at
-`http://vision-bot:4975/navgrid`. Disable it with `--nonavgrid_streamer`, or change
-its port with `--navgrid_streamer_port`.
+`http://vision-bot:4975/navgrid`. Change `streamer.enabled` or `streamer.port`
+in `constants/vision-bot/pathing.json` to configure it.

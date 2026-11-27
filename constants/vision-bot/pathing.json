@@ -1,0 +1,20 @@
+{
+  "navgrid": "/root/constants/assets/navgrid.json",
+  "topics": {
+    "pose": "/DriveState/Pose",
+    "goal": "/COS/Pathing/Goal",
+    "command": "/COS/Pathing/Command"
+  },
+  "streamer": {
+    "enabled": true,
+    "port": 4975,
+    "field_image": "/root/constants/assets/field.png"
+  },
+  "period_ms": 20,
+  "command_timeout_ms": 250,
+  "robot_radius_m": 0.19,
+  "lookahead_m": 0.5,
+  "max_translation_mps": 2.0,
+  "max_rotation_radps": 1.0,
+  "turn_penalty": 0.3
+}
