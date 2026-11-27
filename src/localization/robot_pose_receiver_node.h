@@ -16,14 +16,15 @@
 namespace localization {
 
 // Reads the robot pose and goal from NetworkTables for the pathing loop.
-class RobotPoseNode final : public control_loop::INode {
+class RobotPoseReceiverNode final : public control_loop::INode {
  public:
   static constexpr char kPose[] = "pathing:pose";
   static constexpr char kGoal[] = "pathing:goal";
   static constexpr char kInput[] = "pathing:input";
 
-  RobotPoseNode(nt::NetworkTableInstance instance, std::string_view pose_topic,
-                std::string_view goal_topic, std::chrono::milliseconds period);
+  RobotPoseReceiverNode(nt::NetworkTableInstance instance,
+                        std::string_view pose_topic, std::string_view goal_topic,
+                        std::chrono::milliseconds period);
 
   auto CreateCallback()
       -> std::function<void(const control_loop::Context&)> override;

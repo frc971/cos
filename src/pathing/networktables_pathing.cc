@@ -3,7 +3,7 @@
 #include <stdexcept>
 
 #include "control_loop/control_loop.h"
-#include "localization/robot_pose_node.h"
+#include "localization/robot_pose_receiver_node.h"
 #include "pathing/navgrid_source_node.h"
 #include "streamer/navgrid_streamer_node.h"
 #include "streamer/networktables_command_streamer_node.h"
@@ -12,7 +12,7 @@ namespace pathing {
 using nt::NetworkTableInstance;
 
 namespace {
-using localization::RobotPoseNode;
+using localization::RobotPoseReceiverNode;
 constexpr char kSpline[] = "pathing:spline";
 constexpr char kCommand[] = "pathing:command";
 constexpr char kSplineOverlay[] = "pathing:spline_overlay";
@@ -49,12 +49,12 @@ class NetworkTablesPathing::Impl {
        nt::NetworkTableInstance instance)
       : loop(settings.period) {
     settings.Validate();
-    auto input = std::make_shared<RobotPoseNode>(
+    auto input = std::make_shared<RobotPoseReceiverNode>(
         instance, settings.pose_topic, settings.goal_topic, settings.period);
     auto spline_settings = settings.spline;
     spline_settings.robot_radius_meters = settings.robot_radius_meters;
     auto spline = std::make_shared<DijkstraSplineNode>(
-        RobotPoseNode::kInput, NavgridSourceNode::kNavgrid, kCommand,
+        RobotPoseReceiverNode::kInput, NavgridSourceNode::kNavgrid, kCommand,
         spline_settings, CommandSettings(settings));
     if (settings.navgrid_streamer)
       spline->EnableSplineDebug(kSpline, kSplineOverlay);
@@ -69,8 +69,8 @@ class NetworkTablesPathing::Impl {
       auto streamer_node = std::make_shared<streamer::NavgridStreamerNode>(
           "/navgrid", settings.navgrid_streamer_port,
           settings.field_image_path);
-      streamer_node->AddPathingInputs(kSpline, RobotPoseNode::kInput,
-                                      RobotPoseNode::kPose, kCommand);
+      streamer_node->AddPathingInputs(kSpline, RobotPoseReceiverNode::kInput,
+                                      RobotPoseReceiverNode::kPose, kCommand);
       streamer_node->AddPolyline(kSplineOverlay);
       loop.RegisterNode(streamer_node);
     }

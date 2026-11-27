@@ -98,12 +98,12 @@ target_sources(cos.pathing_input_message INTERFACE FILE_SET HEADERS
 )
 target_link_libraries(cos.pathing_input_message INTERFACE cos::pathing_messages)
 
-add_library(cos.robot_pose_node)
-add_library(cos::robot_pose_node ALIAS cos.robot_pose_node)
-target_sources(cos.robot_pose_node
-  PRIVATE robot_pose_node.cc
+add_library(cos.robot_pose_receiver_node)
+add_library(cos::robot_pose_receiver_node ALIAS cos.robot_pose_receiver_node)
+target_sources(cos.robot_pose_receiver_node
+  PRIVATE robot_pose_receiver_node.cc
   PUBLIC FILE_SET HEADERS
     BASE_DIRS ${PROJECT_SOURCE_DIR}/src
-    FILES robot_pose_node.h
+    FILES robot_pose_receiver_node.h
 )
-target_link_libraries(cos.robot_pose_node PUBLIC cos::pathing_input_message ntcore)
+target_link_libraries(cos.robot_pose_receiver_node PUBLIC cos::pathing_input_message ntcore)

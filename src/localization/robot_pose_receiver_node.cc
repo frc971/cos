@@ -1,4 +1,4 @@
-#include "localization/robot_pose_node.h"
+#include "localization/robot_pose_receiver_node.h"
 
 #include <memory>
 #include <utility>
@@ -9,10 +9,9 @@ namespace localization {
 using pathing::PathingStatus;
 using pathing::PoseMessage;
 
-RobotPoseNode::RobotPoseNode(nt::NetworkTableInstance instance,
-                             std::string_view pose_topic,
-                             std::string_view goal_topic,
-                             std::chrono::milliseconds period)
+RobotPoseReceiverNode::RobotPoseReceiverNode(
+    nt::NetworkTableInstance instance, std::string_view pose_topic,
+    std::string_view goal_topic, std::chrono::milliseconds period)
     : publications_{{kPose, typeid(PoseMessage)},
                     {kGoal, typeid(PoseMessage)},
                     {kInput, typeid(PathingInputMessage)}},
@@ -27,7 +26,7 @@ RobotPoseNode::RobotPoseNode(nt::NetworkTableInstance instance,
                     {.periodic = std::chrono::duration<double>(period).count(),
                      .keepDuplicates = true})) {}
 
-auto RobotPoseNode::CreateCallback()
+auto RobotPoseReceiverNode::CreateCallback()
     -> std::function<void(const control_loop::Context&)> {
   return [this](const control_loop::Context& context) {
     {
@@ -60,18 +59,18 @@ auto RobotPoseNode::CreateCallback()
   };
 }
 
-auto RobotPoseNode::GetDependencies() const
+auto RobotPoseReceiverNode::GetDependencies() const
     -> const std::vector<control_loop::MessageDescriptor>& {
   static const std::vector<control_loop::MessageDescriptor> dependencies;
   return dependencies;
 }
 
-auto RobotPoseNode::GetPublications() const
+auto RobotPoseReceiverNode::GetPublications() const
     -> const std::vector<control_loop::MessageDescriptor>& {
   return publications_;
 }
 
-void RobotPoseNode::RegisterCallback(
+void RobotPoseReceiverNode::RegisterCallback(
     const std::function<void(const control_loop::Context&)>& callback) {
   callbacks_.push_back(callback);
 }

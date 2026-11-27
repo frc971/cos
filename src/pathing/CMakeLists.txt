@@ -54,5 +54,5 @@ target_sources(cos.networktables_pathing
 target_link_libraries(cos.networktables_pathing
   PUBLIC cos::dijkstra_spline_node cos::control_loop ntcore
   PRIVATE cos::navgrid_source_node cos::navgrid_streamer_node
-    cos::networktables_command_streamer_node cos::robot_pose_node
+    cos::networktables_command_streamer_node cos::robot_pose_receiver_node
 )
