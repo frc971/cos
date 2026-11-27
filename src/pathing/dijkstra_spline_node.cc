@@ -15,6 +15,8 @@
 
 namespace pathing {
 namespace {
+using CommandStatus = CommandMessage::Status;
+using SplineStatus = SplinePathMessage::Status;
 using Bezier = std::array<cv::Point2d, 4>;
 constexpr int kCollisionDepth = 16;
 constexpr size_t kMaxSamples = 100000;
@@ -339,15 +341,15 @@ void DijkstraSplineNode::CalculateCommand(
     const frc::Pose2d& current, const frc::Pose2d& target,
     const DijkstraPlanner& planner, const SplinePathMessage& spline,
     CommandMessage& command) const {
-  command.status = PathingStatus::InvalidInput;
+  command.status = CommandStatus::InvalidInput;
   switch (spline.status) {
     case SplineStatus::InvalidInput:
       return;
     case SplineStatus::NoPath:
-      command.status = PathingStatus::NoPath;
+      command.status = CommandStatus::NoPath;
       return;
     case SplineStatus::FitFailed:
-      command.status = PathingStatus::FitFailed;
+      command.status = CommandStatus::FitFailed;
       return;
     case SplineStatus::Ready:
       break;
@@ -363,16 +365,16 @@ void DijkstraSplineNode::CalculateCommand(
   const bool at_heading =
       motion.max_rotation.value() == 0 ||
       std::abs(heading_error) <= motion.heading_tolerance.value();
-  command.status = at_position && at_heading ? PathingStatus::ReachedGoal
-                                             : PathingStatus::Following;
-  if (command.status == PathingStatus::ReachedGoal)
+  command.status = at_position && at_heading ? CommandStatus::ReachedGoal
+                                             : CommandStatus::Following;
+  if (command.status == CommandStatus::ReachedGoal)
     return;
   if (!at_position) {
     const auto cleared = planner.BlockedStartCells(current);
     const auto& samples = spline.samples;
     if (samples.size() < 2 ||
         samples.front().Distance(current.Translation()).value() > 1e-6) {
-      command.status = PathingStatus::FitFailed;
+      command.status = CommandStatus::FitFailed;
       return;
     }
     double remaining = 0;
@@ -398,7 +400,7 @@ void DijkstraSplineNode::CalculateCommand(
     const double distance =
         lookahead ? lookahead->Distance(current.Translation()).value() : 0;
     if (distance <= 0) {
-      command.status = PathingStatus::FitFailed;
+      command.status = CommandStatus::FitFailed;
       return;
     }
     const double hold_seconds =
@@ -448,14 +450,14 @@ auto DijkstraSplineNode::CreateCallback()
         command->input_timestamps = CommandMessage::InputTimestamps{
             .pose_server_us = input->pose_server_us,
             .goal_server_us = input->goal_server_us};
-        command->status = input->status;
-        if (input->status == PathingStatus::Following) {
+        if (input->status ==
+            localization::PathingInputMessage::Status::Available) {
           if (planner_) {
             spline = Calculate(input->pose, input->goal, *planner_);
             CalculateCommand(input->pose, input->goal, *planner_, spline,
                              *command);
           } else {
-            command->status = PathingStatus::InvalidInput;
+            command->status = CommandStatus::InvalidInput;
           }
         }
       }

@@ -5,13 +5,24 @@
 #include <optional>
 
 #include "control_loop/message.h"
-#include "pathing/pathing_status.h"
 
 namespace pathing {
 
 // The field-relative command requested by the path follower.
 class CommandMessage final : public control_loop::IMessage {
  public:
+  // These numeric values are part of the NetworkTables command wire format.
+  enum class Status : std::uint8_t {
+    Inactive = 0,
+    Following = 1,
+    ReachedGoal = 2,
+    InvalidInput = 3,
+    StaleInput = 4,  // Reserved for command protocol compatibility.
+    NoPath = 5,
+    FitFailed = 6,
+    Disconnected = 7,
+  };
+
   struct InputTimestamps {
     std::int64_t pose_server_us = 0;
     std::int64_t goal_server_us = 0;
@@ -24,7 +35,7 @@ class CommandMessage final : public control_loop::IMessage {
   double vx = 0;
   double vy = 0;
   double omega = 0;
-  PathingStatus status = PathingStatus::Inactive;
+  Status status = Status::Inactive;
   // The NetworkTables packet carries the original pose and goal sample times
   // in server microseconds so the robot can identify the inputs used for this
   // command. Commands created without an input snapshot, such as the shutdown

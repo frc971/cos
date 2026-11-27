@@ -9,27 +9,27 @@
 
 namespace streamer {
 using pathing::CommandMessage;
-using pathing::PathingStatus;
+using CommandStatus = CommandMessage::Status;
 
 namespace {
 
-auto StatusName(PathingStatus status) -> const char* {
+auto StatusName(CommandStatus status) -> const char* {
   switch (status) {
-    case PathingStatus::Inactive:
+    case CommandStatus::Inactive:
       return "Inactive";
-    case PathingStatus::Following:
+    case CommandStatus::Following:
       return "Following";
-    case PathingStatus::ReachedGoal:
+    case CommandStatus::ReachedGoal:
       return "ReachedGoal";
-    case PathingStatus::InvalidInput:
+    case CommandStatus::InvalidInput:
       return "InvalidInput";
-    case PathingStatus::StaleInput:
+    case CommandStatus::StaleInput:
       return "StaleInput";
-    case PathingStatus::NoPath:
+    case CommandStatus::NoPath:
       return "NoPath";
-    case PathingStatus::FitFailed:
+    case CommandStatus::FitFailed:
       return "FitFailed";
-    case PathingStatus::Disconnected:
+    case CommandStatus::Disconnected:
       return "Disconnected";
   }
   return "InvalidInput";
@@ -83,18 +83,18 @@ void NetworkTablesCommandStreamerNode::PublishStop() {
 void NetworkTablesCommandStreamerNode::Publish(const CommandMessage& command) {
   std::scoped_lock lock(mutex_);
   auto status = command.status;
-  if (!command.input_timestamps && (status == PathingStatus::Following ||
-                                    status == PathingStatus::ReachedGoal)) {
-    status = PathingStatus::InvalidInput;
+  if (!command.input_timestamps && (status == CommandStatus::Following ||
+                                    status == CommandStatus::ReachedGoal)) {
+    status = CommandStatus::InvalidInput;
   }
   if (!std::isfinite(command.vx) || !std::isfinite(command.vy) ||
       !std::isfinite(command.omega))
-    status = PathingStatus::InvalidInput;
+    status = CommandStatus::InvalidInput;
   const auto offset = instance_.GetServerTimeOffset();
   if (!instance_.IsConnected() || !offset)
-    status = PathingStatus::Disconnected;
+    status = CommandStatus::Disconnected;
   const std::int64_t now = nt::Now();
-  const bool following = status == PathingStatus::Following;
+  const bool following = status == CommandStatus::Following;
   const auto timestamps =
       command.input_timestamps.value_or(CommandMessage::InputTimestamps{});
   const std::array<double, 7> frame{

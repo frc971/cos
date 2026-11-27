@@ -43,7 +43,7 @@ class NetworkTablesCommandStreamerNode final : public control_loop::INode {
   nt::NetworkTableInstance instance_;
   nt::DoubleArrayPublisher publisher_;
   std::mutex mutex_;
-  std::optional<pathing::PathingStatus> last_status_;
+  std::optional<pathing::CommandMessage::Status> last_status_;
 };
 
 }  // namespace streamer

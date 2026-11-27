@@ -205,7 +205,8 @@ void NavgridStreamerNode::DrawPathingVelocity(
       context->GetMessage<pathing::PoseMessage>(pathing_inputs_->pose);
   const auto* command =
       context->GetMessage<pathing::CommandMessage>(pathing_inputs_->command);
-  if (!pose || !command || command->status != pathing::PathingStatus::Following)
+  if (!pose || !command ||
+      command->status != pathing::CommandMessage::Status::Following)
     return;
 
   PolylineMessage velocity;

@@ -6,7 +6,6 @@
 #include "pathing/pose_message.h"
 
 namespace localization {
-using pathing::PathingStatus;
 using pathing::PoseMessage;
 
 RobotPoseReceiverNode::RobotPoseReceiverNode(
@@ -45,7 +44,7 @@ auto RobotPoseReceiverNode::CreateCallback()
       // A cached sample is unavailable after its topic is unpublished.
       if (pose.time != 0 && goal.time != 0 && pose_.GetTopic().Exists() &&
           goal_.GetTopic().Exists()) {
-        input->status = PathingStatus::Following;
+        input->status = PathingInputMessage::Status::Available;
         context->SetMessage(kPose, std::make_shared<PoseMessage>(pose.value));
         context->SetMessage(kGoal, std::make_shared<PoseMessage>(goal.value));
       } else {

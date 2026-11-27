@@ -10,11 +10,11 @@
 
 namespace pathing {
 
-enum class SplineStatus { Ready, InvalidInput, NoPath, FitFailed };
-
 // Field-relative route geometry. Only Ready indicates a usable fit.
 class SplinePathMessage final : public control_loop::IMessage {
  public:
+  enum class Status { Ready, InvalidInput, NoPath, FitFailed };
+
   auto GetType() -> const std::type_info& override {
     return typeid(SplinePathMessage);
   }
@@ -25,7 +25,7 @@ class SplinePathMessage final : public control_loop::IMessage {
            splines.size() * sizeof(frc::CubicHermiteSpline);
   }
 
-  SplineStatus status = SplineStatus::InvalidInput;
+  Status status = Status::InvalidInput;
   // Grid route before visibility simplification. Retained if fitting fails.
   std::vector<frc::Translation2d> raw_route;
   // Interpolation knots, including any points inserted during refinement.
