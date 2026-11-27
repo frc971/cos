@@ -86,7 +86,7 @@ class DijkstraSplineNode final : public control_loop::INode {
   std::string spline_debug_channel_;
   std::string polyline_debug_channel_;
   std::shared_ptr<const streamer::NavgridMessage> navgrid_;
-  std::shared_ptr<const DijkstraPlanner> planner_;
+  std::unique_ptr<const DijkstraPlanner> planner_;
   SplineSettings settings_;
   SplineCommandSettings command_settings_;
   std::mutex mutex_;

@@ -96,7 +96,7 @@ Set the rotation cap to zero to disable rotation and use position alone for goal
 completion. Live pathing uses a circular robot radius of **0.19 m**
 (0.38 m diameter). Route search, spline collision checks, field boundaries,
 and velocity lookahead all enforce this clearance from blocked navgrid cells.
-The stream shows cells whose centers cannot accommodate the footprint in red.
+The stream draws obstacles from the original navgrid in red.
 The navgrid should describe obstacles without pre-inflating for the robot;
 existing baked-in margins remain additional clearance. Set
 `--pathing_robot_radius_m` to override the radius (zero uses a point footprint).

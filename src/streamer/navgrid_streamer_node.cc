@@ -12,7 +12,6 @@
 
 #include "absl/log/log.h"
 #include "localization/pathing_input_message.h"
-#include "pathing/dijkstra_planner.h"
 #include "pathing/pose_message.h"
 #include "pathing/command_message.h"
 #include "pathing/spline_path_message.h"
@@ -50,6 +49,7 @@ auto NavgridStreamerNode::CreateCallback()
   return [this](const control_loop::Context& context) -> void {
     std::unique_lock lock(frame_mutex_);
     const auto now = std::chrono::steady_clock::now();
+    const NavgridMessage* pathing_grid = nullptr;
     const pathing::SplinePathMessage* spline = nullptr;
     if (pathing_inputs_) {
       if (last_context_id_ && context->id <= *last_context_id_)
@@ -61,9 +61,10 @@ auto NavgridStreamerNode::CreateCallback()
       last_context_id_ = context->id;
       if (now < next_frame_)
         return;
+      pathing_grid = context->GetMessage<NavgridMessage>(pathing_inputs_->navgrid);
       spline = context->GetMessage<pathing::SplinePathMessage>(
           pathing_inputs_->spline);
-      if (!spline || !spline->planner)
+      if (!pathing_grid || !spline)
         return;
     }
 
@@ -71,13 +72,15 @@ auto NavgridStreamerNode::CreateCallback()
     if (navgrid_)
       DrawNavgrid(new_image, *navgrid_);
     if (spline) {
-      DrawGridRoute(new_image, *spline,
+      DrawGridRoute(new_image, *pathing_grid, *spline,
                     context->GetMessage<localization::PathingInputMessage>(
                         pathing_inputs_->input));
     }
     for (const auto& dependency : dependencies_) {
       const auto& channel = dependency.GetChannel();
       if (dependency.GetTypes().contains(typeid(NavgridMessage))) {
+        if (pathing_inputs_ && channel == pathing_inputs_->navgrid)
+          continue;
         if (const auto* grid = context->GetMessage<NavgridMessage>(channel))
           DrawNavgrid(new_image, *grid);
       } else if (dependency.GetTypes().contains(typeid(PolylineMessage))) {
@@ -86,7 +89,7 @@ auto NavgridStreamerNode::CreateCallback()
       }
     }
     if (spline) {
-      DrawPathingVelocity(new_image, spline->planner->GetGrid(), context);
+      DrawPathingVelocity(new_image, *pathing_grid, context);
       next_frame_ = now + std::chrono::milliseconds(100);
     }
 
@@ -143,13 +146,16 @@ void NavgridStreamerNode::AddPolyline(std::string_view input_path) {
 }
 
 void NavgridStreamerNode::AddPathingInputs(
-    std::string_view spline_channel, std::string_view input_channel,
+    std::string_view navgrid_channel, std::string_view spline_channel,
+    std::string_view input_channel,
     std::string_view pose_channel, std::string_view command_channel) {
   if (pathing_inputs_)
     throw std::logic_error("Pathing inputs are already configured");
   pathing_inputs_.emplace(PathingInputs{
-      std::string(spline_channel), std::string(input_channel),
+      std::string(navgrid_channel), std::string(spline_channel),
+      std::string(input_channel),
       std::string(pose_channel), std::string(command_channel)});
+  dependencies_.emplace_back(navgrid_channel, typeid(NavgridMessage));
   dependencies_.emplace_back(spline_channel, typeid(pathing::SplinePathMessage));
   dependencies_.emplace_back(input_channel,
                              typeid(localization::PathingInputMessage));
@@ -158,9 +164,9 @@ void NavgridStreamerNode::AddPathingInputs(
 }
 
 void NavgridStreamerNode::DrawGridRoute(
-    cv::Mat& image, const pathing::SplinePathMessage& spline,
+    cv::Mat& image, const NavgridMessage& grid,
+    const pathing::SplinePathMessage& spline,
     const localization::PathingInputMessage* input) {
-  const auto& grid = spline.planner->GetGrid();
   DrawNavgrid(image, grid);
   if (!std::isfinite(grid.node_size_meters) || grid.node_size_meters <= 0)
     return;
@@ -183,7 +189,8 @@ void NavgridStreamerNode::DrawGridRoute(
     return cv::Point(static_cast<int>(col), static_cast<int>(row));
   };
   for (const auto& point : spline.raw_route) {
-    if (const auto cell = cell_for({point.X().value(), point.Y().value()}))
+    if (const auto cell = cell_for({point.X().value(), point.Y().value()});
+        cell && !grid.navgrid[cell->y][cell->x])
       route.navgrid[cell->y][cell->x] = true;
   }
   if (input && input->pose_local_us != 0)

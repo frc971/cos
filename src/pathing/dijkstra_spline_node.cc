@@ -432,7 +432,7 @@ auto DijkstraSplineNode::CreateCallback()
         navgrid_ = std::move(navgrid);
         if (navgrid_) {
           try {
-            planner_ = std::make_shared<DijkstraPlanner>(
+            planner_ = std::make_unique<DijkstraPlanner>(
                 *navgrid_, settings_.turn_penalty,
                 settings_.robot_radius_meters);
           } catch (const std::invalid_argument&) {
@@ -461,11 +461,10 @@ auto DijkstraSplineNode::CreateCallback()
       }
 
       if (!spline_debug_channel_.empty()) {
-        spline.planner = planner_;
         auto debug = std::make_shared<streamer::PolylineMessage>();
-        if (planner_) {
-          debug->field_size_x = planner_->GetGrid().field_size_x;
-          debug->field_size_y = planner_->GetGrid().field_size_y;
+        if (navgrid_) {
+          debug->field_size_x = navgrid_->field_size_x;
+          debug->field_size_y = navgrid_->field_size_y;
         }
         debug->g = 0;
         for (const auto& point : spline.samples)

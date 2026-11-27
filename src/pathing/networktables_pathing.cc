@@ -69,8 +69,9 @@ class NetworkTablesPathing::Impl {
       auto streamer_node = std::make_shared<streamer::NavgridStreamerNode>(
           "/navgrid", settings.navgrid_streamer_port,
           settings.field_image_path);
-      streamer_node->AddPathingInputs(kSpline, RobotPoseReceiverNode::kInput,
-                                      RobotPoseReceiverNode::kPose, kCommand);
+      streamer_node->AddPathingInputs(
+          NavgridSourceNode::kNavgrid, kSpline, RobotPoseReceiverNode::kInput,
+          RobotPoseReceiverNode::kPose, kCommand);
       streamer_node->AddPolyline(kSplineOverlay);
       loop.RegisterNode(streamer_node);
     }

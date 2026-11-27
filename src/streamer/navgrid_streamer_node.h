@@ -55,20 +55,23 @@ class NavgridStreamerNode final : public control_loop::INode {
 
   // Configure live pathing once before registration. Wait for all input
   // channels and render at most once per context and 10 times per second.
-  void AddPathingInputs(std::string_view spline_channel,
+  void AddPathingInputs(std::string_view navgrid_channel,
+                        std::string_view spline_channel,
                         std::string_view input_channel,
                         std::string_view pose_channel,
                         std::string_view command_channel);
 
  private:
   struct PathingInputs {
+    std::string navgrid;
     std::string spline;
     std::string input;
     std::string pose;
     std::string command;
   };
 
-  void DrawGridRoute(cv::Mat& image, const pathing::SplinePathMessage& spline,
+  void DrawGridRoute(cv::Mat& image, const NavgridMessage& grid,
+                     const pathing::SplinePathMessage& spline,
                      const localization::PathingInputMessage* input);
   void DrawPathingVelocity(cv::Mat& image, const NavgridMessage& grid,
                            const control_loop::Context& context);

@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstddef>
-#include <memory>
 #include <vector>
 
 #include <frc/geometry/Translation2d.h>
@@ -10,8 +9,6 @@
 #include "control_loop/message.h"
 
 namespace pathing {
-
-class DijkstraPlanner;
 
 enum class SplineStatus { Ready, InvalidInput, NoPath, FitFailed };
 
@@ -28,8 +25,6 @@ class SplinePathMessage final : public control_loop::IMessage {
            splines.size() * sizeof(frc::CubicHermiteSpline);
   }
 
-  // Collision geometry for the exact navgrid snapshot used to plan this route.
-  std::shared_ptr<const DijkstraPlanner> planner;
   SplineStatus status = SplineStatus::InvalidInput;
   // Grid route before visibility simplification. Retained if fitting fails.
   std::vector<frc::Translation2d> raw_route;
