@@ -81,3 +81,16 @@ target_link_libraries(cos.position_estimate_rio_streamer_node PUBLIC
   wpilibc
   ntcore
 )
+
+add_library(cos.networktables_command_streamer_node)
+add_library(cos::networktables_command_streamer_node ALIAS cos.networktables_command_streamer_node)
+target_sources(cos.networktables_command_streamer_node
+  PRIVATE networktables_command_streamer_node.cc
+  PUBLIC FILE_SET HEADERS
+    BASE_DIRS ${PROJECT_SOURCE_DIR}/src
+    FILES networktables_command_streamer_node.h
+)
+target_link_libraries(cos.networktables_command_streamer_node
+  PUBLIC cos::pathing_messages ntcore
+  PRIVATE absl::log cos::robot_pose_node
+)

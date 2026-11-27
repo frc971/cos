@@ -2,8 +2,7 @@ add_library(cos.pathing_messages INTERFACE)
 add_library(cos::pathing_messages ALIAS cos.pathing_messages)
 target_sources(cos.pathing_messages INTERFACE FILE_SET HEADERS
   BASE_DIRS ${PROJECT_SOURCE_DIR}/src
-  FILES pose_message.h pathing_status.h spline_path_message.h
-    published_command_message.h
+  FILES command_message.h pose_message.h pathing_status.h spline_path_message.h
 )
 target_link_libraries(cos.pathing_messages INTERFACE cos::control_loop wpimath)
 
@@ -54,6 +53,6 @@ target_sources(cos.networktables_pathing
 )
 target_link_libraries(cos.networktables_pathing
   PUBLIC cos::dijkstra_spline_node cos::control_loop ntcore
-  PRIVATE absl::log cos::navgrid_source_node cos::navgrid_streamer_node
-    cos::robot_pose_node
+  PRIVATE cos::navgrid_source_node cos::navgrid_streamer_node
+    cos::networktables_command_streamer_node cos::robot_pose_node
 )

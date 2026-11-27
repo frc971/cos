@@ -14,7 +14,7 @@
 #include "localization/pathing_input_message.h"
 #include "pathing/dijkstra_planner.h"
 #include "pathing/pose_message.h"
-#include "pathing/published_command_message.h"
+#include "pathing/command_message.h"
 #include "pathing/spline_path_message.h"
 
 namespace streamer {
@@ -144,17 +144,17 @@ void NavgridStreamerNode::AddPolyline(std::string_view input_path) {
 
 void NavgridStreamerNode::AddPathingInputs(
     std::string_view spline_channel, std::string_view input_channel,
-    std::string_view pose_channel, std::string_view published_command_channel) {
+    std::string_view pose_channel, std::string_view command_channel) {
   if (pathing_inputs_)
     throw std::logic_error("Pathing inputs are already configured");
   pathing_inputs_.emplace(PathingInputs{
       std::string(spline_channel), std::string(input_channel),
-      std::string(pose_channel), std::string(published_command_channel)});
+      std::string(pose_channel), std::string(command_channel)});
   dependencies_.emplace_back(spline_channel, typeid(pathing::SplinePathMessage));
-  dependencies_.emplace_back(input_channel, typeid(localization::PathingInputMessage));
+  dependencies_.emplace_back(input_channel,
+                             typeid(localization::PathingInputMessage));
   dependencies_.emplace_back(pose_channel, typeid(pathing::PoseMessage));
-  dependencies_.emplace_back(published_command_channel,
-                             typeid(pathing::PublishedCommandMessage));
+  dependencies_.emplace_back(command_channel, typeid(pathing::CommandMessage));
 }
 
 void NavgridStreamerNode::DrawGridRoute(
@@ -196,9 +196,9 @@ void NavgridStreamerNode::DrawPathingVelocity(
     const control_loop::Context& context) {
   const auto* pose =
       context->GetMessage<pathing::PoseMessage>(pathing_inputs_->pose);
-  const auto* command = context->GetMessage<pathing::PublishedCommandMessage>(
-      pathing_inputs_->published_command);
-  if (!pose || !command)
+  const auto* command =
+      context->GetMessage<pathing::CommandMessage>(pathing_inputs_->command);
+  if (!pose || !command || command->status != pathing::PathingStatus::Following)
     return;
 
   PolylineMessage velocity;
@@ -208,7 +208,7 @@ void NavgridStreamerNode::DrawPathingVelocity(
   velocity.arrow_head = true;
   const cv::Point2d origin(pose->goal_position.X().value(),
                            pose->goal_position.Y().value());
-  // The arrow spans one second of published field-relative translation.
+  // The arrow spans one second of requested field-relative translation.
   velocity.points = {origin, origin + cv::Point2d(command->vx, command->vy)};
   DrawPolyline(image, velocity);
 }

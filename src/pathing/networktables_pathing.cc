@@ -1,26 +1,21 @@
 #include "pathing/networktables_pathing.h"
 
 #include <algorithm>
-#include <array>
 #include <cmath>
-#include <cstdint>
 #include <functional>
 #include <mutex>
 #include <numbers>
-#include <optional>
 #include <stdexcept>
 #include <utility>
 #include <vector>
 
-#include <networktables/DoubleArrayTopic.h>
-
-#include "absl/log/log.h"
 #include "control_loop/control_loop.h"
 #include "localization/robot_pose_node.h"
+#include "pathing/command_message.h"
 #include "pathing/navgrid_source_node.h"
 #include "pathing/pose_message.h"
-#include "pathing/published_command_message.h"
 #include "streamer/navgrid_streamer_node.h"
+#include "streamer/networktables_command_streamer_node.h"
 
 namespace pathing {
 using nt::NetworkTableInstance;
@@ -30,7 +25,6 @@ using localization::PathingInputMessage;
 using localization::RobotPoseNode;
 constexpr char kSpline[] = "pathing:spline";
 constexpr char kCommand[] = "pathing:command";
-constexpr char kPublishedCommand[] = "pathing:published_command";
 constexpr char kSplineOverlay[] = "pathing:spline_overlay";
 
 class Node : public control_loop::INode {
@@ -65,54 +59,19 @@ class Node : public control_loop::INode {
   std::vector<std::function<void(const control_loop::Context&)>> callbacks_;
 };
 
-class CommandMessage final : public control_loop::IMessage {
- public:
-  auto GetType() -> const std::type_info& override {
-    return typeid(CommandMessage);
-  }
-  auto GetSize() -> size_t override { return sizeof(*this); }
-  double vx = 0;
-  double vy = 0;
-  double omega = 0;
-  PathingStatus status = PathingStatus::Inactive;
-  std::shared_ptr<const PathingInputMessage> input;
-};
-
-auto StatusName(PathingStatus status) -> const char* {
-  switch (status) {
-    case PathingStatus::Inactive:
-      return "Inactive";
-    case PathingStatus::Following:
-      return "Following";
-    case PathingStatus::ReachedGoal:
-      return "ReachedGoal";
-    case PathingStatus::InvalidInput:
-      return "InvalidInput";
-    case PathingStatus::StaleInput:
-      return "StaleInput";
-    case PathingStatus::NoPath:
-      return "NoPath";
-    case PathingStatus::FitFailed:
-      return "FitFailed";
-    case PathingStatus::Disconnected:
-      return "Disconnected";
-  }
-  return "InvalidInput";
-}
-
 class FollowerNode final : public Node {
  public:
-  explicit FollowerNode(const NetworkTablesPathingSettings& settings)
+  explicit FollowerNode(NetworkTablesPathingSettings settings)
       : Node({{RobotPoseNode::kPose, typeid(PoseMessage)},
               {RobotPoseNode::kGoal, typeid(PoseMessage)},
               {RobotPoseNode::kInput, typeid(PathingInputMessage)},
               {kSpline, typeid(SplinePathMessage)}},
              {{kCommand, typeid(CommandMessage)}}),
-        settings_(settings) {}
+        settings_(std::move(settings)) {}
 
   auto CreateCallback()
       -> std::function<void(const control_loop::Context&)> override {
-    return [this](const control_loop::Context& context) {
+    return [this](const control_loop::Context& context) -> void {
       {
         std::scoped_lock lock(mutex_);
         if (!context->Exists(RobotPoseNode::kPose) ||
@@ -121,8 +80,8 @@ class FollowerNode final : public Node {
             !context->Exists(kSpline) || context->Exists(kCommand))
           return;
         auto command = std::make_shared<CommandMessage>();
-        command->input =
-            context->GetSharedMessage<PathingInputMessage>(RobotPoseNode::kInput);
+        command->input = context->GetSharedMessage<PathingInputMessage>(
+            RobotPoseNode::kInput);
         if (command->input) {
           command->status = command->input->status;
           if (command->status == PathingStatus::Following)
@@ -227,98 +186,6 @@ class FollowerNode final : public Node {
   NetworkTablesPathingSettings settings_;
 };
 
-class OutputNode final : public Node {
- public:
-  OutputNode(const NetworkTablesPathingSettings& settings,
-             nt::NetworkTableInstance instance,
-             std::shared_ptr<RobotPoseNode> input)
-      : Node({{kCommand, typeid(CommandMessage)}},
-             settings.navgrid_streamer
-                 ? std::vector<
-                       control_loop::
-                           MessageDescriptor>{{kPublishedCommand,
-                                               typeid(PublishedCommandMessage)}}
-                 : std::vector<control_loop::MessageDescriptor>{}),
-        instance_(instance),
-        input_(std::move(input)),
-        publisher_(
-            instance.GetDoubleArrayTopic(settings.command_topic)
-                .Publish(
-                    {.periodic =
-                         std::chrono::duration<double>(settings.period).count(),
-                     .keepDuplicates = true})) {}
-
-  auto CreateCallback()
-      -> std::function<void(const control_loop::Context&)> override {
-    return [this](const control_loop::Context& context) -> void {
-      if (!context->Exists(kCommand))
-        return;
-      const auto* command = context->GetMessage<CommandMessage>(kCommand);
-      const CommandMessage empty_command;
-      const auto published = Publish(command ? *command : empty_command);
-      if (!GetPublications().empty()) {
-        context->SetMessage(
-            kPublishedCommand,
-            std::make_shared<PublishedCommandMessage>(published));
-      }
-      Notify(context);
-    };
-  }
-
-  void PublishStop() { Publish(CommandMessage{}); }
-
- private:
-  auto Publish(const CommandMessage& command) -> PublishedCommandMessage {
-    std::scoped_lock lock(mutex_);
-    auto status = command.status;
-    if (command.input) {
-      const auto validation = input_->ValidateInput(*command.input);
-      if (validation != PathingStatus::Following)
-        status = validation;
-    } else if (status == PathingStatus::Following ||
-               status == PathingStatus::ReachedGoal) {
-      status = PathingStatus::InvalidInput;
-    }
-    if (!std::isfinite(command.vx) || !std::isfinite(command.vy) ||
-        !std::isfinite(command.omega))
-      status = PathingStatus::InvalidInput;
-    const auto offset = instance_.GetServerTimeOffset();
-    if (!instance_.IsConnected() || !offset)
-      status = PathingStatus::Disconnected;
-    const int64_t now = nt::Now();
-    const bool following = status == PathingStatus::Following;
-    PublishedCommandMessage published;
-    published.status = status;
-    published.vx = following ? command.vx : 0;
-    published.vy = following ? command.vy : 0;
-    published.omega = following ? command.omega : 0;
-    const std::array<double, 7> frame{
-        published.vx,
-        published.vy,
-        published.omega,
-        static_cast<double>(published.status),
-        command.input ? static_cast<double>(
-                            std::max(int64_t{0}, command.input->pose_server_us))
-                      : 0,
-        command.input ? static_cast<double>(
-                            std::max(int64_t{0}, command.input->goal_server_us))
-                      : 0,
-        offset ? static_cast<double>(now + *offset) : 0};
-    publisher_.Set(frame, now);
-    instance_.Flush();
-    if (last_status_ != status) {
-      LOG(INFO) << "Pathing: " << StatusName(status);
-      last_status_ = status;
-    }
-    return published;
-  }
-
-  nt::NetworkTableInstance instance_;
-  std::shared_ptr<RobotPoseNode> input_;
-  nt::DoubleArrayPublisher publisher_;
-  std::optional<PathingStatus> last_status_;
-};
-
 auto Positive(double value) -> bool {
   return std::isfinite(value) && value > 0;
 }
@@ -364,7 +231,8 @@ class NetworkTablesPathing::Impl {
     if (settings.navgrid_streamer)
       spline->EnableSplineDebug(kSplineOverlay);
     auto follower = std::make_shared<FollowerNode>(settings);
-    output = std::make_shared<OutputNode>(settings, instance, input);
+    output = std::make_shared<streamer::NetworkTablesCommandStreamerNode>(
+        kCommand, settings.command_topic, settings.period, instance, input);
     loop.SetMaxContext(1);
     loop.RegisterDependencyNode(std::make_shared<NavgridSourceNode>(navgrid));
     loop.RegisterDependencyNode(input);
@@ -376,13 +244,13 @@ class NetworkTablesPathing::Impl {
           "/navgrid", settings.navgrid_streamer_port,
           settings.field_image_path);
       streamer_node->AddPathingInputs(kSpline, RobotPoseNode::kInput,
-                                      RobotPoseNode::kPose, kPublishedCommand);
+                                      RobotPoseNode::kPose, kCommand);
       streamer_node->AddPolyline(kSplineOverlay);
       loop.RegisterNode(streamer_node);
     }
   }
   control_loop::ControlLoop loop;
-  std::shared_ptr<OutputNode> output;
+  std::shared_ptr<streamer::NetworkTablesCommandStreamerNode> output;
   bool started = false;
 };
 

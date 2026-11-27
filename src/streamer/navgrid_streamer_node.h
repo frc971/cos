@@ -58,14 +58,14 @@ class NavgridStreamerNode final : public control_loop::INode {
   void AddPathingInputs(std::string_view spline_channel,
                         std::string_view input_channel,
                         std::string_view pose_channel,
-                        std::string_view published_command_channel);
+                        std::string_view command_channel);
 
  private:
   struct PathingInputs {
     std::string spline;
     std::string input;
     std::string pose;
-    std::string published_command;
+    std::string command;
   };
 
   void DrawGridRoute(cv::Mat& image, const pathing::SplinePathMessage& spline,
