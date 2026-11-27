@@ -59,7 +59,7 @@ class NetworkTablesPathing::Impl {
     if (settings.navgrid_streamer)
       spline->EnableSplineDebug(kSpline, kSplineOverlay);
     output = std::make_shared<streamer::NetworkTablesCommandStreamerNode>(
-        kCommand, settings.command_topic, settings.period, instance, input);
+        kCommand, settings.command_topic, settings.period, instance);
     loop.SetMaxContext(1);
     loop.RegisterDependencyNode(std::make_shared<NavgridSourceNode>(navgrid));
     loop.RegisterDependencyNode(input);

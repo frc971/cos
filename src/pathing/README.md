@@ -29,8 +29,8 @@ roboRIO is responsible for any alliance conversion before publishing.
 Publish the robot pose as it changes. COS uses the latest available pose and goal
 without an input age limit. To cancel pathing, unpublish the goal topic. Pausing
 updates leaves the last goal active while the topic exists. COS returns zero
-commands when either input is missing, and rejects malformed, wrong-type,
-nonfinite, and out-of-field poses. For each plan,
+commands when either pose sample is unavailable. The planner rejects nonfinite
+and out-of-field poses. For each plan,
 COS treats mapped obstacle cells overlapping the robot's starting footprint as free. Collision
 and robot-radius checks still apply to every other obstacle and the field
 boundary.
@@ -61,15 +61,15 @@ unavailable server-time offset are represented by zero, never NaN.
 | 0 | Inactive | Inputs have not been published, or orderly shutdown |
 | 1 | Following | Valid translation and/or rotation command |
 | 2 | ReachedGoal | Within both position and heading tolerances |
-| 3 | InvalidInput | Invalid topic type, pose, or nonfinite output |
+| 3 | InvalidInput | Invalid pose or command |
 | 4 | StaleInput | Reserved for command protocol compatibility |
 | 5 | NoPath | No grid route exists |
 | 6 | FitFailed | No usable clear spline/lookahead could be produced |
 | 7 | Disconnected | NT connection or server time synchronization is unavailable |
 
 Only status **1** can have nonzero velocity components. All other statuses set
-all three components to zero. COS rechecks topic availability, topic types, and connection state immediately
-before publication. Status changes are logged once
+all three components to zero. COS checks sample availability when reading inputs
+and checks the NetworkTables connection immediately before publishing. Status changes are logged once
 per transition. An orderly stop joins the pathing worker and publishes a final
 zero command; a disconnected client cannot deliver that zero until reconnecting.
 

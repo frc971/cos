@@ -25,7 +25,6 @@ class RobotPoseNode final : public control_loop::INode {
   RobotPoseNode(nt::NetworkTableInstance instance, std::string_view pose_topic,
                 std::string_view goal_topic, std::chrono::milliseconds period);
 
-  auto ValidateInput(const PathingInputMessage& input) const -> pathing::PathingStatus;
   auto CreateCallback()
       -> std::function<void(const control_loop::Context&)> override;
   [[nodiscard]] auto GetDependencies() const
@@ -39,7 +38,6 @@ class RobotPoseNode final : public control_loop::INode {
   std::vector<control_loop::MessageDescriptor> publications_;
   std::vector<std::function<void(const control_loop::Context&)>> callbacks_;
   std::mutex mutex_;
-  nt::NetworkTableInstance instance_;
   nt::StructSubscriber<frc::Pose2d> pose_;
   nt::StructSubscriber<frc::Pose2d> goal_;
 };

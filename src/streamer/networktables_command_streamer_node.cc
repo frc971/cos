@@ -4,10 +4,9 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
-#include <utility>
 
 #include "absl/log/log.h"
-#include "localization/robot_pose_node.h"
+#include "localization/pathing_input_message.h"
 
 namespace streamer {
 using pathing::CommandMessage;
@@ -41,12 +40,10 @@ auto StatusName(PathingStatus status) -> const char* {
 
 NetworkTablesCommandStreamerNode::NetworkTablesCommandStreamerNode(
     std::string_view input_channel, std::string_view command_topic,
-    std::chrono::milliseconds period, nt::NetworkTableInstance instance,
-    std::shared_ptr<const localization::RobotPoseNode> pose_node)
+    std::chrono::milliseconds period, nt::NetworkTableInstance instance)
     : input_channel_(input_channel),
       dependencies_{{input_channel, typeid(CommandMessage)}},
       instance_(instance),
-      pose_node_(std::move(pose_node)),
       publisher_(instance.GetDoubleArrayTopic(command_topic).Publish(
           {.periodic = std::chrono::duration<double>(period).count(),
            .keepDuplicates = true})) {}
@@ -87,12 +84,8 @@ void NetworkTablesCommandStreamerNode::PublishStop() {
 void NetworkTablesCommandStreamerNode::Publish(const CommandMessage& command) {
   std::scoped_lock lock(mutex_);
   auto status = command.status;
-  if (command.input) {
-    const auto validation = pose_node_->ValidateInput(*command.input);
-    if (validation != PathingStatus::Following)
-      status = validation;
-  } else if (status == PathingStatus::Following ||
-             status == PathingStatus::ReachedGoal) {
+  if (!command.input && (status == PathingStatus::Following ||
+                         status == PathingStatus::ReachedGoal)) {
     status = PathingStatus::InvalidInput;
   }
   if (!std::isfinite(command.vx) || !std::isfinite(command.vy) ||
