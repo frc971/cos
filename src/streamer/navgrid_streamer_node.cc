@@ -11,7 +11,7 @@
 #include <turbojpeg.h>
 
 #include "absl/log/log.h"
-#include "localization/input_message.h"
+#include "localization/pathing_input_message.h"
 #include "pathing/dijkstra_planner.h"
 #include "pathing/pose_message.h"
 #include "pathing/published_command_message.h"
@@ -72,7 +72,7 @@ auto NavgridStreamerNode::CreateCallback()
       DrawNavgrid(new_image, *navgrid_);
     if (spline) {
       DrawGridRoute(new_image, *spline,
-                    context->GetMessage<localization::InputMessage>(
+                    context->GetMessage<localization::PathingInputMessage>(
                         pathing_inputs_->input));
     }
     for (const auto& dependency : dependencies_) {
@@ -151,7 +151,7 @@ void NavgridStreamerNode::AddPathingInputs(
       std::string(spline_channel), std::string(input_channel),
       std::string(pose_channel), std::string(published_command_channel)});
   dependencies_.emplace_back(spline_channel, typeid(pathing::SplinePathMessage));
-  dependencies_.emplace_back(input_channel, typeid(localization::InputMessage));
+  dependencies_.emplace_back(input_channel, typeid(localization::PathingInputMessage));
   dependencies_.emplace_back(pose_channel, typeid(pathing::PoseMessage));
   dependencies_.emplace_back(published_command_channel,
                              typeid(pathing::PublishedCommandMessage));
@@ -159,7 +159,7 @@ void NavgridStreamerNode::AddPathingInputs(
 
 void NavgridStreamerNode::DrawGridRoute(
     cv::Mat& image, const pathing::SplinePathMessage& spline,
-    const localization::InputMessage* input) {
+    const localization::PathingInputMessage* input) {
   const auto& grid = spline.planner->GetGrid();
   DrawNavgrid(image, grid);
   if (!std::isfinite(grid.node_size_meters) || grid.node_size_meters <= 0)

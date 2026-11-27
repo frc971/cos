@@ -21,7 +21,7 @@ class SplinePathMessage;
 }  // namespace pathing
 
 namespace localization {
-class InputMessage;
+class PathingInputMessage;
 }  // namespace localization
 
 namespace streamer {
@@ -69,7 +69,7 @@ class NavgridStreamerNode final : public control_loop::INode {
   };
 
   void DrawGridRoute(cv::Mat& image, const pathing::SplinePathMessage& spline,
-                     const localization::InputMessage* input);
+                     const localization::PathingInputMessage* input);
   void DrawPathingVelocity(cv::Mat& image, const NavgridMessage& grid,
                            const control_loop::Context& context);
   void DrawNavgrid(cv::Mat& image, const NavgridMessage& navgrid_message);

@@ -26,7 +26,7 @@ namespace pathing {
 using nt::NetworkTableInstance;
 
 namespace {
-using localization::InputMessage;
+using localization::PathingInputMessage;
 using localization::RobotPoseNode;
 constexpr char kSpline[] = "pathing:spline";
 constexpr char kCommand[] = "pathing:command";
@@ -75,7 +75,7 @@ class CommandMessage final : public control_loop::IMessage {
   double vy = 0;
   double omega = 0;
   PathingStatus status = PathingStatus::Inactive;
-  std::shared_ptr<const InputMessage> input;
+  std::shared_ptr<const PathingInputMessage> input;
 };
 
 auto StatusName(PathingStatus status) -> const char* {
@@ -105,7 +105,7 @@ class FollowerNode final : public Node {
   explicit FollowerNode(const NetworkTablesPathingSettings& settings)
       : Node({{RobotPoseNode::kPose, typeid(PoseMessage)},
               {RobotPoseNode::kGoal, typeid(PoseMessage)},
-              {RobotPoseNode::kInput, typeid(InputMessage)},
+              {RobotPoseNode::kInput, typeid(PathingInputMessage)},
               {kSpline, typeid(SplinePathMessage)}},
              {{kCommand, typeid(CommandMessage)}}),
         settings_(settings) {}
@@ -122,7 +122,7 @@ class FollowerNode final : public Node {
           return;
         auto command = std::make_shared<CommandMessage>();
         command->input =
-            context->GetSharedMessage<InputMessage>(RobotPoseNode::kInput);
+            context->GetSharedMessage<PathingInputMessage>(RobotPoseNode::kInput);
         if (command->input) {
           command->status = command->input->status;
           if (command->status == PathingStatus::Following)

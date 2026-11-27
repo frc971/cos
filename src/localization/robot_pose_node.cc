@@ -23,18 +23,20 @@ RobotPoseNode::RobotPoseNode(nt::NetworkTableInstance instance,
                              std::chrono::milliseconds period)
     : publications_{{kPose, typeid(PoseMessage)},
                     {kGoal, typeid(PoseMessage)},
-                    {kInput, typeid(InputMessage)}},
+                    {kInput, typeid(PathingInputMessage)}},
       instance_(instance),
-      pose_(instance.GetStructTopic<frc::Pose2d>(pose_topic).Subscribe(
-          frc::Pose2d{},
-          {.periodic = std::chrono::duration<double>(period).count(),
-           .keepDuplicates = true})),
-      goal_(instance.GetStructTopic<frc::Pose2d>(goal_topic).Subscribe(
-          frc::Pose2d{},
-          {.periodic = std::chrono::duration<double>(period).count(),
-           .keepDuplicates = true})) {}
+      pose_(instance.GetStructTopic<frc::Pose2d>(pose_topic)
+                .Subscribe(
+                    frc::Pose2d{},
+                    {.periodic = std::chrono::duration<double>(period).count(),
+                     .keepDuplicates = true})),
+      goal_(instance.GetStructTopic<frc::Pose2d>(goal_topic)
+                .Subscribe(
+                    frc::Pose2d{},
+                    {.periodic = std::chrono::duration<double>(period).count(),
+                     .keepDuplicates = true})) {}
 
-auto RobotPoseNode::ValidateInput(const InputMessage& input) const
+auto RobotPoseNode::ValidateInput(const PathingInputMessage& input) const
     -> PathingStatus {
   if (!instance_.IsConnected() || !instance_.GetServerTimeOffset())
     return PathingStatus::Disconnected;
@@ -61,7 +63,7 @@ auto RobotPoseNode::CreateCallback()
         return;
       const auto pose = pose_.GetAtomic();
       const auto goal = goal_.GetAtomic();
-      auto input = std::make_shared<InputMessage>();
+      auto input = std::make_shared<PathingInputMessage>();
       input->pose = pose.value;
       input->goal = goal.value;
       input->pose_local_us = pose.time;

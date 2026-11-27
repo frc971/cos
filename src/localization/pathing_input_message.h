@@ -10,10 +10,10 @@
 
 namespace localization {
 
-class InputMessage final : public control_loop::IMessage {
+class PathingInputMessage final : public control_loop::IMessage {
  public:
   auto GetType() -> const std::type_info& override {
-    return typeid(InputMessage);
+    return typeid(PathingInputMessage);
   }
   auto GetSize() -> size_t override { return sizeof(*this); }
   pathing::PathingStatus status = pathing::PathingStatus::Inactive;

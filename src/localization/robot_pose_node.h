@@ -11,7 +11,7 @@
 #include <networktables/StructTopic.h>
 
 #include "control_loop/node.h"
-#include "localization/input_message.h"
+#include "localization/pathing_input_message.h"
 
 namespace localization {
 
@@ -25,7 +25,7 @@ class RobotPoseNode final : public control_loop::INode {
   RobotPoseNode(nt::NetworkTableInstance instance, std::string_view pose_topic,
                 std::string_view goal_topic, std::chrono::milliseconds period);
 
-  auto ValidateInput(const InputMessage& input) const -> pathing::PathingStatus;
+  auto ValidateInput(const PathingInputMessage& input) const -> pathing::PathingStatus;
   auto CreateCallback()
       -> std::function<void(const control_loop::Context&)> override;
   [[nodiscard]] auto GetDependencies() const

@@ -43,7 +43,7 @@ target_link_libraries(cos.navgrid_streamer_node PUBLIC
   opencv_imgcodecs
   opencv_imgproc
   nadjieb_mjpeg_streamer::nadjieb_mjpeg_streamer
-  PRIVATE cos::pathing_messages cos::dijkstra_planner cos::localization_input_message
+  PRIVATE cos::pathing_messages cos::dijkstra_planner cos::pathing_input_message
     ${TURBOJPEG_LIBRARY}
 )
 
