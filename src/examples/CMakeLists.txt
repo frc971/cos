@@ -58,3 +58,11 @@ target_link_libraries(connect_to_rio PRIVATE
   absl::log_initialize
   cos::connect_to_rio
 )
+
+add_executable(l2_lidar_example)
+target_sources(l2_lidar_example PRIVATE
+  l2_lidar_example.cc
+)
+target_link_libraries(l2_lidar_example PRIVATE
+  unilidar_sdk2
+)
